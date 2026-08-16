@@ -3,6 +3,7 @@ import requests
 import json
 import base64
 import re
+import os
 import google.generativeai as genai
 
 # 페이지 기본 설정
@@ -11,9 +12,24 @@ st.set_page_config(page_title="수학 유사 문제 생성기", layout="centered
 st.title("📐 AI 수학 유사 문제 생성기 (Gemini 버전)")
 st.caption("사진을 올리면 '숫자 변형 1문제'와 '응용 변형 1문제'를 즉석에서 생성합니다.")
 
-# 사이드바: API 키 설정
+# ==========================================
+# ★ 추가된 기능: 선생님 전용 관리자 모드 (버튼 스위치)
+# ==========================================
+# 스위치 상태를 임시로 기억할 파일 경로
+STATUS_FILE = "app_status.txt"
+
+def get_app_status():
+    if os.path.exists(STATUS_FILE):
+        with open(STATUS_FILE, "r") as f:
+            return f.read().strip()
+    return "OFF" # 기본 상태는 '잠금'
+
+def set_app_status(status):
+    with open(STATUS_FILE, "w") as f:
+        f.write(status)
+
 with st.sidebar:
-    st.header("🔑 API 설정")
+    st.header("🔑 API 설정 (선생님 전용)")
     mathpix_app_id = st.secrets.get("MATHPIX_APP_ID", "")
     mathpix_app_key = st.secrets.get("MATHPIX_APP_KEY", "")
     gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -24,17 +40,45 @@ with st.sidebar:
         mathpix_app_key = st.text_input("Mathpix App Key", type="password")
     if not gemini_api_key:
         gemini_api_key = st.text_input("Gemini API Key", type="password")
+        
+    st.divider()
+    
+    # 👨‍🏫 선생님 로그인 영역
+    st.header("👨‍🏫 수업 시간 관리 (스위치)")
+    # Secrets에 ADMIN_PASSWORD가 없으면 기본 비밀번호는 '1234'로 작동합니다.
+    real_admin_pw = st.secrets.get("ADMIN_PASSWORD", "1234") 
+    input_pw = st.text_input("관리자 비밀번호를 입력하세요", type="password")
+    
+    is_admin = (input_pw == real_admin_pw)
+    current_status = get_app_status()
+    
+    if is_admin:
+        st.success("✅ 선생님 인증 완료!")
+        # 마스터 스위치 버튼 (라디오 버튼 형태)
+        new_status = st.radio(
+            "학생 접속 스위치 조작", 
+            ["ON (수업 중)", "OFF (잠금)"], 
+            index=0 if current_status == "ON" else 1
+        )
+        
+        # 버튼을 눌러 상태가 바뀌면 파일에 저장하고 새로고침
+        if "ON" in new_status and current_status == "OFF":
+            set_app_status("ON")
+            st.rerun()
+        elif "OFF" in new_status and current_status == "ON":
+            set_app_status("OFF")
+            st.rerun()
+    else:
+        if input_pw:
+            st.error("비밀번호가 틀렸습니다.")
+        st.info("비밀번호를 입력해야 스위치가 나타납니다.")
 
 # ==========================================
-# ★ 추가된 기능: 수업 시간 강제 ON/OFF 마스터 스위치
-# ==========================================
-# Secrets 설정에서 APP_STATUS 값을 읽어옵니다. (설정이 없으면 기본으로 "ON" 유지)
-app_status = st.secrets.get("APP_STATUS", "ON")
-
-if app_status == "OFF":
+# 학생 접속 차단 로직 (선생님은 비밀번호를 쳤으므로 차단되지 않음)
+if not is_admin and get_app_status() == "OFF":
     st.error("⛔ 현재는 수학 앱 사용 시간이 아닙니다.")
-    st.info("💡 선생님이 수업 시간에 접속을 열어주시면 다시 새로고침 해주세요!")
-    st.stop() # 여기서 앱 실행을 완전히 멈춥니다. 아래 사진 업로드 화면은 나타나지 않습니다.
+    st.info("💡 선생님이 수업 시간에 접속을 열어주시면 다시 새로고침(F5) 해주세요!")
+    st.stop()
 # ==========================================
 
 # 세션 상태 초기화
@@ -124,7 +168,7 @@ if st.session_state.ocr_text:
                     
                     [출력 형식]
                     오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}}, {{"problem_num": 2, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
-                    수식은 LaTeX 문법($ 또는 $$)을 정확히 사용하되, $ 기호 바로 안쪽에는 절대로 공백을 넣지 마 (예: $ x $ 금지, $x$ 필수).
+                    수식은 LaTeX 문법($ 또는 $$)을 정확히 사용하되, $ 기호 바로 안쪽에는 절대로 공백을 넣지 마 (예: $x$ 금지, $x$ 필수).
                     ```json 같은 마크다운 기호 없이 순수한 JSON 텍스트만 출력해.
                     """
                     
