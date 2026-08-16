@@ -31,11 +31,11 @@ if "ocr_text" not in st.session_state:
 if "similar_problems" not in st.session_state:
     st.session_state.similar_problems = None
 
-# Streamlit 마크다운 버그(백슬래시 증발) 방지용 함수
+# Streamlit 마크다운 버그 방지용 함수
 def escape_markdown_math(text):
     if not text:
         return ""
-    # 수식 안의 모든 \를 \\로 바꾸어 Streamlit이 수식을 정상 렌더링하도록 강제 보호
+    # 수식 안의 모든 \를 \\로 바꾸어 보호
     return text.replace('\\', '\\\\')
 
 # 1. 문제 사진 업로드
@@ -66,13 +66,15 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
                 if "text" in result_json:
                     math_text = result_json["text"]
                     
-                    # Mathpix 기호를 웹사이트용 달러($) 기호로 변환
+                    # [해결 핵심] 
+                    # 1. Mathpix 기호를 $로 변환
                     math_text = math_text.replace("\\(", "$").replace("\\)", "$")
                     math_text = math_text.replace("\\[", "$$").replace("\\]", "$$")
                     
-                    # $ 기호 바로 안쪽의 공백을 강제로 없애기 (수식 깨짐 방지)
-                    math_text = re.sub(r'\$\s+', '$', math_text)
-                    math_text = re.sub(r'\s+\$', '$', math_text)
+                    # 2. $ 기호 '바깥쪽'에 무조건 공백을 추가하여 Streamlit이 수식으로 인식하게 강제함
+                    math_text = math_text.replace("$", " $ ")
+                    # 다중 공백 정리
+                    math_text = re.sub(r' +', ' ', math_text)
                     
                     st.session_state.ocr_text = math_text
                     st.success("수식 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
@@ -93,7 +95,6 @@ if st.session_state.ocr_text:
     
     st.markdown("**수식 렌더링 미리보기:**")
     
-    # [최종 수정] 백슬래시 보호 처리 적용
     safe_preview_text = escape_markdown_math(edited_text)
     st.markdown(safe_preview_text)
     
@@ -106,7 +107,6 @@ if st.session_state.ocr_text:
                 try:
                     genai.configure(api_key=gemini_api_key)
                     
-                    # 사용 가능한 모델 찾기
                     available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                     safe_models = [m for m in available_models if '2.5-flash' not in m]
                     
@@ -119,13 +119,13 @@ if st.session_state.ocr_text:
                     
                     [출력 형식]
                     오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
-                    수식은 LaTeX 문법($ 또는 $$)을 정확히 사용할 것. ```json 같은 마크다운 기호 없이 순수한 JSON 텍스트만 출력해.
+                    수식은 LaTeX 문법($ 또는 $$)을 정확히 사용하고, 한글 텍스트와 $ 기호 사이에는 반드시 양쪽으로 띄어쓰기를 1칸씩 넣어줘.
+                    ```json 같은 마크다운 기호 없이 순수한 JSON 텍스트만 출력해.
                     """
                     
                     success = False
                     last_error = ""
                     
-                    # 정상 작동하는 AI 모델을 자동으로 찾아 연결
                     for model_name in safe_models:
                         try:
                             model = genai.GenerativeModel(model_name)
@@ -167,7 +167,6 @@ if st.session_state.similar_problems:
         with st.container():
             st.markdown(f"### [유사 문제 {idx}]")
             
-            # [최종 수정] 학생 화면에서도 수식이 깨지지 않도록 백슬래시 보호 처리
             safe_q = escape_markdown_math(q_text)
             safe_a = escape_markdown_math(a_text)
             
