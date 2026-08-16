@@ -59,8 +59,7 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
                 if "text" in result_json:
                     math_text = result_json["text"]
                     
-                    # [복사 오류 원천 차단 + 완벽한 수식 변환] 
-                    # 세미콜론(;)을 붙여 코드가 뭉쳐도 에러가 나지 않게 만들었고, $ 기호 안쪽의 띄어쓰기를 완벽히 압착해 제거합니다.
+                    # 수식 변환 및 띄어쓰기 압착 처리
                     math_text = re.sub(r'\\\(\s*', '$', math_text); math_text = re.sub(r'\s*\\\)', '$', math_text); math_text = re.sub(r'\\\[\s*', '$$', math_text); math_text = re.sub(r'\s*\\\]', '$$', math_text);
                     
                     st.session_state.ocr_text = math_text
@@ -73,6 +72,12 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
 # 2. 추출된 텍스트 확인 및 수정
 if st.session_state.ocr_text:
     st.subheader("📝 추출된 원본 문제 (검수 및 수정)")
+    
+    # ★ 추가된 기능 1: 선생님 검수 화면에 원본 도형 이미지 띄우기
+    if uploaded_file is not None:
+        st.image(uploaded_file, caption="[원본 도형 이미지]", use_container_width=True)
+        st.write("") # 간격 띄우기
+
     edited_text = st.text_area(
         "도형 조건이나 수식 중 누락된 부분이 있다면 수정하세요:", 
         value=st.session_state.ocr_text, 
@@ -144,6 +149,12 @@ if st.session_state.ocr_text:
 if st.session_state.similar_problems:
     st.divider()
     st.subheader("🎯 학생용 연습 문제")
+    
+    # ★ 추가된 기능 2: 학생 화면에도 원본 도형 이미지를 띄워 참고하게 함
+    if uploaded_file is not None:
+        st.info("💡 아래 문제들은 모두 [참고 도형]의 모양을 기준으로 풀어보세요!")
+        st.image(uploaded_file, caption="[참고 도형]", use_container_width=True)
+        st.write("") # 간격 띄우기
     
     for idx, item in enumerate(st.session_state.similar_problems, start=1):
         q_text = item.get("question", "")
