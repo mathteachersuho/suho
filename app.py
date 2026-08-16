@@ -85,8 +85,15 @@ if st.session_state.ocr_text:
     st.session_state.ocr_text = edited_text
     
     st.markdown("**수식 렌더링 미리보기:**")
-    # [수정 3] 웹사이트 화면에 그릴 때 백슬래시(\)가 사라지는 현상 방지
-    safe_preview_text = edited_text.replace('\\', '\\\\')
+    
+    # [최종 수정] Streamlit이 백슬래시(\)를 삼켜버리지 못하도록 강력하게 이스케이프 처리
+    # 수식 안의 모든 \를 \\\\로 바꾸어야 웹 화면에서 \가 살아남아 수학 기호로 변환됩니다.
+    def escape_markdown(text):
+        # Mathpix 수식 기호 보호
+        text = text.replace('\\', '\\\\') 
+        return text
+
+    safe_preview_text = escape_markdown(edited_text)
     st.markdown(safe_preview_text)
     
     # 3. 유사 문제 생성 버튼
@@ -156,11 +163,15 @@ if st.session_state.similar_problems:
         q_text = item.get("question", "")
         a_text = item.get("answer", "")
         
-        with st.container():
+      with st.container():
             st.markdown(f"### [유사 문제 {idx}]")
-            # [수정 4] 학생 화면에서도 수식이 깨지지 않도록 백슬래시 보호 처리
-            st.markdown(q_text.replace('\\', '\\\\'))
+            
+            # 학생 화면 수식 보호
+            safe_q = q_text.replace('\\', '\\\\')
+            safe_a = a_text.replace('\\', '\\\\')
+            
+            st.markdown(safe_q)
             
             with st.expander("🔍 정답 및 풀이 확인"):
-                st.info(f"**정답:**\n{a_text.replace('\\', '\\\\')}")
+                st.info(f"**정답:**\n{safe_a}")
             st.write("")
