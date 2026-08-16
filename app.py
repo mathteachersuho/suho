@@ -59,11 +59,9 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
                 if "text" in result_json:
                     math_text = result_json["text"]
                     
-                    # [진짜 최종 해결책]
-                    # Mathpix가 보내주는 기호 내부의 보이지 않는 공백을 정규식으로 완벽히 압착하여 $로 바꿉니다.
-                    # 이 과정이 있어야만 Streamlit이 정상적인 수학 기호로 판독합니다.
-                    math_text = re.sub(r'\\\(\s*', '$', math_text)                     math_text = re.sub(r'\s*\\\)', '$', math_text)
-                    math_text = re.sub(r'\\\[\s*', '$$', math_text)                     math_text = re.sub(r'\s*\\\]', '$$', math_text)
+                    # [복사 오류 원천 차단 + 완벽한 수식 변환] 
+                    # 세미콜론(;)을 붙여 코드가 뭉쳐도 에러가 나지 않게 만들었고, $ 기호 안쪽의 띄어쓰기를 완벽히 압착해 제거합니다.
+                    math_text = re.sub(r'\\\(\s*', '$', math_text); math_text = re.sub(r'\s*\\\)', '$', math_text); math_text = re.sub(r'\\\[\s*', '$$', math_text); math_text = re.sub(r'\s*\\\]', '$$', math_text);
                     
                     st.session_state.ocr_text = math_text
                     st.success("수식 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
@@ -83,7 +81,6 @@ if st.session_state.ocr_text:
     st.session_state.ocr_text = edited_text
     
     st.markdown("**수식 렌더링 미리보기:**")
-    # 어떤 꼼수도 없이 순수하게 출력해야 화면에 가장 잘 나옵니다.
     st.markdown(edited_text)
     
     # 3. 유사 문제 생성 버튼
