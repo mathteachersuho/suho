@@ -132,7 +132,7 @@ with tab1:
     
     # 선생님이면 볼 반을 선택할 수 있고, 학생이면 자기 반만 고정됩니다.
     if current_role == "admin":
-        view_class = st.selectbox("👀 조회할 반 게시판을 선택하세요", ["1반", "2반", "3반", "4반", "5반", "6반"])
+        view_class = st.selectbox("👀 조회할 반 게시판을 선택하세요", ["1M2반", "1M3반", "2M1반", "2M3반", "3M1반", "3M3반"])
     else:
         view_class = current_role
         
