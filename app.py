@@ -55,7 +55,7 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
                 res = requests.post("https://api.mathpix.com/v3/text", headers=headers, json=data)
                 result_json = res.json()
                 
-               if "text" in result_json:
+                if "text" in result_json:
                     # Mathpix의 수식 기호를 웹사이트가 인식하는 달러($) 기호로 자동 변환합니다.
                     math_text = result_json["text"]
                     math_text = math_text.replace("\\(", "$").replace("\\)", "$")
