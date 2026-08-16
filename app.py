@@ -130,15 +130,21 @@ with tab1:
                 if p.get("image_b64"):
                     st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
                 
+                # [해결 핵심] \n 명령어를 실제 화면 줄바꿈(\n\n)으로 변환
+                q1_safe = p["q1"].replace('\\n', '\n\n')
+                a1_safe = p["a1"].replace('\\n', '\n\n')
+                q2_safe = p["q2"].replace('\\n', '\n\n')
+                a2_safe = p["a2"].replace('\\n', '\n\n')
+                
                 st.markdown("### [문제 1] 기본 다지기 (숫자 변형)")
-                st.markdown(p["q1"])
+                st.markdown(q1_safe)
                 with st.expander("🔍 1번 정답 및 풀이 확인"):
-                    st.info(p["a1"])
+                    st.info(a1_safe)
                 
                 st.markdown("### [문제 2] 실력 키우기 (응용 변형)")
-                st.markdown(p["q2"])
+                st.markdown(q2_safe)
                 with st.expander("🔍 2번 정답 및 풀이 확인"):
-                    st.info(p["a2"])
+                    st.info(a2_safe)
                 
                 if is_admin:
                     if st.button("🗑️ 이 과제 삭제하기", key=f"del_{p['id']}"):
@@ -202,7 +208,8 @@ with tab2:
         st.session_state.ocr_text = edited_text
         
         st.markdown("**수식 렌더링 미리보기:**")
-        st.markdown(edited_text)
+        # 줄바꿈 변환 적용
+        st.markdown(edited_text.replace('\\n', '\n\n'))
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
             if not gemini_api_key:
@@ -235,15 +242,12 @@ with tab2:
                         if res_text.startswith("```json"): res_text = res_text[7:-3].strip()
                         elif res_text.startswith("```"): res_text = res_text[3:-3].strip()
                             
-                        # [해결 핵심] JSON 디코드 오류(Invalid \escape) 완벽 방어
                         try:
-                            # 1차 시도: 그냥 파싱
                             parsed = json.loads(res_text)
                         except json.JSONDecodeError:
-                            # 2차 시도: AI가 \angle 등을 제대로 보호하지 않았다면, 강제로 \를 \\로 바꿔 오류를 해결합니다.
                             safe_res_text = res_text.replace('\\', '\\\\')
-                            safe_res_text = safe_res_text.replace('\\\\"', '\\"') # 큰따옴표 보호
-                            safe_res_text = safe_res_text.replace('\\\\n', '\\n') # 줄바꿈 보호
+                            safe_res_text = safe_res_text.replace('\\\\"', '\\"') 
+                            safe_res_text = safe_res_text.replace('\\\\n', '\\n') 
                             parsed = json.loads(safe_res_text)
                             
                         problems = parsed.get("problems", [])
@@ -267,22 +271,4 @@ with tab2:
                 import datetime
                 new_prob = {
                     "id": str(int(time.time())),
-                    "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "image_b64": st.session_state.current_image_b64,
-                    "q1": st.session_state.similar_problems[0]["question"],
-                    "a1": st.session_state.similar_problems[0]["answer"],
-                    "q2": st.session_state.similar_problems[1]["question"],
-                    "a2": st.session_state.similar_problems[1]["answer"]
-                }
-                curr_db = load_db()
-                curr_db.insert(0, new_prob) 
-                save_db(curr_db)
-                st.success("✅ 게시판에 성공적으로 등록되었습니다! 맨 위 '선생님 추천 과제' 탭을 눌러 확인해 보세요.")
-                
-        for idx, item in enumerate(st.session_state.similar_problems, start=1):
-            with st.container():
-                st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
-                st.markdown(item.get("question", ""))
-                with st.expander("🔍 정답 및 풀이 확인"):
-                    st.info(item.get("answer", ""))
-                st.write("")
+                    "date": datetime.datetime.now().strftime("%Y-%m-%d
