@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import json
 import base64
+import re
 import google.generativeai as genai
 
 # 페이지 기본 설정
@@ -56,10 +57,15 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
                 result_json = res.json()
                 
                 if "text" in result_json:
-                    # Mathpix의 수식 기호를 웹사이트가 인식하는 달러($) 기호로 자동 변환합니다.
                     math_text = result_json["text"]
+                    
+                    # [수정 1] Mathpix 기호를 웹사이트용 달러($) 기호로 변환
                     math_text = math_text.replace("\\(", "$").replace("\\)", "$")
                     math_text = math_text.replace("\\[", "$$").replace("\\]", "$$")
+                    
+                    # [수정 2] $ 기호 바로 안쪽의 공백을 강제로 없애기 (수식 깨짐 방지)
+                    math_text = re.sub(r'\$\s+', '$', math_text)
+                    math_text = re.sub(r'\s+\$', '$', math_text)
                     
                     st.session_state.ocr_text = math_text
                     st.success("수식 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
@@ -79,9 +85,11 @@ if st.session_state.ocr_text:
     st.session_state.ocr_text = edited_text
     
     st.markdown("**수식 렌더링 미리보기:**")
-    st.markdown(edited_text)
+    # [수정 3] 웹사이트 화면에 그릴 때 백슬래시(\)가 사라지는 현상 방지
+    safe_preview_text = edited_text.replace('\\', '\\\\')
+    st.markdown(safe_preview_text)
     
-    # 3. 유사 문제 생성 버튼 (Gemini 연결 부분)
+    # 3. 유사 문제 생성 버튼
     if st.button("✨ 유사 문제 3개 생성하기", type="primary"):
         if not gemini_api_key:
             st.error("Gemini API Key를 입력해 주세요.")
@@ -90,7 +98,7 @@ if st.session_state.ocr_text:
                 try:
                     genai.configure(api_key=gemini_api_key)
                     
-                    # 현재 계정에서 사용 가능한 모든 모델을 가져오되, 막혀있는 2.5-flash 모델은 목록에서 제외합니다.
+                    # 사용 가능한 모델 찾기
                     available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                     safe_models = [m for m in available_models if '2.5-flash' not in m]
                     
@@ -109,7 +117,7 @@ if st.session_state.ocr_text:
                     success = False
                     last_error = ""
                     
-                    # 사용 가능한 모델들을 하나씩 시도하여 작동하는 것을 찾습니다.
+                    # 정상 작동하는 AI 모델을 자동으로 찾아 연결
                     for model_name in safe_models:
                         try:
                             model = genai.GenerativeModel(model_name)
@@ -150,8 +158,9 @@ if st.session_state.similar_problems:
         
         with st.container():
             st.markdown(f"### [유사 문제 {idx}]")
-            st.markdown(q_text)
+            # [수정 4] 학생 화면에서도 수식이 깨지지 않도록 백슬래시 보호 처리
+            st.markdown(q_text.replace('\\', '\\\\'))
             
             with st.expander("🔍 정답 및 풀이 확인"):
-                st.info(f"**정답:** {a_text}")
+                st.info(f"**정답:**\n{a_text.replace('\\', '\\\\')}")
             st.write("")
