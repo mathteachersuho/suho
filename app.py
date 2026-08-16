@@ -25,6 +25,18 @@ with st.sidebar:
     if not gemini_api_key:
         gemini_api_key = st.text_input("Gemini API Key", type="password")
 
+# ==========================================
+# ★ 추가된 기능: 수업 시간 강제 ON/OFF 마스터 스위치
+# ==========================================
+# Secrets 설정에서 APP_STATUS 값을 읽어옵니다. (설정이 없으면 기본으로 "ON" 유지)
+app_status = st.secrets.get("APP_STATUS", "ON")
+
+if app_status == "OFF":
+    st.error("⛔ 현재는 수학 앱 사용 시간이 아닙니다.")
+    st.info("💡 선생님이 수업 시간에 접속을 열어주시면 다시 새로고침 해주세요!")
+    st.stop() # 여기서 앱 실행을 완전히 멈춥니다. 아래 사진 업로드 화면은 나타나지 않습니다.
+# ==========================================
+
 # 세션 상태 초기화
 if "ocr_text" not in st.session_state:
     st.session_state.ocr_text = ""
@@ -87,7 +99,7 @@ if st.session_state.ocr_text:
     st.markdown("**수식 렌더링 미리보기:**")
     st.markdown(edited_text)
     
-    # 3. 유사 문제 생성 버튼 (버튼 텍스트 수정)
+    # 3. 유사 문제 생성 버튼
     if st.button("✨ 유사 문제 2개 생성하기 (기본1 + 응용1)", type="primary"):
         if not gemini_api_key:
             st.error("Gemini API Key를 입력해 주세요.")
@@ -99,7 +111,6 @@ if st.session_state.ocr_text:
                     available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
                     safe_models = [m for m in available_models if '2.5-flash' not in m]
                     
-                    # ★ 핵심 수정: AI에게 내리는 프롬프트(명령어) 상세화
                     prompt = f"""
                     너는 학생들의 수준별 학습을 돕는 꼼꼼한 수학 교과 출제 위원이야. 
                     다음 [원본 문제]를 바탕으로 성격이 다른 [유사 문제] 딱 2개를 만들어줘.
@@ -113,7 +124,7 @@ if st.session_state.ocr_text:
                     
                     [출력 형식]
                     오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}}, {{"problem_num": 2, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
-                    수식은 LaTeX 문법($ 또는 $$)을 정확히 사용하되, $ 기호 바로 안쪽에는 절대로 공백을 넣지 마 (예: $x$ 금지, $x$ 필수).
+                    수식은 LaTeX 문법($ 또는 $$)을 정확히 사용하되, $ 기호 바로 안쪽에는 절대로 공백을 넣지 마 (예: $ x $ 금지, $x$ 필수).
                     ```json 같은 마크다운 기호 없이 순수한 JSON 텍스트만 출력해.
                     """
                     
@@ -164,7 +175,6 @@ if st.session_state.similar_problems:
         a_text = item.get("answer", "")
         
         with st.container():
-            # ★ 추가된 기능: 학생 화면에서 문제가 기본인지 응용인지 명확하게 표시
             if idx == 1:
                 st.markdown(f"### [문제 {idx}] 기본 다지기 (숫자 변형)")
             else:
