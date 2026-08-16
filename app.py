@@ -131,11 +131,8 @@ with tab1:
                 if p.get("image_b64"):
                     st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
                 
-                # \n 명령어를 실제 화면 줄바꿈(\n\n)으로 변환
-                q1_safe = p["q1"].replace('\\n', '\n\n')
-                a1_safe = p["a1"].replace('\\n', '\n\n')
-                q2_safe = p["q2"].replace('\\n', '\n\n')
-                a2_safe = p["a2"].replace('\\n', '\n\n')
+                # \n 명령어를 실제 화면 줄바꿈(\n\n)으로 변환 (에러 방지용 세미콜론 결합)
+                q1_safe = p["q1"].replace('\\n', '\n\n'); a1_safe = p["a1"].replace('\\n', '\n\n'); q2_safe = p["q2"].replace('\\n', '\n\n'); a2_safe = p["a2"].replace('\\n', '\n\n')
                 
                 st.markdown("### [문제 1] 기본 다지기 (숫자 변형)")
                 st.markdown(q1_safe)
@@ -191,8 +188,9 @@ with tab2:
                     
                     if "text" in result_json:
                         math_text = result_json["text"]
-                        math_text = re.sub(r'\\\(\s*', '$', math_text)                         math_text = re.sub(r'\s*\\\)', '$', math_text)
-                        math_text = re.sub(r'\\\[\s*', '$$', math_text)                         math_text = re.sub(r'\s*\\\]', '$$', math_text)
+                        
+                        # [해결] 다시 복사 에러가 나지 않도록 세미콜론으로 단단하게 묶었습니다.
+                        math_text = re.sub(r'\\\(\s*', '$', math_text); math_text = re.sub(r'\s*\\\)', '$', math_text); math_text = re.sub(r'\\\[\s*', '$$', math_text); math_text = re.sub(r'\s*\\\]', '$$', math_text)
                         
                         st.session_state.ocr_text = math_text
                         st.success("수식 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
@@ -247,10 +245,8 @@ with tab2:
                         try:
                             parsed = json.loads(res_text)
                         except json.JSONDecodeError:
-                            safe_res_text = res_text.replace('\\', '\\\\')
-                            safe_res_text = safe_res_text.replace('\\\\"', '\\"') 
-                            safe_res_text = safe_res_text.replace('\\\\n', '\\n') 
-                            parsed = json.loads(safe_res_text)
+                            # [해결] 여기도 세미콜론으로 단단히 묶어버립니다
+                            safe_res_text = res_text.replace('\\', '\\\\'); safe_res_text = safe_res_text.replace('\\\\"', '\\"'); safe_res_text = safe_res_text.replace('\\\\n', '\\n'); parsed = json.loads(safe_res_text)
                             
                         problems = parsed.get("problems", [])
                         
