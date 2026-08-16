@@ -57,12 +57,8 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
                 result_json = res.json()
                 
                 if "text" in result_json:
-                    math_text = result_json["text"]
-                    
-                    # [핵심 해결] r""(Raw string)을 사용하여 복사/붙여넣기 시 특수문자 깨짐 현상 방지
-                    # Mathpix 기호를 $로 바꾸면서 '앞뒤로 띄어쓰기'를 강제로 1칸씩 넣습니다.
-                    math_text = math_text.replace(r"\(", " $ ")                     math_text = math_text.replace(r"\)", " $ ")
-                    math_text = math_text.replace(r"\[", " $$ ")                     math_text = math_text.replace(r"\]", " $$ ")
+                    # [최강 방어 코드] 줄바꿈이 사라져도 절대 에러가 나지 않도록 코드를 한 줄로 단단하게 묶었습니다.
+                    math_text = result_json["text"].replace(r"\(", " $ ").replace(r"\)", " $ ").replace(r"\[", " $$ ").replace(r"\]", " $$ ")
                     
                     # 혹시 공백이 너무 길어졌다면 1칸으로 깔끔하게 정리합니다.
                     math_text = re.sub(r' +', ' ', math_text)
