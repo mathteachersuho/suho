@@ -40,6 +40,25 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
+# ★ 속도 개선: 가장 빠른 AI 모델을 한 번만 찾아서 기억(Cache)합니다.
+# ==========================================
+@st.cache_data(show_spinner=False)
+def get_fastest_model_name(api_key):
+    try:
+        genai.configure(api_key=api_key)
+        available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        # 속도가 가장 빠른 flash 모델을 1순위로 찾되, 에러가 났던 2.5-flash는 제외합니다.
+        flash_models = [m for m in available if 'flash' in m and '2.5-flash' not in m]
+        if flash_models:
+            return flash_models[0]
+        
+        # flash 모델이 없다면 차선책 선택
+        safe_models = [m for m in available if '2.5-flash' not in m]
+        return safe_models[0] if safe_models else "gemini-1.5-pro"
+    except Exception:
+        return "gemini-1.5-flash" # 만약 검색에 실패하면 기본 빠른 모델 반환
+
+# ==========================================
 # 사이드바: 관리자 및 API 설정
 # ==========================================
 with st.sidebar:
@@ -115,13 +134,13 @@ with tab1:
                     st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
                 
                 # 1번 기본 문제
-                st.markdown("### [문제 1] 기본 다지기")
+                st.markdown("### [문제 1] 기본 다지기 (숫자 변형)")
                 st.markdown(p["q1"])
                 with st.expander("🔍 1번 정답 및 풀이 확인"):
                     st.info(p["a1"])
                 
                 # 2번 응용 문제
-                st.markdown("### [문제 2] 실력 키우기")
+                st.markdown("### [문제 2] 실력 키우기 (응용 변형)")
                 st.markdown(p["q2"])
                 with st.expander("🔍 2번 정답 및 풀이 확인"):
                     st.info(p["a2"])
@@ -156,7 +175,7 @@ with tab2:
             with st.spinner("Mathpix AI가 수식을 인식하는 중..."):
                 try:
                     base64_image = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
-                    st.session_state.current_image_b64 = base64_image # 이미지 임시 저장
+                    st.session_state.current_image_b64 = base64_image 
                     image_url = f"data:image/jpeg;base64,{base64_image}"
                     
                     headers = {
@@ -191,15 +210,15 @@ with tab2:
         st.markdown("**수식 렌더링 미리보기:**")
         st.markdown(edited_text)
         
-        if st.button("✨ 유사 문제 2개 생성하기 (기본1 + 응용1)", type="primary"):
+        if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
             if not gemini_api_key:
                 st.error("Gemini API Key를 입력해 주세요.")
             else:
-                with st.spinner("Gemini가 맞춤형 유사 문제를 출제하고 있습니다..."):
+                with st.spinner("Gemini가 빛의 속도로 문제를 출제하고 있습니다..."):
                     try:
-                        genai.configure(api_key=gemini_api_key)
-                        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                        safe_models = [m for m in available_models if '2.5-flash' not in m]
+                        # [속도 개선 로직 적용] 캐시된 빠른 모델 이름을 즉시 불러옵니다.
+                        fast_model_name = get_fastest_model_name(gemini_api_key)
+                        model = genai.GenerativeModel(fast_model_name)
                         
                         prompt = f"""
                         너는 학생들의 수준별 학습을 돕는 꼼꼼한 수학 교과 출제 위원이야. 
@@ -218,27 +237,18 @@ with tab2:
                         ```json 기호 없이 순수한 JSON 텍스트만 출력해.
                         """
                         
-                        success = False
-                        for model_name in safe_models:
-                            try:
-                                model = genai.GenerativeModel(model_name)
-                                response = model.generate_content(prompt)
-                                res_text = response.text.strip()
-                                if res_text.startswith("```json"): res_text = res_text[7:-3].strip()
-                                elif res_text.startswith("```"): res_text = res_text[3:-3].strip()
-                                    
-                                parsed = json.loads(res_text)
-                                problems = parsed.get("problems", [])
-                                
-                                if problems:
-                                    st.session_state.similar_problems = problems
-                                    st.success("유사 문제 생성 완료!")
-                                    success = True
-                                    break
-                            except Exception as e:
-                                continue
-                                
-                        if not success:
+                        response = model.generate_content(prompt)
+                        res_text = response.text.strip()
+                        if res_text.startswith("```json"): res_text = res_text[7:-3].strip()
+                        elif res_text.startswith("```"): res_text = res_text[3:-3].strip()
+                            
+                        parsed = json.loads(res_text)
+                        problems = parsed.get("problems", [])
+                        
+                        if problems:
+                            st.session_state.similar_problems = problems
+                            st.success(f"⚡ 생성 완료! (사용된 모델: {fast_model_name})")
+                        else:
                             st.error("문제 생성에 실패했습니다. 다시 시도해 주세요.")
                             
                     except Exception as e:
@@ -263,7 +273,7 @@ with tab2:
                     "a2": st.session_state.similar_problems[1]["answer"]
                 }
                 curr_db = load_db()
-                curr_db.insert(0, new_prob) # 가장 최신 문제를 맨 위에 추가
+                curr_db.insert(0, new_prob) 
                 save_db(curr_db)
                 st.success("✅ 게시판에 성공적으로 등록되었습니다! 맨 위 '선생님 추천 과제' 탭을 눌러 확인해 보세요.")
                 
