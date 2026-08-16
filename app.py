@@ -40,23 +40,21 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 속도 개선: 가장 빠른 AI 모델을 한 번만 찾아서 기억(Cache)합니다.
+# ★ 속도 개선 로직
 # ==========================================
 @st.cache_data(show_spinner=False)
 def get_fastest_model_name(api_key):
     try:
         genai.configure(api_key=api_key)
         available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        # 속도가 가장 빠른 flash 모델을 1순위로 찾되, 에러가 났던 2.5-flash는 제외합니다.
         flash_models = [m for m in available if 'flash' in m and '2.5-flash' not in m]
         if flash_models:
             return flash_models[0]
         
-        # flash 모델이 없다면 차선책 선택
         safe_models = [m for m in available if '2.5-flash' not in m]
         return safe_models[0] if safe_models else "gemini-1.5-pro"
     except Exception:
-        return "gemini-1.5-flash" # 만약 검색에 실패하면 기본 빠른 모델 반환
+        return "gemini-1.5-flash"
 
 # ==========================================
 # 사이드바: 관리자 및 API 설정
@@ -111,12 +109,12 @@ if not is_admin and get_app_status() == "OFF":
     st.stop()
 
 # ==========================================
-# 메인 화면: 두 개의 탭으로 분리
+# 메인 화면: 두 개의 탭
 # ==========================================
 tab1, tab2 = st.tabs(["📋 선생님 추천 과제", "📸 스스로 문제 만들기"])
 
 # ------------------------------------------
-# [탭 1] 학생 게시판 (선생님이 공유한 문제들)
+# [탭 1] 학생 게시판
 # ------------------------------------------
 with tab1:
     st.subheader("📋 선생님이 올려주신 오늘의 과제")
@@ -129,23 +127,19 @@ with tab1:
             with st.container():
                 st.markdown(f"#### 📝 과제 등록일: {p['date']}")
                 
-                # 원본 이미지 표시
                 if p.get("image_b64"):
                     st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
                 
-                # 1번 기본 문제
                 st.markdown("### [문제 1] 기본 다지기 (숫자 변형)")
                 st.markdown(p["q1"])
                 with st.expander("🔍 1번 정답 및 풀이 확인"):
                     st.info(p["a1"])
                 
-                # 2번 응용 문제
                 st.markdown("### [문제 2] 실력 키우기 (응용 변형)")
                 st.markdown(p["q2"])
                 with st.expander("🔍 2번 정답 및 풀이 확인"):
                     st.info(p["a2"])
                 
-                # 선생님인 경우 삭제 버튼 표시
                 if is_admin:
                     if st.button("🗑️ 이 과제 삭제하기", key=f"del_{p['id']}"):
                         problems_db = [x for x in problems_db if x['id'] != p['id']]
@@ -216,7 +210,6 @@ with tab2:
             else:
                 with st.spinner("Gemini가 빛의 속도로 문제를 출제하고 있습니다..."):
                     try:
-                        # [속도 개선 로직 적용] 캐시된 빠른 모델 이름을 즉시 불러옵니다.
                         fast_model_name = get_fastest_model_name(gemini_api_key)
                         model = genai.GenerativeModel(fast_model_name)
                         
@@ -233,7 +226,7 @@ with tab2:
                         
                         [출력 형식]
                         오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}}, {{"problem_num": 2, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
-                        수식은 LaTeX 문법($ 또는 $$)을 정확히 사용하되, $ 기호 바로 안쪽에는 절대로 공백을 넣지 마 (예: $x$ 금지, $x$ 필수).
+                        ⚠️[매우 중요] 수식에 백슬래시(\\)가 포함된 경우(예: \\angle, \\mathrm), JSON 오류가 나지 않도록 반드시 이중 백슬래시(\\\\)로 이스케이프 처리해서 출력해.
                         ```json 기호 없이 순수한 JSON 텍스트만 출력해.
                         """
                         
@@ -242,7 +235,17 @@ with tab2:
                         if res_text.startswith("```json"): res_text = res_text[7:-3].strip()
                         elif res_text.startswith("```"): res_text = res_text[3:-3].strip()
                             
-                        parsed = json.loads(res_text)
+                        # [해결 핵심] JSON 디코드 오류(Invalid \escape) 완벽 방어
+                        try:
+                            # 1차 시도: 그냥 파싱
+                            parsed = json.loads(res_text)
+                        except json.JSONDecodeError:
+                            # 2차 시도: AI가 \angle 등을 제대로 보호하지 않았다면, 강제로 \를 \\로 바꿔 오류를 해결합니다.
+                            safe_res_text = res_text.replace('\\', '\\\\')
+                            safe_res_text = safe_res_text.replace('\\\\"', '\\"') # 큰따옴표 보호
+                            safe_res_text = safe_res_text.replace('\\\\n', '\\n') # 줄바꿈 보호
+                            parsed = json.loads(safe_res_text)
+                            
                         problems = parsed.get("problems", [])
                         
                         if problems:
@@ -259,7 +262,6 @@ with tab2:
         st.divider()
         st.subheader("🎯 생성된 연습 문제")
         
-        # 선생님에게만 보이는 게시판 등록 버튼
         if is_admin:
             if st.button("📢 이 문제를 학생 게시판에 등록하기", type="primary"):
                 import datetime
