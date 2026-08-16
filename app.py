@@ -31,13 +31,6 @@ if "ocr_text" not in st.session_state:
 if "similar_problems" not in st.session_state:
     st.session_state.similar_problems = None
 
-# Streamlit 마크다운 버그 방지용 함수
-def escape_markdown_math(text):
-    if not text:
-        return ""
-    # 수식 안의 모든 \를 \\로 바꾸어 보호
-    return text.replace('\\', '\\\\')
-
 # 1. 문제 사진 업로드
 uploaded_file = st.file_uploader("문제 사진을 찍거나 업로드하세요", type=["png", "jpg", "jpeg"])
 
@@ -66,14 +59,12 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
                 if "text" in result_json:
                     math_text = result_json["text"]
                     
-                    # [해결 핵심] 
-                    # 1. Mathpix 기호를 $로 변환
-                    math_text = math_text.replace("\\(", "$").replace("\\)", "$")
-                    math_text = math_text.replace("\\[", "$$").replace("\\]", "$$")
+                    # [핵심 해결] Mathpix 기호를 $로 바꾸면서 '앞뒤로 띄어쓰기'를 강제로 1칸씩 넣습니다.
+                    # 이 띄어쓰기가 있어야만 Streamlit이 수식으로 완벽하게 인식합니다.
+                    math_text = math_text.replace("\\(", " $ ")                     math_text = math_text.replace("\\)", " $ ")
+                    math_text = math_text.replace("\\[", " $$ ")                     math_text = math_text.replace("\\]", " $$ ")
                     
-                    # 2. $ 기호 '바깥쪽'에 무조건 공백을 추가하여 Streamlit이 수식으로 인식하게 강제함
-                    math_text = math_text.replace("$", " $ ")
-                    # 다중 공백 정리
+                    # 혹시 공백이 너무 길어졌다면 1칸으로 깔끔하게 정리합니다.
                     math_text = re.sub(r' +', ' ', math_text)
                     
                     st.session_state.ocr_text = math_text
@@ -94,9 +85,8 @@ if st.session_state.ocr_text:
     st.session_state.ocr_text = edited_text
     
     st.markdown("**수식 렌더링 미리보기:**")
-    
-    safe_preview_text = escape_markdown_math(edited_text)
-    st.markdown(safe_preview_text)
+    # 꼬아뒀던 코드를 삭제하고 원본 그대로 화면에 출력합니다.
+    st.markdown(edited_text)
     
     # 3. 유사 문제 생성 버튼
     if st.button("✨ 유사 문제 3개 생성하기", type="primary"):
@@ -166,12 +156,9 @@ if st.session_state.similar_problems:
         
         with st.container():
             st.markdown(f"### [유사 문제 {idx}]")
-            
-            safe_q = escape_markdown_math(q_text)
-            safe_a = escape_markdown_math(a_text)
-            
-            st.markdown(safe_q)
+            # 꼬아뒀던 코드를 삭제하고 원본 그대로 화면에 출력합니다.
+            st.markdown(q_text)
             
             with st.expander("🔍 정답 및 풀이 확인"):
-                st.info(f"**정답:**\n{safe_a}")
+                st.info(f"**정답:**\n{a_text}")
             st.write("")
