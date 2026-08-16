@@ -260,7 +260,7 @@ with tab2:
             st.info("💡 이 문제를 특정 반 학생들에게 숙제로 낼 수 있습니다.")
             col1, col2 = st.columns([1, 2])
             with col1:
-                target_class = st.selectbox("게시할 반", ["1반", "2반", "3반", "4반", "5반", "6반"])
+                target_class = st.selectbox("게시할 반", ["1M2반", "1M3반", "2M1반", "2M3반", "3M1반", "3M3반"])
             with col2:
                 st.write("") # 줄맞춤용
                 st.write("") 
