@@ -65,7 +65,7 @@ def get_fastest_model_name(api_key):
         return "gemini-1.5-flash"
 
 # ==========================================
-# ★ 반 이름 변경 반영 (1M2, 1M3, 2M1, 2M3, 3M1, 3M3)
+# ★ 반 이름 설정 (1M2, 1M3, 2M1, 2M3, 3M1, 3M3)
 # ==========================================
 admin_pw = st.secrets.get("ADMIN_PASSWORD", "1234")
 class_list = ["1M2", "1M3", "2M1", "2M3", "3M1", "3M3"]
@@ -159,18 +159,25 @@ with tab1:
                 
                 q1_safe = format_math(p.get("q1", ""))
                 a1_safe = format_math(p.get("a1", ""))
+                s1_safe = format_math(p.get("s1", ""))
+                
                 q2_safe = format_math(p.get("q2", ""))
                 a2_safe = format_math(p.get("a2", ""))
+                s2_safe = format_math(p.get("s2", ""))
                 
                 st.markdown("### [문제 1] 기본 다지기")
                 st.markdown(q1_safe)
                 with st.expander("🔍 1번 정답 및 풀이 확인"):
-                    st.info(a1_safe)
+                    st.markdown(f"**정답:** {a1_safe}")
+                    if s1_safe:
+                        st.markdown(f"**풀이 및 해설:**\n\n{s1_safe}")
                 
                 st.markdown("### [문제 2] 실력 키우기")
                 st.markdown(q2_safe)
                 with st.expander("🔍 2번 정답 및 풀이 확인"):
-                    st.info(a2_safe)
+                    st.markdown(f"**정답:** {a2_safe}")
+                    if s2_safe:
+                        st.markdown(f"**풀이 및 해설:**\n\n{s2_safe}")
                 
                 if current_role == "admin":
                     if st.button("🗑️ 이 과제 삭제하기", key=f"del_{p['id']}"):
@@ -229,6 +236,7 @@ with tab2:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
+                    # ★ 프롬프트에 'answer(정답)'와 'solution(상세 해설)' 항목을 명확히 분리하여 지시
                     prompt = f"""
                     너는 학생들의 수준별 학습을 돕는 꼼꼼한 수학 교과 출제 위원이야. 
                     다음 [원본 문제]를 바탕으로 성격이 다른 [유사 문제] 딱 2개를 만들어줘.
@@ -241,11 +249,12 @@ with tab2:
                     2번 문제: 핵심 개념은 유지하되 묻는 방식을 다르게 비튼 응용 문제로 만들어줘.
                     
                     [출력 형식]
-                    오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}}, {{"problem_num": 2, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
+                    오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답", "solution": "학생들이 이해하기 쉽도록 단계별로 작성한 상세한 풀이 및 해설"}}, {{"problem_num": 2, "question": "문제내용", "answer": "정답", "solution": "상세한 풀이 및 해설"}} ] }} 로 작성해.
                     
                     ⚠️[매우 중요 1] 수식 기호 안에는 한글을 섞지 말고 순수 수학 기호만 넣어. (예: `$x=2$` 이므로)
                     ⚠️[매우 중요 2] JSON 파싱 오류를 막기 위해 수식의 백슬래시는 반드시 두 개씩 적어! (❌ `\frac`, `\notin` ➔ ⭕ `\\\\frac`, `\\\\notin`)
                     ⚠️[매우 중요 3] 줄바꿈이 필요할 때는 절대로 `\\n`을 쓰지 말고 `[br]` 이라고 적어! (예: 첫 번째 줄[br]두 번째 줄)
+                    ⚠️[매우 중요 4] `solution` 항목에는 정답을 도출하는 전 과정(해설)을 반드시 친절하고 상세하게 적어줘.
                     
                     ```json 기호 없이 순수한 JSON 텍스트만 출력해.
                     """
@@ -289,8 +298,10 @@ with tab2:
                             "image_b64": st.session_state.current_image_b64,
                             "q1": st.session_state.similar_problems[0]["question"],
                             "a1": st.session_state.similar_problems[0]["answer"],
+                            "s1": st.session_state.similar_problems[0].get("solution", ""),
                             "q2": st.session_state.similar_problems[1]["question"],
-                            "a2": st.session_state.similar_problems[1]["answer"]
+                            "a2": st.session_state.similar_problems[1]["answer"],
+                            "s2": st.session_state.similar_problems[1].get("solution", ""),
                         }
                         curr_db = load_db()
                         curr_db.insert(0, new_prob) 
@@ -302,7 +313,11 @@ with tab2:
                     st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
                     display_q = format_math(item.get("question", ""))
                     display_a = format_math(item.get("answer", ""))
+                    display_s = format_math(item.get("solution", ""))
+                    
                     st.markdown(display_q)
                     with st.expander("🔍 정답 및 풀이 확인"):
-                        st.info(display_a)
+                        st.markdown(f"**정답:** {display_a}")
+                        if display_s:
+                            st.markdown(f"**풀이 및 해설:**\n\n{display_s}")
                     st.write("")
