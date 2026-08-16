@@ -5,6 +5,7 @@ import base64
 import re
 import os
 import time
+import datetime
 import google.generativeai as genai
 
 # 페이지 기본 설정
@@ -130,7 +131,7 @@ with tab1:
                 if p.get("image_b64"):
                     st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
                 
-                # [해결 핵심] \n 명령어를 실제 화면 줄바꿈(\n\n)으로 변환
+                # \n 명령어를 실제 화면 줄바꿈(\n\n)으로 변환
                 q1_safe = p["q1"].replace('\\n', '\n\n')
                 a1_safe = p["a1"].replace('\\n', '\n\n')
                 q2_safe = p["q2"].replace('\\n', '\n\n')
@@ -190,7 +191,10 @@ with tab2:
                     
                     if "text" in result_json:
                         math_text = result_json["text"]
-                        math_text = re.sub(r'\\\(\s*', '$', math_text); math_text = re.sub(r'\s*\\\)', '$', math_text); math_text = re.sub(r'\\\[\s*', '$$', math_text); math_text = re.sub(r'\s*\\\]', '$$', math_text);
+                        math_text = re.sub(r'\\\(\s*', '$', math_text)
+                        math_text = re.sub(r'\s*\\\)', '$', math_text)
+                        math_text = re.sub(r'\\\[\s*', '$$', math_text)
+                        math_text = re.sub(r'\s*\\\]', '$$', math_text)
                         
                         st.session_state.ocr_text = math_text
                         st.success("수식 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
@@ -268,7 +272,8 @@ with tab2:
         
         if is_admin:
             if st.button("📢 이 문제를 학생 게시판에 등록하기", type="primary"):
-                import datetime
                 new_prob = {
                     "id": str(int(time.time())),
-                    "date": datetime.datetime.now().strftime("%Y-%m-%d
+                    "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "image_b64": st.session_state.current_image_b64,
+                    "q1": st.session_state.similar_problems[0]["question"],
