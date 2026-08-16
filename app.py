@@ -40,16 +40,12 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링 깨짐 방지 전용 함수 (핵심 해결책)
+# ★ 수식 렌더링 전용 함수
 # ==========================================
 def format_math(text):
     if not text:
         return ""
-    # 1. AI가 생성한 줄바꿈 암호([br])를 실제 화면 줄바꿈으로 안전하게 변환
     text = text.replace('[br]', '\n\n')
-    
-    # 2. 앱(Streamlit)이 \frac, \mid 등의 백슬래시를 지워버리는 현상 완벽 방어 (\ -> \\)
-    text = text.replace('\\', '\\\\')
     return text
 
 # ==========================================
@@ -69,16 +65,17 @@ def get_fastest_model_name(api_key):
         return "gemini-1.5-flash"
 
 # ==========================================
-# ★ 접속 코드(비밀번호) 및 권한 설정
+# ★ 반 이름 변경 반영 (1M2, 1M3, 2M1, 2M3, 3M1, 3M3)
 # ==========================================
 admin_pw = st.secrets.get("ADMIN_PASSWORD", "1234")
+class_list = ["1M2", "1M3", "2M1", "2M3", "3M1", "3M3"]
 class_pws = {
-    "1반": st.secrets.get("PW_CLASS1", "0101"),
-    "2반": st.secrets.get("PW_CLASS2", "0202"),
-    "3반": st.secrets.get("PW_CLASS3", "0303"),
-    "4반": st.secrets.get("PW_CLASS4", "0404"),
-    "5반": st.secrets.get("PW_CLASS5", "0505"),
-    "6반": st.secrets.get("PW_CLASS6", "0606"),
+    "1M2": st.secrets.get("PW_CLASS1", "0102"),
+    "1M3": st.secrets.get("PW_CLASS2", "0103"),
+    "2M1": st.secrets.get("PW_CLASS3", "0201"),
+    "2M3": st.secrets.get("PW_CLASS4", "0203"),
+    "3M1": st.secrets.get("PW_CLASS5", "0301"),
+    "3M3": st.secrets.get("PW_CLASS6", "0303"),
 }
 
 mathpix_app_id = st.secrets.get("MATHPIX_APP_ID", "")
@@ -142,13 +139,13 @@ with tab1:
     problems_db = load_db()
     
     if current_role == "admin":
-        view_class = st.selectbox("👀 조회할 반 게시판을 선택하세요", ["1반", "2반", "3반", "4반", "5반", "6반"])
+        view_class = st.selectbox("👀 조회할 반 게시판을 선택하세요", class_list)
     else:
         view_class = current_role
         
-    st.subheader(f"📋 {view_class} 과제 게시판")
+    st.subheader(f"📋 [{view_class}] 과제 게시판")
     
-    filtered_problems = [p for p in problems_db if p.get("class_id", "1반") == view_class]
+    filtered_problems = [p for p in problems_db if p.get("class_id", "1M2") == view_class]
     
     if not filtered_problems:
         st.info("아직 등록된 과제가 없습니다.")
@@ -160,7 +157,6 @@ with tab1:
                 if p.get("image_b64"):
                     st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
                 
-                # 안전한 수식 렌더링 방패 적용!
                 q1_safe = format_math(p.get("q1", ""))
                 a1_safe = format_math(p.get("a1", ""))
                 q2_safe = format_math(p.get("q2", ""))
@@ -233,7 +229,6 @@ with tab2:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
-                    # ★ AI 명령(프롬프트) 강화: 줄바꿈 충돌 방지 및 안전한 이스케이프 명령
                     prompt = f"""
                     너는 학생들의 수준별 학습을 돕는 꼼꼼한 수학 교과 출제 위원이야. 
                     다음 [원본 문제]를 바탕으로 성격이 다른 [유사 문제] 딱 2개를 만들어줘.
@@ -274,40 +269,40 @@ with tab2:
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
 
-            if st.session_state.similar_problems:
-                st.divider()
-                st.subheader("🎯 생성된 연습 문제")
-                
-                if current_role == "admin":
-                    st.info("💡 이 문제를 특정 반 학생들에게 숙제로 낼 수 있습니다.")
-                    col1, col2 = st.columns([1, 2])
-                    with col1:
-                        target_class = st.selectbox("게시할 반", ["1반", "2반", "3반", "4반", "5반", "6반"])
-                    with col2:
-                        st.write("") 
-                        st.write("") 
-                        if st.button(f"📢 {target_class} 게시판에 등록하기", type="primary"):
-                            new_prob = {
-                                "id": str(int(time.time())),
-                                "class_id": target_class, 
-                                "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                                "image_b64": st.session_state.current_image_b64,
-                                "q1": st.session_state.similar_problems[0]["question"],
-                                "a1": st.session_state.similar_problems[0]["answer"],
-                                "q2": st.session_state.similar_problems[1]["question"],
-                                "a2": st.session_state.similar_problems[1]["answer"]
-                            }
-                            curr_db = load_db()
-                            curr_db.insert(0, new_prob) 
-                            save_db(curr_db)
-                            st.success(f"✅ {target_class} 게시판에 성공적으로 등록되었습니다!")
-                        
-                for idx, item in enumerate(st.session_state.similar_problems, start=1):
-                    with st.container():
-                        st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
-                        display_q = format_math(item.get("question", ""))
-                        display_a = format_math(item.get("answer", ""))
-                        st.markdown(display_q)
-                        with st.expander("🔍 정답 및 풀이 확인"):
-                            st.info(display_a)
-                        st.write("")
+        if st.session_state.similar_problems:
+            st.divider()
+            st.subheader("🎯 생성된 연습 문제")
+            
+            if current_role == "admin":
+                st.info("💡 이 문제를 특정 반 학생들에게 숙제로 낼 수 있습니다.")
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    target_class = st.selectbox("게시할 반", class_list)
+                with col2:
+                    st.write("") 
+                    st.write("") 
+                    if st.button(f"📢 [{target_class}] 게시판에 등록하기", type="primary"):
+                        new_prob = {
+                            "id": str(int(time.time())),
+                            "class_id": target_class, 
+                            "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "image_b64": st.session_state.current_image_b64,
+                            "q1": st.session_state.similar_problems[0]["question"],
+                            "a1": st.session_state.similar_problems[0]["answer"],
+                            "q2": st.session_state.similar_problems[1]["question"],
+                            "a2": st.session_state.similar_problems[1]["answer"]
+                        }
+                        curr_db = load_db()
+                        curr_db.insert(0, new_prob) 
+                        save_db(curr_db)
+                        st.success(f"✅ [{target_class}] 게시판에 성공적으로 등록되었습니다!")
+                    
+            for idx, item in enumerate(st.session_state.similar_problems, start=1):
+                with st.container():
+                    st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
+                    display_q = format_math(item.get("question", ""))
+                    display_a = format_math(item.get("answer", ""))
+                    st.markdown(display_q)
+                    with st.expander("🔍 정답 및 풀이 확인"):
+                        st.info(display_a)
+                    st.write("")
