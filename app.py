@@ -40,6 +40,19 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
+# ★ 수식 렌더링 깨짐 방지 전용 함수 (핵심 해결책)
+# ==========================================
+def format_math(text):
+    if not text:
+        return ""
+    # 1. AI가 생성한 줄바꿈 암호([br])를 실제 화면 줄바꿈으로 안전하게 변환
+    text = text.replace('[br]', '\n\n')
+    
+    # 2. 앱(Streamlit)이 \frac, \mid 등의 백슬래시를 지워버리는 현상 완벽 방어 (\ -> \\)
+    text = text.replace('\\', '\\\\')
+    return text
+
+# ==========================================
 # ★ 속도 개선 로직
 # ==========================================
 @st.cache_data(show_spinner=False)
@@ -147,14 +160,18 @@ with tab1:
                 if p.get("image_b64"):
                     st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
                 
-                q1_safe = p["q1"].replace('\\n', '\n\n'); a1_safe = p["a1"].replace('\\n', '\n\n'); q2_safe = p["q2"].replace('\\n', '\n\n'); a2_safe = p["a2"].replace('\\n', '\n\n')
+                # 안전한 수식 렌더링 방패 적용!
+                q1_safe = format_math(p.get("q1", ""))
+                a1_safe = format_math(p.get("a1", ""))
+                q2_safe = format_math(p.get("q2", ""))
+                a2_safe = format_math(p.get("a2", ""))
                 
-                st.markdown("### [문제 1] 기본 다지기 (숫자 변형)")
+                st.markdown("### [문제 1] 기본 다지기")
                 st.markdown(q1_safe)
                 with st.expander("🔍 1번 정답 및 풀이 확인"):
                     st.info(a1_safe)
                 
-                st.markdown("### [문제 2] 실력 키우기 (응용 변형)")
+                st.markdown("### [문제 2] 실력 키우기")
                 st.markdown(q2_safe)
                 with st.expander("🔍 2번 정답 및 풀이 확인"):
                     st.info(a2_safe)
@@ -208,7 +225,7 @@ with tab2:
         edited_text = st.text_area("도형 조건이나 수식 중 누락된 부분을 수정하세요:", value=st.session_state.ocr_text, height=150)
         st.session_state.ocr_text = edited_text
         st.markdown("**수식 렌더링 미리보기:**")
-        st.markdown(edited_text.replace('\\n', '\n\n'))
+        st.markdown(format_math(edited_text))
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
             with st.spinner("Gemini가 빛의 속도로 문제를 출제하고 있습니다..."):
@@ -216,7 +233,7 @@ with tab2:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
-                    # ★ AI 명령(프롬프트) 강화: 한글과 수식을 절대 섞지 못하도록 강력하게 제한했습니다!
+                    # ★ AI 명령(프롬프트) 강화: 줄바꿈 충돌 방지 및 안전한 이스케이프 명령
                     prompt = f"""
                     너는 학생들의 수준별 학습을 돕는 꼼꼼한 수학 교과 출제 위원이야. 
                     다음 [원본 문제]를 바탕으로 성격이 다른 [유사 문제] 딱 2개를 만들어줘.
@@ -231,9 +248,9 @@ with tab2:
                     [출력 형식]
                     오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}}, {{"problem_num": 2, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
                     
-                    ⚠️[매우 중요 1] 수식에 백슬래시(\\)가 포함된 경우(예: \\angle, \\mathrm), JSON 오류가 나지 않도록 반드시 이중 백슬래시(\\\\)로 이스케이프 처리해서 출력해.
-                    ⚠️[매우 중요 2] 한글 텍스트는 절대로 수식 기호($ 또는 $$) 안쪽에 넣지 마! 수식 기호 안에는 순수하게 숫자, 영어, 수학 기호만 들어가야 해. 
-                    (❌ 나쁜 예: `$x=2 이므로$`, ⭕ 좋은 예: `$x=2$` 이므로)
+                    ⚠️[매우 중요 1] 수식 기호 안에는 한글을 섞지 말고 순수 수학 기호만 넣어. (예: `$x=2$` 이므로)
+                    ⚠️[매우 중요 2] JSON 파싱 오류를 막기 위해 수식의 백슬래시는 반드시 두 개씩 적어! (❌ `\frac`, `\notin` ➔ ⭕ `\\\\frac`, `\\\\notin`)
+                    ⚠️[매우 중요 3] 줄바꿈이 필요할 때는 절대로 `\\n`을 쓰지 말고 `[br]` 이라고 적어! (예: 첫 번째 줄[br]두 번째 줄)
                     
                     ```json 기호 없이 순수한 JSON 텍스트만 출력해.
                     """
@@ -246,7 +263,7 @@ with tab2:
                     try:
                         parsed = json.loads(res_text)
                     except json.JSONDecodeError:
-                        safe_res_text = res_text.replace('\\', '\\\\'); safe_res_text = safe_res_text.replace('\\\\"', '\\"'); safe_res_text = safe_res_text.replace('\\\\n', '\\n'); parsed = json.loads(safe_res_text)
+                        safe_res_text = res_text.replace('\\', '\\\\'); safe_res_text = safe_res_text.replace('\\\\"', '\\"'); parsed = json.loads(safe_res_text)
                         
                     problems = parsed.get("problems", [])
                     if problems:
@@ -257,40 +274,40 @@ with tab2:
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
 
-    if st.session_state.similar_problems:
-        st.divider()
-        st.subheader("🎯 생성된 연습 문제")
-        
-        if current_role == "admin":
-            st.info("💡 이 문제를 특정 반 학생들에게 숙제로 낼 수 있습니다.")
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                target_class = st.selectbox("게시할 반", ["1반", "2반", "3반", "4반", "5반", "6반"])
-            with col2:
-                st.write("") 
-                st.write("") 
-                if st.button(f"📢 {target_class} 게시판에 등록하기", type="primary"):
-                    new_prob = {
-                        "id": str(int(time.time())),
-                        "class_id": target_class, 
-                        "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "image_b64": st.session_state.current_image_b64,
-                        "q1": st.session_state.similar_problems[0]["question"],
-                        "a1": st.session_state.similar_problems[0]["answer"],
-                        "q2": st.session_state.similar_problems[1]["question"],
-                        "a2": st.session_state.similar_problems[1]["answer"]
-                    }
-                    curr_db = load_db()
-                    curr_db.insert(0, new_prob) 
-                    save_db(curr_db)
-                    st.success(f"✅ {target_class} 게시판에 성공적으로 등록되었습니다!")
+            if st.session_state.similar_problems:
+                st.divider()
+                st.subheader("🎯 생성된 연습 문제")
                 
-        for idx, item in enumerate(st.session_state.similar_problems, start=1):
-            with st.container():
-                st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
-                display_q = item.get("question", "").replace('\\n', '\n\n')
-                display_a = item.get("answer", "").replace('\\n', '\n\n')
-                st.markdown(display_q)
-                with st.expander("🔍 정답 및 풀이 확인"):
-                    st.info(display_a)
-                st.write("")
+                if current_role == "admin":
+                    st.info("💡 이 문제를 특정 반 학생들에게 숙제로 낼 수 있습니다.")
+                    col1, col2 = st.columns([1, 2])
+                    with col1:
+                        target_class = st.selectbox("게시할 반", ["1반", "2반", "3반", "4반", "5반", "6반"])
+                    with col2:
+                        st.write("") 
+                        st.write("") 
+                        if st.button(f"📢 {target_class} 게시판에 등록하기", type="primary"):
+                            new_prob = {
+                                "id": str(int(time.time())),
+                                "class_id": target_class, 
+                                "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                "image_b64": st.session_state.current_image_b64,
+                                "q1": st.session_state.similar_problems[0]["question"],
+                                "a1": st.session_state.similar_problems[0]["answer"],
+                                "q2": st.session_state.similar_problems[1]["question"],
+                                "a2": st.session_state.similar_problems[1]["answer"]
+                            }
+                            curr_db = load_db()
+                            curr_db.insert(0, new_prob) 
+                            save_db(curr_db)
+                            st.success(f"✅ {target_class} 게시판에 성공적으로 등록되었습니다!")
+                        
+                for idx, item in enumerate(st.session_state.similar_problems, start=1):
+                    with st.container():
+                        st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
+                        display_q = format_math(item.get("question", ""))
+                        display_a = format_math(item.get("answer", ""))
+                        st.markdown(display_q)
+                        with st.expander("🔍 정답 및 풀이 확인"):
+                            st.info(display_a)
+                        st.write("")
