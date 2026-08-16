@@ -4,30 +4,44 @@ import json
 import base64
 import re
 import os
+import time
 import google.generativeai as genai
 
 # 페이지 기본 설정
 st.set_page_config(page_title="수학 유사 문제 생성기", layout="centered")
 
-st.title("📐 AI 수학 유사 문제 생성기 (Gemini 버전)")
-st.caption("사진을 올리면 '숫자 변형 1문제'와 '응용 변형 1문제'를 즉석에서 생성합니다.")
+st.title("📐 AI 수학 온라인 클래스룸")
+st.caption("선생님의 추천 과제를 풀거나, 모르는 문제를 직접 찍어 유사 문제를 만들어보세요!")
 
 # ==========================================
-# ★ 추가된 기능: 선생님 전용 관리자 모드 (버튼 스위치)
+# ★ 로컬 데이터베이스(게시판) 설정
 # ==========================================
-# 스위치 상태를 임시로 기억할 파일 경로
+DB_FILE = "shared_problems.json"
 STATUS_FILE = "app_status.txt"
+
+def load_db():
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def save_db(data):
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 def get_app_status():
     if os.path.exists(STATUS_FILE):
         with open(STATUS_FILE, "r") as f:
             return f.read().strip()
-    return "OFF" # 기본 상태는 '잠금'
+    return "OFF"
 
 def set_app_status(status):
     with open(STATUS_FILE, "w") as f:
         f.write(status)
 
+# ==========================================
+# 사이드바: 관리자 및 API 설정
+# ==========================================
 with st.sidebar:
     st.header("🔑 API 설정 (선생님 전용)")
     mathpix_app_id = st.secrets.get("MATHPIX_APP_ID", "")
@@ -43,9 +57,7 @@ with st.sidebar:
         
     st.divider()
     
-    # 👨‍🏫 선생님 로그인 영역
     st.header("👨‍🏫 수업 시간 관리 (스위치)")
-    # Secrets에 ADMIN_PASSWORD가 없으면 기본 비밀번호는 '1234'로 작동합니다.
     real_admin_pw = st.secrets.get("ADMIN_PASSWORD", "1234") 
     input_pw = st.text_input("관리자 비밀번호를 입력하세요", type="password")
     
@@ -54,14 +66,12 @@ with st.sidebar:
     
     if is_admin:
         st.success("✅ 선생님 인증 완료!")
-        # 마스터 스위치 버튼 (라디오 버튼 형태)
         new_status = st.radio(
             "학생 접속 스위치 조작", 
             ["ON (수업 중)", "OFF (잠금)"], 
             index=0 if current_status == "ON" else 1
         )
         
-        # 버튼을 눌러 상태가 바뀌면 파일에 저장하고 새로고침
         if "ON" in new_status and current_status == "OFF":
             set_app_status("ON")
             st.rerun()
@@ -74,158 +84,193 @@ with st.sidebar:
         st.info("비밀번호를 입력해야 스위치가 나타납니다.")
 
 # ==========================================
-# 학생 접속 차단 로직 (선생님은 비밀번호를 쳤으므로 차단되지 않음)
+# 학생 접속 차단 로직
+# ==========================================
 if not is_admin and get_app_status() == "OFF":
     st.error("⛔ 현재는 수학 앱 사용 시간이 아닙니다.")
     st.info("💡 선생님이 수업 시간에 접속을 열어주시면 다시 새로고침(F5) 해주세요!")
     st.stop()
+
 # ==========================================
+# 메인 화면: 두 개의 탭으로 분리
+# ==========================================
+tab1, tab2 = st.tabs(["📋 선생님 추천 과제", "📸 스스로 문제 만들기"])
 
-# 세션 상태 초기화
-if "ocr_text" not in st.session_state:
-    st.session_state.ocr_text = ""
-if "similar_problems" not in st.session_state:
-    st.session_state.similar_problems = None
-
-# 1. 문제 사진 업로드
-uploaded_file = st.file_uploader("문제 사진을 찍거나 업로드하세요", type=["png", "jpg", "jpeg"])
-
-if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하기"):
-    if not (mathpix_app_id and mathpix_app_key):
-        st.error("Mathpix API 정보를 입력해 주세요.")
+# ------------------------------------------
+# [탭 1] 학생 게시판 (선생님이 공유한 문제들)
+# ------------------------------------------
+with tab1:
+    st.subheader("📋 선생님이 올려주신 오늘의 과제")
+    problems_db = load_db()
+    
+    if not problems_db:
+        st.info("아직 등록된 과제가 없습니다. 선생님이 문제를 올려주실 때까지 기다려주세요!")
     else:
-        with st.spinner("Mathpix AI가 수식을 인식하는 중..."):
-            try:
-                base64_image = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
-                image_url = f"data:image/jpeg;base64,{base64_image}"
+        for p in problems_db:
+            with st.container():
+                st.markdown(f"#### 📝 과제 등록일: {p['date']}")
                 
-                headers = {
-                    "app_id": mathpix_app_id,
-                    "app_key": mathpix_app_key,
-                    "Content-type": "application/json"
-                }
-                data = {
-                    "src": image_url,
-                    "formats": ["text", "latex_styled"]
-                }
+                # 원본 이미지 표시
+                if p.get("image_b64"):
+                    st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
                 
-                res = requests.post("https://api.mathpix.com/v3/text", headers=headers, json=data)
-                result_json = res.json()
+                # 1번 기본 문제
+                st.markdown("### [문제 1] 기본 다지기")
+                st.markdown(p["q1"])
+                with st.expander("🔍 1번 정답 및 풀이 확인"):
+                    st.info(p["a1"])
                 
-                if "text" in result_json:
-                    math_text = result_json["text"]
-                    
-                    # 수식 변환 및 띄어쓰기 압착 처리
-                    math_text = re.sub(r'\\\(\s*', '$', math_text); math_text = re.sub(r'\s*\\\)', '$', math_text); math_text = re.sub(r'\\\[\s*', '$$', math_text); math_text = re.sub(r'\s*\\\]', '$$', math_text);
-                    
-                    st.session_state.ocr_text = math_text
-                    st.success("수식 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
-                else:
-                    st.error("인식에 실패했습니다. 다시 시도해 주세요.")
-            except Exception as e:
-                st.error(f"오류가 발생했습니다: {e}")
+                # 2번 응용 문제
+                st.markdown("### [문제 2] 실력 키우기")
+                st.markdown(p["q2"])
+                with st.expander("🔍 2번 정답 및 풀이 확인"):
+                    st.info(p["a2"])
+                
+                # 선생님인 경우 삭제 버튼 표시
+                if is_admin:
+                    if st.button("🗑️ 이 과제 삭제하기", key=f"del_{p['id']}"):
+                        problems_db = [x for x in problems_db if x['id'] != p['id']]
+                        save_db(problems_db)
+                        st.rerun()
+            st.divider()
 
-# 2. 추출된 텍스트 확인 및 수정
-if st.session_state.ocr_text:
-    st.subheader("📝 추출된 원본 문제 (검수 및 수정)")
+# ------------------------------------------
+# [탭 2] 개인용 문제 생성기
+# ------------------------------------------
+with tab2:
+    st.subheader("📸 모르는 문제를 찍어 유사 문제를 만드세요")
     
-    if uploaded_file is not None:
-        st.image(uploaded_file, caption="[원본 도형 이미지]", use_container_width=True)
-        st.write("") 
+    if "ocr_text" not in st.session_state:
+        st.session_state.ocr_text = ""
+    if "similar_problems" not in st.session_state:
+        st.session_state.similar_problems = None
+    if "current_image_b64" not in st.session_state:
+        st.session_state.current_image_b64 = None
 
-    edited_text = st.text_area(
-        "도형 조건이나 수식 중 누락된 부분이 있다면 수정하세요:", 
-        value=st.session_state.ocr_text, 
-        height=150
-    )
-    st.session_state.ocr_text = edited_text
-    
-    st.markdown("**수식 렌더링 미리보기:**")
-    st.markdown(edited_text)
-    
-    # 3. 유사 문제 생성 버튼
-    if st.button("✨ 유사 문제 2개 생성하기 (기본1 + 응용1)", type="primary"):
-        if not gemini_api_key:
-            st.error("Gemini API Key를 입력해 주세요.")
+    uploaded_file = st.file_uploader("문제 사진을 찍거나 업로드하세요", type=["png", "jpg", "jpeg"], key="uploader")
+
+    if uploaded_file and st.button("📸 사진에서 수식 추출하기"):
+        if not (mathpix_app_id and mathpix_app_key):
+            st.error("Mathpix API 정보를 입력해 주세요.")
         else:
-            with st.spinner("Gemini가 맞춤형 유사 문제를 출제하고 있습니다..."):
+            with st.spinner("Mathpix AI가 수식을 인식하는 중..."):
                 try:
-                    genai.configure(api_key=gemini_api_key)
+                    base64_image = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
+                    st.session_state.current_image_b64 = base64_image # 이미지 임시 저장
+                    image_url = f"data:image/jpeg;base64,{base64_image}"
                     
-                    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                    safe_models = [m for m in available_models if '2.5-flash' not in m]
+                    headers = {
+                        "app_id": mathpix_app_id,
+                        "app_key": mathpix_app_key,
+                        "Content-type": "application/json"
+                    }
+                    data = {"src": image_url, "formats": ["text", "latex_styled"]}
                     
-                    prompt = f"""
-                    너는 학생들의 수준별 학습을 돕는 꼼꼼한 수학 교과 출제 위원이야. 
-                    다음 [원본 문제]를 바탕으로 성격이 다른 [유사 문제] 딱 2개를 만들어줘.
+                    res = requests.post("https://api.mathpix.com/v3/text", headers=headers, json=data)
+                    result_json = res.json()
                     
-                    [원본 문제]
-                    {edited_text}
-                    
-                    [출제 원칙]
-                    1번 문제 (기본 변형): 원본 문제와 풀이 구조, 묻는 방식을 완벽히 똑같이 유지하고 '숫자나 조건'만 살짝 바꿔줘.
-                    2번 문제 (응용 변형): 원본 문제의 핵심 수학적 개념은 유지하되, 묻는 방식을 조금 다르게 비틀거나 한 단계 더 생각해야 풀 수 있는 응용 문제로 만들어줘. (예: 각도를 묻던 것을 길이를 묻게 하거나, 조건 하나를 숨기는 등)
-                    
-                    [출력 형식]
-                    오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}}, {{"problem_num": 2, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
-                    수식은 LaTeX 문법($ 또는 $$)을 정확히 사용하되, $ 기호 바로 안쪽에는 절대로 공백을 넣지 마 (예: $x$ 금지, $x$ 필수).
-                    ```json 같은 마크다운 기호 없이 순수한 JSON 텍스트만 출력해.
-                    """
-                    
-                    success = False
-                    last_error = ""
-                    
-                    for model_name in safe_models:
-                        try:
-                            model = genai.GenerativeModel(model_name)
-                            response = model.generate_content(prompt)
-                            
-                            res_text = response.text.strip()
-                            if res_text.startswith("```json"):
-                                res_text = res_text[7:-3].strip()
-                            elif res_text.startswith("```"):
-                                res_text = res_text[3:-3].strip()
-                                
-                            parsed = json.loads(res_text)
-                            problems = parsed.get("problems", [])
-                            
-                            if problems:
-                                st.session_state.similar_problems = problems
-                                st.success("맞춤형 유사 문제 출제 완료!")
-                                success = True
-                                break
-                        except Exception as e:
-                            last_error = str(e)
-                            continue
-                            
-                    if not success:
-                        st.error(f"문제 생성에 실패했습니다: {last_error}")
+                    if "text" in result_json:
+                        math_text = result_json["text"]
+                        math_text = re.sub(r'\\\(\s*', '$', math_text); math_text = re.sub(r'\s*\\\)', '$', math_text); math_text = re.sub(r'\\\[\s*', '$$', math_text); math_text = re.sub(r'\s*\\\]', '$$', math_text);
                         
+                        st.session_state.ocr_text = math_text
+                        st.success("수식 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
+                    else:
+                        st.error("인식에 실패했습니다. 다시 시도해 주세요.")
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
 
-# 4. 학생 풀이 화면
-if st.session_state.similar_problems:
-    st.divider()
-    st.subheader("🎯 학생용 연습 문제")
-    
-    if uploaded_file is not None:
-        st.info("💡 아래 문제들은 모두 [참고 도형]의 모양을 기준으로 풀어보세요!")
-        st.image(uploaded_file, caption="[참고 도형]", use_container_width=True)
-        st.write("") 
-    
-    for idx, item in enumerate(st.session_state.similar_problems, start=1):
-        q_text = item.get("question", "")
-        a_text = item.get("answer", "")
+    # 텍스트 검수 및 생성 버튼
+    if st.session_state.ocr_text:
+        if st.session_state.current_image_b64:
+            st.image(f"data:image/jpeg;base64,{st.session_state.current_image_b64}", caption="[원본 도형 이미지]", use_container_width=True)
+
+        edited_text = st.text_area("도형 조건이나 수식 중 누락된 부분을 수정하세요:", value=st.session_state.ocr_text, height=150)
+        st.session_state.ocr_text = edited_text
         
-        with st.container():
-            if idx == 1:
-                st.markdown(f"### [문제 {idx}] 기본 다지기 (숫자 변형)")
+        st.markdown("**수식 렌더링 미리보기:**")
+        st.markdown(edited_text)
+        
+        if st.button("✨ 유사 문제 2개 생성하기 (기본1 + 응용1)", type="primary"):
+            if not gemini_api_key:
+                st.error("Gemini API Key를 입력해 주세요.")
             else:
-                st.markdown(f"### [문제 {idx}] 실력 키우기 (응용 변형)")
+                with st.spinner("Gemini가 맞춤형 유사 문제를 출제하고 있습니다..."):
+                    try:
+                        genai.configure(api_key=gemini_api_key)
+                        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                        safe_models = [m for m in available_models if '2.5-flash' not in m]
+                        
+                        prompt = f"""
+                        너는 학생들의 수준별 학습을 돕는 꼼꼼한 수학 교과 출제 위원이야. 
+                        다음 [원본 문제]를 바탕으로 성격이 다른 [유사 문제] 딱 2개를 만들어줘.
+                        
+                        [원본 문제]
+                        {edited_text}
+                        
+                        [출제 원칙]
+                        1번 문제: 원본 문제와 똑같이 유지하고 '숫자나 조건'만 살짝 바꿔줘.
+                        2번 문제: 핵심 개념은 유지하되 묻는 방식을 다르게 비튼 응용 문제로 만들어줘.
+                        
+                        [출력 형식]
+                        오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}}, {{"problem_num": 2, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
+                        수식은 LaTeX 문법($ 또는 $$)을 정확히 사용하되, $ 기호 바로 안쪽에는 절대로 공백을 넣지 마 (예: $x$ 금지, $x$ 필수).
+                        ```json 기호 없이 순수한 JSON 텍스트만 출력해.
+                        """
+                        
+                        success = False
+                        for model_name in safe_models:
+                            try:
+                                model = genai.GenerativeModel(model_name)
+                                response = model.generate_content(prompt)
+                                res_text = response.text.strip()
+                                if res_text.startswith("```json"): res_text = res_text[7:-3].strip()
+                                elif res_text.startswith("```"): res_text = res_text[3:-3].strip()
+                                    
+                                parsed = json.loads(res_text)
+                                problems = parsed.get("problems", [])
+                                
+                                if problems:
+                                    st.session_state.similar_problems = problems
+                                    st.success("유사 문제 생성 완료!")
+                                    success = True
+                                    break
+                            except Exception as e:
+                                continue
+                                
+                        if not success:
+                            st.error("문제 생성에 실패했습니다. 다시 시도해 주세요.")
+                            
+                    except Exception as e:
+                        st.error(f"오류가 발생했습니다: {e}")
+
+    # 생성된 문제 결과 및 '게시판 공유' 기능
+    if st.session_state.similar_problems:
+        st.divider()
+        st.subheader("🎯 생성된 연습 문제")
+        
+        # 선생님에게만 보이는 게시판 등록 버튼
+        if is_admin:
+            if st.button("📢 이 문제를 학생 게시판에 등록하기", type="primary"):
+                import datetime
+                new_prob = {
+                    "id": str(int(time.time())),
+                    "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "image_b64": st.session_state.current_image_b64,
+                    "q1": st.session_state.similar_problems[0]["question"],
+                    "a1": st.session_state.similar_problems[0]["answer"],
+                    "q2": st.session_state.similar_problems[1]["question"],
+                    "a2": st.session_state.similar_problems[1]["answer"]
+                }
+                curr_db = load_db()
+                curr_db.insert(0, new_prob) # 가장 최신 문제를 맨 위에 추가
+                save_db(curr_db)
+                st.success("✅ 게시판에 성공적으로 등록되었습니다! 맨 위 '선생님 추천 과제' 탭을 눌러 확인해 보세요.")
                 
-            st.markdown(q_text)
-            
-            with st.expander("🔍 정답 및 풀이 확인"):
-                st.info(f"**정답:**\n{a_text}")
-            st.write("")
+        for idx, item in enumerate(st.session_state.similar_problems, start=1):
+            with st.container():
+                st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
+                st.markdown(item.get("question", ""))
+                with st.expander("🔍 정답 및 풀이 확인"):
+                    st.info(item.get("answer", ""))
+                st.write("")
