@@ -56,7 +56,12 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
                 result_json = res.json()
                 
                 if "text" in result_json:
-                    st.session_state.ocr_text = result_json["text"]
+                    # Mathpix의 수식 기호를 웹사이트가 인식하는 달러($) 기호로 자동 변환합니다.
+                    math_text = result_json["text"]
+                    math_text = math_text.replace("\\(", "$").replace("\\)", "$")
+                    math_text = math_text.replace("\\[", "$$").replace("\\]", "$$")
+                    
+                    st.session_state.ocr_text = math_text
                     st.success("수식 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
                 else:
                     st.error("인식에 실패했습니다. 다시 시도해 주세요.")
