@@ -60,12 +60,12 @@ def get_fastest_model_name(api_key):
 # ==========================================
 admin_pw = st.secrets.get("ADMIN_PASSWORD", "1234")
 class_pws = {
-    "1반": st.secrets.get("PW_CLASS1", "0101"),
-    "2반": st.secrets.get("PW_CLASS2", "0202"),
-    "3반": st.secrets.get("PW_CLASS3", "0303"),
-    "4반": st.secrets.get("PW_CLASS4", "0404"),
-    "5반": st.secrets.get("PW_CLASS5", "0505"),
-    "6반": st.secrets.get("PW_CLASS6", "0606"),
+    "1M2반": st.secrets.get("PW_CLASS1", "0102"),
+    "1M3반": st.secrets.get("PW_CLASS2", "0103"),
+    "2M1반": st.secrets.get("PW_CLASS3", "0201"),
+    "2M3반": st.secrets.get("PW_CLASS4", "0203"),
+    "3M1반": st.secrets.get("PW_CLASS5", "0301"),
+    "3M3반": st.secrets.get("PW_CLASS6", "0303"),
 }
 
 # API 설정 (이제 학생들도 선생님의 API 키를 자동으로 끌어다 씁니다)
