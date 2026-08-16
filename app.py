@@ -191,10 +191,8 @@ with tab2:
                     
                     if "text" in result_json:
                         math_text = result_json["text"]
-                        math_text = re.sub(r'\\\(\s*', '$', math_text)
-                        math_text = re.sub(r'\s*\\\)', '$', math_text)
-                        math_text = re.sub(r'\\\[\s*', '$$', math_text)
-                        math_text = re.sub(r'\s*\\\]', '$$', math_text)
+                        math_text = re.sub(r'\\\(\s*', '$', math_text)                         math_text = re.sub(r'\s*\\\)', '$', math_text)
+                        math_text = re.sub(r'\\\[\s*', '$$', math_text)                         math_text = re.sub(r'\s*\\\]', '$$', math_text)
                         
                         st.session_state.ocr_text = math_text
                         st.success("수식 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
@@ -277,3 +275,24 @@ with tab2:
                     "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "image_b64": st.session_state.current_image_b64,
                     "q1": st.session_state.similar_problems[0]["question"],
+                    "a1": st.session_state.similar_problems[0]["answer"],
+                    "q2": st.session_state.similar_problems[1]["question"],
+                    "a2": st.session_state.similar_problems[1]["answer"]
+                }
+                curr_db = load_db()
+                curr_db.insert(0, new_prob) 
+                save_db(curr_db)
+                st.success("✅ 게시판에 성공적으로 등록되었습니다! 맨 위 '선생님 추천 과제' 탭을 눌러 확인해 보세요.")
+                
+        for idx, item in enumerate(st.session_state.similar_problems, start=1):
+            with st.container():
+                st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
+                
+                # \n 명령어를 실제 화면 줄바꿈(\n\n)으로 변환하여 출력
+                display_q = item.get("question", "").replace('\\n', '\n\n')
+                display_a = item.get("answer", "").replace('\\n', '\n\n')
+                
+                st.markdown(display_q)
+                with st.expander("🔍 정답 및 풀이 확인"):
+                    st.info(display_a)
+                st.write("")
