@@ -59,10 +59,10 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
                 if "text" in result_json:
                     math_text = result_json["text"]
                     
-                    # [핵심 해결] Mathpix 기호를 $로 바꾸면서 '앞뒤로 띄어쓰기'를 강제로 1칸씩 넣습니다.
-                    # 이 띄어쓰기가 있어야만 Streamlit이 수식으로 완벽하게 인식합니다.
-                    math_text = math_text.replace("\\(", " $ ")                     math_text = math_text.replace("\\)", " $ ")
-                    math_text = math_text.replace("\\[", " $$ ")                     math_text = math_text.replace("\\]", " $$ ")
+                    # [핵심 해결] r""(Raw string)을 사용하여 복사/붙여넣기 시 특수문자 깨짐 현상 방지
+                    # Mathpix 기호를 $로 바꾸면서 '앞뒤로 띄어쓰기'를 강제로 1칸씩 넣습니다.
+                    math_text = math_text.replace(r"\(", " $ ")                     math_text = math_text.replace(r"\)", " $ ")
+                    math_text = math_text.replace(r"\[", " $$ ")                     math_text = math_text.replace(r"\]", " $$ ")
                     
                     # 혹시 공백이 너무 길어졌다면 1칸으로 깔끔하게 정리합니다.
                     math_text = re.sub(r' +', ' ', math_text)
@@ -85,7 +85,6 @@ if st.session_state.ocr_text:
     st.session_state.ocr_text = edited_text
     
     st.markdown("**수식 렌더링 미리보기:**")
-    # 꼬아뒀던 코드를 삭제하고 원본 그대로 화면에 출력합니다.
     st.markdown(edited_text)
     
     # 3. 유사 문제 생성 버튼
@@ -156,7 +155,6 @@ if st.session_state.similar_problems:
         
         with st.container():
             st.markdown(f"### [유사 문제 {idx}]")
-            # 꼬아뒀던 코드를 삭제하고 원본 그대로 화면에 출력합니다.
             st.markdown(q_text)
             
             with st.expander("🔍 정답 및 풀이 확인"):
