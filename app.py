@@ -31,6 +31,13 @@ if "ocr_text" not in st.session_state:
 if "similar_problems" not in st.session_state:
     st.session_state.similar_problems = None
 
+# Streamlit 마크다운 버그(백슬래시 증발) 방지용 함수
+def escape_markdown_math(text):
+    if not text:
+        return ""
+    # 수식 안의 모든 \를 \\로 바꾸어 Streamlit이 수식을 정상 렌더링하도록 강제 보호
+    return text.replace('\\', '\\\\')
+
 # 1. 문제 사진 업로드
 uploaded_file = st.file_uploader("문제 사진을 찍거나 업로드하세요", type=["png", "jpg", "jpeg"])
 
@@ -59,11 +66,11 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
                 if "text" in result_json:
                     math_text = result_json["text"]
                     
-                    # [수정 1] Mathpix 기호를 웹사이트용 달러($) 기호로 변환
+                    # Mathpix 기호를 웹사이트용 달러($) 기호로 변환
                     math_text = math_text.replace("\\(", "$").replace("\\)", "$")
                     math_text = math_text.replace("\\[", "$$").replace("\\]", "$$")
                     
-                    # [수정 2] $ 기호 바로 안쪽의 공백을 강제로 없애기 (수식 깨짐 방지)
+                    # $ 기호 바로 안쪽의 공백을 강제로 없애기 (수식 깨짐 방지)
                     math_text = re.sub(r'\$\s+', '$', math_text)
                     math_text = re.sub(r'\s+\$', '$', math_text)
                     
@@ -86,14 +93,8 @@ if st.session_state.ocr_text:
     
     st.markdown("**수식 렌더링 미리보기:**")
     
-    # [최종 수정] Streamlit이 백슬래시(\)를 삼켜버리지 못하도록 강력하게 이스케이프 처리
-    # 수식 안의 모든 \를 \\\\로 바꾸어야 웹 화면에서 \가 살아남아 수학 기호로 변환됩니다.
-    def escape_markdown(text):
-        # Mathpix 수식 기호 보호
-        text = text.replace('\\', '\\\\') 
-        return text
-
-    safe_preview_text = escape_markdown(edited_text)
+    # [최종 수정] 백슬래시 보호 처리 적용
+    safe_preview_text = escape_markdown_math(edited_text)
     st.markdown(safe_preview_text)
     
     # 3. 유사 문제 생성 버튼
@@ -163,12 +164,12 @@ if st.session_state.similar_problems:
         q_text = item.get("question", "")
         a_text = item.get("answer", "")
         
-      with st.container():
+        with st.container():
             st.markdown(f"### [유사 문제 {idx}]")
             
-            # 학생 화면 수식 보호
-            safe_q = q_text.replace('\\', '\\\\')
-            safe_a = a_text.replace('\\', '\\\\')
+            # [최종 수정] 학생 화면에서도 수식이 깨지지 않도록 백슬래시 보호 처리
+            safe_q = escape_markdown_math(q_text)
+            safe_a = escape_markdown_math(a_text)
             
             st.markdown(safe_q)
             
