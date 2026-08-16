@@ -60,15 +60,14 @@ def get_fastest_model_name(api_key):
 # ==========================================
 admin_pw = st.secrets.get("ADMIN_PASSWORD", "1234")
 class_pws = {
-    "1M2반": st.secrets.get("PW_CLASS1", "0102"),
-    "1M3반": st.secrets.get("PW_CLASS2", "0103"),
-    "2M1반": st.secrets.get("PW_CLASS3", "0201"),
-    "2M3반": st.secrets.get("PW_CLASS4", "0203"),
-    "3M1반": st.secrets.get("PW_CLASS5", "0301"),
-    "3M3반": st.secrets.get("PW_CLASS6", "0303"),
+    "1반": st.secrets.get("PW_CLASS1", "0101"),
+    "2반": st.secrets.get("PW_CLASS2", "0202"),
+    "3반": st.secrets.get("PW_CLASS3", "0303"),
+    "4반": st.secrets.get("PW_CLASS4", "0404"),
+    "5반": st.secrets.get("PW_CLASS5", "0505"),
+    "6반": st.secrets.get("PW_CLASS6", "0606"),
 }
 
-# API 설정 (이제 학생들도 선생님의 API 키를 자동으로 끌어다 씁니다)
 mathpix_app_id = st.secrets.get("MATHPIX_APP_ID", "")
 mathpix_app_key = st.secrets.get("MATHPIX_APP_KEY", "")
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -91,7 +90,6 @@ with st.sidebar:
             if not current_role:
                 st.error("접속 코드가 틀렸습니다.")
 
-    # 선생님 전용 추가 메뉴
     if current_role == "admin":
         st.divider()
         st.header("⚙️ 앱 전체 관리 (스위치)")
@@ -103,7 +101,7 @@ with st.sidebar:
             set_app_status("OFF"); st.rerun()
 
 # ==========================================
-# 화면 차단 로직 (로그인 전이거나, OFF 상태일 때)
+# 화면 차단 로직
 # ==========================================
 if not current_role:
     st.info("👈 왼쪽 메뉴에 접속 코드를 입력해야 클래스룸에 입장할 수 있습니다.")
@@ -125,20 +123,18 @@ st.caption(f"현재 접속 권한: **{'선생님 (모든 반 관리)' if current
 tab1, tab2 = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기"])
 
 # ------------------------------------------
-# [탭 1] 학생 게시판 (반별 필터링 적용)
+# [탭 1] 학생 게시판
 # ------------------------------------------
 with tab1:
     problems_db = load_db()
     
-    # 선생님이면 볼 반을 선택할 수 있고, 학생이면 자기 반만 고정됩니다.
     if current_role == "admin":
-        view_class = st.selectbox("👀 조회할 반 게시판을 선택하세요", ["1M2반", "1M3반", "2M1반", "2M3반", "3M1반", "3M3반"])
+        view_class = st.selectbox("👀 조회할 반 게시판을 선택하세요", ["1반", "2반", "3반", "4반", "5반", "6반"])
     else:
         view_class = current_role
         
     st.subheader(f"📋 {view_class} 과제 게시판")
     
-    # 선택된 반의 문제만 걸러냅니다. (이전에 만든 문제는 기본적으로 1반으로 표시됨)
     filtered_problems = [p for p in problems_db if p.get("class_id", "1반") == view_class]
     
     if not filtered_problems:
@@ -171,7 +167,7 @@ with tab1:
             st.divider()
 
 # ------------------------------------------
-# [탭 2] 개인용 문제 생성기 (게시판 분리 기능 추가)
+# [탭 2] 개인용 문제 생성기
 # ------------------------------------------
 with tab2:
     st.subheader("📸 모르는 문제를 찍어 유사 문제를 만드세요")
@@ -219,19 +215,29 @@ with tab2:
                 try:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
+                    
+                    # ★ AI 명령(프롬프트) 강화: 한글과 수식을 절대 섞지 못하도록 강력하게 제한했습니다!
                     prompt = f"""
                     너는 학생들의 수준별 학습을 돕는 꼼꼼한 수학 교과 출제 위원이야. 
                     다음 [원본 문제]를 바탕으로 성격이 다른 [유사 문제] 딱 2개를 만들어줘.
+                    
                     [원본 문제]
                     {edited_text}
+                    
                     [출제 원칙]
                     1번 문제: 원본 문제와 똑같이 유지하고 '숫자나 조건'만 살짝 바꿔줘.
                     2번 문제: 핵심 개념은 유지하되 묻는 방식을 다르게 비튼 응용 문제로 만들어줘.
+                    
                     [출력 형식]
                     오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}}, {{"problem_num": 2, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
-                    ⚠️[매우 중요] 수식에 백슬래시(\\)가 포함된 경우(예: \\angle, \\mathrm), JSON 오류가 나지 않도록 반드시 이중 백슬래시(\\\\)로 이스케이프 처리해서 출력해.
+                    
+                    ⚠️[매우 중요 1] 수식에 백슬래시(\\)가 포함된 경우(예: \\angle, \\mathrm), JSON 오류가 나지 않도록 반드시 이중 백슬래시(\\\\)로 이스케이프 처리해서 출력해.
+                    ⚠️[매우 중요 2] 한글 텍스트는 절대로 수식 기호($ 또는 $$) 안쪽에 넣지 마! 수식 기호 안에는 순수하게 숫자, 영어, 수학 기호만 들어가야 해. 
+                    (❌ 나쁜 예: `$x=2 이므로$`, ⭕ 좋은 예: `$x=2$` 이므로)
+                    
                     ```json 기호 없이 순수한 JSON 텍스트만 출력해.
                     """
+                    
                     response = model.generate_content(prompt)
                     res_text = response.text.strip()
                     if res_text.startswith("```json"): res_text = res_text[7:-3].strip()
@@ -255,19 +261,18 @@ with tab2:
         st.divider()
         st.subheader("🎯 생성된 연습 문제")
         
-        # 선생님에게만 보이는 '반 선택 후 게시판 등록' 기능
         if current_role == "admin":
             st.info("💡 이 문제를 특정 반 학생들에게 숙제로 낼 수 있습니다.")
             col1, col2 = st.columns([1, 2])
             with col1:
-                target_class = st.selectbox("게시할 반", ["1M2반", "1M3반", "2M1반", "2M3반", "3M1반", "3M3반"])
+                target_class = st.selectbox("게시할 반", ["1반", "2반", "3반", "4반", "5반", "6반"])
             with col2:
-                st.write("") # 줄맞춤용
+                st.write("") 
                 st.write("") 
                 if st.button(f"📢 {target_class} 게시판에 등록하기", type="primary"):
                     new_prob = {
                         "id": str(int(time.time())),
-                        "class_id": target_class, # ★ 어떤 반에 쓸지 꼬리표를 붙임
+                        "class_id": target_class, 
                         "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                         "image_b64": st.session_state.current_image_b64,
                         "q1": st.session_state.similar_problems[0]["question"],
