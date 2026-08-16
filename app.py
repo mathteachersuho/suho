@@ -83,19 +83,11 @@ if st.session_state.ocr_text:
         else:
             with st.spinner("Gemini가 유사 문제를 출제하고 있습니다..."):
                 try:
-                    # Gemini API 설정
                     genai.configure(api_key=gemini_api_key)
                     
-                    # 💡 오류 해결: 현재 계정에서 사용 가능한 최신 모델을 자동으로 찾습니다.
+                    # 현재 계정에서 사용 가능한 모든 모델을 가져오되, 막혀있는 2.5-flash 모델은 목록에서 제외합니다.
                     available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                    flash_models = [m for m in available_models if 'flash' in m]
-                    target_model_name = flash_models[0] if flash_models else "gemini-pro"
-                    
-                    # 자동으로 찾은 모델을 적용하고 JSON 형태로 설정
-                    model = genai.GenerativeModel(
-                        target_model_name,
-                        generation_config={"response_mime_type": "application/json"}
-                    )
+                    safe_models = [m for m in available_models if '2.5-flash' not in m]
                     
                     prompt = f"""
                     너는 꼼꼼한 수학 교과 출제 위원이야. 
@@ -105,18 +97,42 @@ if st.session_state.ocr_text:
                     {edited_text}
                     
                     [출력 형식]
-                    JSON 형식으로 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
-                    수식은 LaTeX 문법($ 또는 $$)을 정확히 사용할 것.
+                    오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
+                    수식은 LaTeX 문법($ 또는 $$)을 정확히 사용할 것. ```json 같은 마크다운 기호 없이 순수한 JSON 텍스트만 출력해.
                     """
                     
-                    response = model.generate_content(prompt)
-                    parsed = json.loads(response.text)
+                    success = False
+                    last_error = ""
                     
-                    problems = parsed.get("problems", [])
-                    st.session_state.similar_problems = problems
-                    st.success("유사 문제 출제 완료!")
+                    # 사용 가능한 모델들을 하나씩 시도하여 작동하는 것을 찾습니다.
+                    for model_name in safe_models:
+                        try:
+                            model = genai.GenerativeModel(model_name)
+                            response = model.generate_content(prompt)
+                            
+                            res_text = response.text.strip()
+                            if res_text.startswith("```json"):
+                                res_text = res_text[7:-3].strip()
+                            elif res_text.startswith("```"):
+                                res_text = res_text[3:-3].strip()
+                                
+                            parsed = json.loads(res_text)
+                            problems = parsed.get("problems", [])
+                            
+                            if problems:
+                                st.session_state.similar_problems = problems
+                                st.success("유사 문제 출제 완료!")
+                                success = True
+                                break
+                        except Exception as e:
+                            last_error = str(e)
+                            continue
+                            
+                    if not success:
+                        st.error(f"문제 생성에 실패했습니다: {last_error}")
+                        
                 except Exception as e:
-                    st.error(f"생성 중 오류가 발생했습니다: {e}")
+                    st.error(f"오류가 발생했습니다: {e}")
 
 # 4. 학생 풀이 화면
 if st.session_state.similar_problems:
