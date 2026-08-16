@@ -57,11 +57,13 @@ if uploaded_file and st.button("📸 사진에서 수식 및 텍스트 추출하
                 result_json = res.json()
                 
                 if "text" in result_json:
-                    # [최강 방어 코드] 줄바꿈이 사라져도 절대 에러가 나지 않도록 코드를 한 줄로 단단하게 묶었습니다.
-                    math_text = result_json["text"].replace(r"\(", " $ ").replace(r"\)", " $ ").replace(r"\[", " $$ ").replace(r"\]", " $$ ")
+                    math_text = result_json["text"]
                     
-                    # 혹시 공백이 너무 길어졌다면 1칸으로 깔끔하게 정리합니다.
-                    math_text = re.sub(r' +', ' ', math_text)
+                    # [진짜 최종 해결책]
+                    # Mathpix가 보내주는 기호 내부의 보이지 않는 공백을 정규식으로 완벽히 압착하여 $로 바꿉니다.
+                    # 이 과정이 있어야만 Streamlit이 정상적인 수학 기호로 판독합니다.
+                    math_text = re.sub(r'\\\(\s*', '$', math_text)                     math_text = re.sub(r'\s*\\\)', '$', math_text)
+                    math_text = re.sub(r'\\\[\s*', '$$', math_text)                     math_text = re.sub(r'\s*\\\]', '$$', math_text)
                     
                     st.session_state.ocr_text = math_text
                     st.success("수식 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
@@ -81,6 +83,7 @@ if st.session_state.ocr_text:
     st.session_state.ocr_text = edited_text
     
     st.markdown("**수식 렌더링 미리보기:**")
+    # 어떤 꼼수도 없이 순수하게 출력해야 화면에 가장 잘 나옵니다.
     st.markdown(edited_text)
     
     # 3. 유사 문제 생성 버튼
@@ -104,7 +107,7 @@ if st.session_state.ocr_text:
                     
                     [출력 형식]
                     오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답내용"}} ] }} 로 작성해.
-                    수식은 LaTeX 문법($ 또는 $$)을 정확히 사용하고, 한글 텍스트와 $ 기호 사이에는 반드시 양쪽으로 띄어쓰기를 1칸씩 넣어줘.
+                    수식은 LaTeX 문법($ 또는 $$)을 정확히 사용하되, $ 기호 바로 안쪽에는 절대로 공백을 넣지 마 (예: $x$ 금지, $x$ 필수).
                     ```json 같은 마크다운 기호 없이 순수한 JSON 텍스트만 출력해.
                     """
                     
