@@ -85,9 +85,15 @@ if st.session_state.ocr_text:
                 try:
                     # Gemini API 설정
                     genai.configure(api_key=gemini_api_key)
-                    # JSON 형태로 답변을 주도록 모델 설정
+                    
+                    # 💡 오류 해결: 현재 계정에서 사용 가능한 최신 모델을 자동으로 찾습니다.
+                    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                    flash_models = [m for m in available_models if 'flash' in m]
+                    target_model_name = flash_models[0] if flash_models else "gemini-pro"
+                    
+                    # 자동으로 찾은 모델을 적용하고 JSON 형태로 설정
                     model = genai.GenerativeModel(
-                        "gemini-1.5-flash",
+                        target_model_name,
                         generation_config={"response_mime_type": "application/json"}
                     )
                     
