@@ -87,7 +87,7 @@ def set_app_status(status):
 # ★ 수식 렌더링, 전개도 맞춤 표, 겨냥도/SVG 통합 엔진
 # ==========================================
 def convert_frac_to_html(text):
-    """분수(\\frac{a}{b})를 HTML 세로 분수로 변환하여 표/셀 내부 깨짐 방지"""
+    """분수(\frac{a}{b})를 HTML 세로 분수로 변환하여 표/셀 내부 깨짐 방지"""
     def repl(m):
         sign = m.group(1) or ""
         num = m.group(2).strip()
@@ -298,30 +298,42 @@ def parse_single_problem(res_text, prob_num):
     }
 
 # ==========================================
-# ★ 병렬 단일 문제 생성기 (초고속 스레드 처리)
+# ★ 병렬 단일 문제 생성기 (1번/2번 차별화 프롬프트)
 # ==========================================
 def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instruction, api_key):
     fast_model_name = get_fastest_model_name(api_key)
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(fast_model_name)
     
+    if prob_num == 1:
+        type_instruction = """
+        [1번 기본 다지기 출제 원칙]
+        - 원본 문제의 형태와 구조를 그대로 유지하되, **반드시 원본에 주어진 숫자와 문자(예: 10 -> 8 또는 12, 6 -> 4 또는 8 등)를 다른 수치로 확실하게 변경**하여 1문제를 출제하라.
+        """
+    else:
+        type_instruction = """
+        [2번 실력 키우기 출제 원칙 (1번과 절대 중복 금지!)]
+        - 1번과 똑같은 단순 숫자 변경 문제를 만들지 마라!
+        - 같은 단원 개념을 사용하되, 반드시 **'조건을 역으로 묻기 (예: 넓이 식을 먼저 주고 특정 선분의 길이나 미지수 구하기)'**, **'도형의 다른 위치에 미지수/수선 배치하기'**, 또는 **'1단계 더 생각해야 하는 심화/응용형'**으로 1번과 완전히 차별화하여 1문제를 출제하라.
+        """
+
     prompt = f"""
-    너는 대한민국 수학 출제 위원이야. 원본 문제를 바탕으로 [{prob_type}]를 1개만 제작하라.
+    너는 대한민국 중학교/고등학교 수학 출제 위원이야. 원본 문제를 바탕으로 [{prob_type}]를 1개만 제작하라.
 
     [원본 문제]
     {ocr_text}
 
-    [출제 원칙]
-    1. **{prob_type} 제작:** {'조건과 숫자만 바꾼 기본 다지기 문제' if prob_num==1 else '같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제'}
-    2. **도형/그래프/수직선/다각형 SVG 초경량 작성 규칙 (속도 최우선):**
+    {type_instruction}
+
+    [공통 그래픽/수식 규칙 (속도 최우선)]
+    1. **도형/그래프/수직선/다각형 SVG 초경량 작성:**
        - 사각형/삼각형/다각형/대각선/수선 도형인 경우, **반드시 6~8줄 이내의 초간단 인라인 SVG(`<svg width="220" height="130" viewBox="0 0 220 130">...</svg>`)로 작성**하라.
        - 외곽선: `<polygon points="x1,y1 x2,y2 x3,y3 x4,y4" fill="#f8f9fa" stroke="#111" stroke-width="1.5"/>`
-       - 대각선/수선: 점선(`<line stroke-dasharray="3,3" stroke="#555"/>`), 직각표시 사각형(`<polyline points="..." fill="none" stroke="#222"/>`)
+       - 대각선/수선: 점선(`<line stroke-dasharray="3,3" stroke="#555"/>`), 직각표시(`<polyline points="..." fill="none" stroke="#222"/>`)
        - 문자/숫자 레이블: `<text x="..." y="..." font-size="12" font-weight="bold" fill="#000000">글자</text>`
-    3. **정육면체 겨냥도/전개도:**
-       - 3D 겨냥도인 경우 3면(윗면/왼쪽/오른쪽) 큐브 SVG로 작성하라.
-       - 펼쳐진 전개도인 경우 3x4 마크다운 격자 표 블록으로 작성하라.
-    4. **수식 표기:** 단순 문자(A, B, C, 점 A 등)에는 $를 쓰지 말고, 분수식 등 계산식만 `$수식$`으로 작성하라.
+    2. **정육면체 겨냥도/전개도:**
+       - 3D 겨냥도는 3면 큐브 SVG로, 펼쳐진 전개도는 3x4 마크다운 격자 표로 작성하라.
+    3. **수식 표기:** 단순 문자(A, B, C, 점 A, 변 BD 등)에는 $를 쓰지 말고, 분수식/계산식만 `$수식$`으로 작성하라.
 
     [출력 양식]
     [문제]
@@ -796,11 +808,11 @@ with tab2:
         include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("AI가 1번·2번 문제를 동시에 병렬 생성하고 있습니다 (약 3~5초 소요)..."):
+            with st.spinner("AI가 [1번 기본 다지기]와 [2번 실력 키우기]를 동시에 차별화하여 병렬 생성하고 있습니다 (약 3~5초)..."):
                 try:
                     solution_instruction = "단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ 1번 문제와 2번 문제를 2개의 스레드로 동시 병렬 요청 (시간 50% 단축)
+                    # 1번과 2번을 완전히 다른 출제 원칙으로 2개 스레드 동시 병렬 요청
                     with ThreadPoolExecutor(max_workers=2) as executor:
                         future_p1 = executor.submit(generate_one_problem_async, "1번 기본 다지기 문제", 1, edited_text, solution_instruction, gemini_api_key)
                         future_p2 = executor.submit(generate_one_problem_async, "2번 실력 키우기 문제", 2, edited_text, solution_instruction, gemini_api_key)
@@ -809,7 +821,7 @@ with tab2:
                         p2_res = future_p2.result()
                     
                     st.session_state.similar_problems = [p1_res, p2_res]
-                    st.success("⚡ 초고속 병렬 생성 완료!")
+                    st.success("⚡ 차별화된 유사 문제 2개 초고속 병렬 생성 완료!")
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
 
