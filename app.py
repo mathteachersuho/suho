@@ -170,8 +170,8 @@ def format_math(text):
     text = re.sub(r'\$\$(.*?)\$\$', r'$\1$', text, flags=re.DOTALL)
     
     # 5. 빈칸 문자 및 기호 박스화 자동 변환
-    text = re.sub(r'[□■]\s*\(([가-힣a-zA-Z0-9]+)\)', r'$\\boxed{\\text{ (\1) }}$', text)
-    text = re.sub(r'\[\s*\(([가-힣a-zA-Z0-9]+)\)\s*\]', r'$\\boxed{\\text{ (\1) }}$', text)
+    text = re.sub(r'[□■]\s*\(([가-힣a-zA-Z0-9]+)\)', r'$\boxed{\text{ (\1) }}$', text)
+    text = re.sub(r'\[\s*\(([가-힣a-zA-Z0-9]+)\)\s*\]', r'$\boxed{\text{ (\1) }}$', text)
     
     # 6. 명령어 앞 중복 백슬래시 정리
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
@@ -227,7 +227,7 @@ def format_math(text):
     # 10. 그래프/토너먼트/도형 SVG 다이어그램 흰색 카드 박스 감싸기
     def wrap_svg_card(match):
         svg_content = match.group(0)
-        return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 12px 18px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
+        return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 10px 14px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
     text = re.sub(r'(<svg[\s\S]*?<\/svg>)', wrap_svg_card, text)
     
     return text
@@ -359,8 +359,8 @@ def make_printable_html(title, items):
     <script>
         window.MathJax = {{
             tex: {{
-                inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
-                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']]
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']]
             }},
             svg: {{ fontCache: 'global' }}
         }};
@@ -523,7 +523,7 @@ def get_fastest_model_name(api_key):
 # ★ 반 이름 설정 (1M2, 1M3, 2M1, 2M3, 3M1, 3M3)
 # ==========================================
 admin_pw = st.secrets.get("ADMIN_PASSWORD", "1234")
-class_list = ["1M2", "1M3", "2M1", "2M3", "3M1", "3M3"] #
+class_list = ["1M2", "1M3", "2M1", "2M3", "3M1", "3M3"]
 class_pws = {
     "1M2": st.secrets.get("PW_CLASS1", "0102"),
     "1M3": st.secrets.get("PW_CLASS2", "0103"),
@@ -763,6 +763,7 @@ with tab2:
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
+                    # ★ 초경량(Minimal) SVG 생성 규칙 적용: 토큰 수 80% 절감
                     prompt = f"""
                     너는 대한민국 고등학교 및 중학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -773,11 +774,13 @@ with tab2:
                     [출제 원칙 및 교육과정 준수]
                     1. **단원 범위 준수 (선행 개념 절대 금지):**
                        - 원본 문제 단원 범위를 절대 벗어나지 마라.
-                    2. **그래프 / 다이어그램 속도 최적화 규칙 (매우 중요):**
-                       - 꺾은선그래프, 막대그래프, 히스토그램인 경우, **과도하고 복잡한 모눈 격자는 생략하고 기준 축과 데이터(막대/점/선) 위주로 가볍고 심플한 인라인 SVG(`<svg width="250" height="140" viewBox="0 0 250 140">...</svg>`)를 작성하여 생성 시간을 최소화**하라.
-                       - 모든 텍스트 레이블(숫자, 축 이름)은 반드시 `fill="#000000"` (검정색)으로 지정하여 선명하게 보이도록 할 것.
+                    2. **그래프 / 다이어그램 초경량 생성 규칙 (매우 중요):**
+                       - 꺾은선그래프, 막대그래프인 경우 **복잡한 모눈 격자선과 장식 코드를 일체 작성하지 말고, 토큰 생성을 줄이기 위해 5~6줄 이내의 초간단 인라인 SVG(`<svg width="220" height="120" viewBox="0 0 220 120">...</svg>`)로만 작성**하라.
+                       - 꺾은선그래프는 기준 축 2개(`<line>`)와 단 1줄의 `<polyline points="x1,y1 x2,y2 ..." fill="none" stroke="#1976d2" stroke-width="2"/>` 및 축 숫자만 작성하라.
+                       - 막대그래프는 축 2개와 `<rect>` 4~5개로만 간단히 작성하라.
+                       - 모든 텍스트 레이블(숫자, 축 이름)은 반드시 `fill="#000000"` (검정색)으로 지정할 것.
                     3. **토너먼트 / 대진표 문제:**
-                       - 대진표인 경우 가벼운 SVG 트리로 작성할 것 (글자 색상 `fill="#000000"`).
+                       - 대진표인 경우 심플한 SVG 트리로 작성할 것 (글자 색상 `fill="#000000"`).
                     4. **표(Table) 문제 작성 규칙:**
                        - 표가 필요한 경우 **마크다운 표 형식(`| 항목1 | 항목2 | ... |`)**으로 작성하고 셀 내부에 불필요한 $를 쓰지 마라.
                     5. **빈칸 채우기 및 증명 문제:**
