@@ -83,8 +83,30 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링 & 다크모드 고대비 SVG 렌더링 엔진
+# ★ 수식 렌더링, 표(Table), SVG, 빈칸 박스 통합 엔진
 # ==========================================
+def _md_table_to_html(lines):
+    if not lines:
+        return ""
+    rows = []
+    for line in lines:
+        if re.match(r'^\|(?:\s*:?-+:?\s*\|)+$', line):
+            continue
+        cols = [c.strip() for c in line.strip('|').split('|')]
+        rows.append(cols)
+    if not rows:
+        return ""
+    html = '<div style="margin: 10px 0; overflow-x: auto;"><table style="border-collapse: collapse; margin: 0 auto; text-align: center; font-size: 13.5px; border: 1px solid #777;">'
+    for i, row in enumerate(rows):
+        html += '<tr>'
+        for col in row:
+            bg = '#f1f3f5' if i == 0 else '#ffffff'
+            fw = 'bold' if i == 0 else 'normal'
+            html += f'<td style="border: 1px solid #777; padding: 5px 12px; background-color: {bg}; font-weight: {fw}; color: #111111;">{col}</td>'
+        html += '</tr>'
+    html += '</table></div>'
+    return html
+
 def format_math(text):
     if not text:
         return ""
@@ -93,18 +115,59 @@ def format_math(text):
     # 1. 줄바꿈 기호 변환
     text = text.replace('[br]', '\n\n')
     
-    # 2. Mathpix의 $$...$$ 블록 수식을 표준 $...$로 정규화
+    # 2. LaTeX \\begin{tabular} 표를 깔끔한 HTML 표로 변환
+    def replace_tabular(match):
+        content = match.group(1)
+        content = content.replace(r'\hline', '')
+        rows = [r.strip() for r in content.split(r'\\') if r.strip()]
+        if not rows:
+            return ""
+        html = '<div style="margin: 10px 0; overflow-x: auto;"><table style="border-collapse: collapse; margin: 0 auto; text-align: center; font-size: 13.5px; border: 1px solid #777;">'
+        for i, row in enumerate(rows):
+            cols = [c.strip() for c in row.split('&')]
+            html += '<tr>'
+            for col in cols:
+                bg = '#f1f3f5' if i == 0 else '#ffffff'
+                fw = 'bold' if i == 0 else 'normal'
+                html += f'<td style="border: 1px solid #777; padding: 5px 12px; background-color: {bg}; font-weight: {fw}; color: #111111;">{col}</td>'
+            html += '</tr>'
+        html += '</table></div>'
+        return html
+    pattern_tab = r'\\begin\{tabular\}(?:\[[^\]]*\])?(?:\{[^\}]*\})([\s\S]*?)\\end\{tabular\}'
+    text = re.sub(pattern_tab, replace_tabular, text)
+    
+    # 3. 마크다운 표(|...|)를 HTML 표로 변환
+    lines = text.split('\n')
+    new_lines = []
+    table_lines = []
+    in_table = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('|') and stripped.endswith('|'):
+            table_lines.append(stripped)
+            in_table = True
+        else:
+            if in_table:
+                new_lines.append(_md_table_to_html(table_lines))
+                table_lines = []
+                in_table = False
+            new_lines.append(line)
+    if in_table:
+        new_lines.append(_md_table_to_html(table_lines))
+    text = '\n'.join(new_lines)
+
+    # 4. Mathpix $$...$$ 블록 정규화
     text = re.sub(r'\$\$(.*?)\$\$', r'$\1$', text, flags=re.DOTALL)
     
-    # 3. 빈칸 문자 및 기호 박스화 자동 변환
+    # 5. 빈칸 문자 및 기호 박스화 자동 변환
     text = re.sub(r'[□■]\s*\(([가-힣a-zA-Z0-9]+)\)', r'$\\boxed{\\text{ (\1) }}$', text)
     text = re.sub(r'\[\s*\(([가-힣a-zA-Z0-9]+)\)\s*\]', r'$\\boxed{\\text{ (\1) }}$', text)
     
-    # 4. 명령어 앞 중복 백슬래시 정리
+    # 6. 명령어 앞 중복 백슬래시 정리
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     
-    # 5. 도형 및 극한 기호 정규화
+    # 7. 도형 및 극한 기호 정규화
     text = re.sub(r'\\mathrm\{([A-Z]+)\}', r'\1', text)
     text = re.sub(r'lim_?\{?xtoa\}?', r'\\lim\\limits_{x \\to a} ', text)
     text = re.sub(r'lim_?\{?x\s*to\s*([a-zA-Z0-9]+)\}?', r'\\lim\\limits_{x \\to \1} ', text)
@@ -121,12 +184,12 @@ def format_math(text):
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     
-    # 6. $ 기호 없이 노출된 수식 및 함수 자동 감싸기 (SVG 태그 보호)
+    # 8. $ 기호 없이 노출된 수식 자동 감싸기 (HTML 태그 보호)
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
         if i % 2 == 0:
-            if '<svg' not in part:
+            if '<svg' not in part and '<table' not in part:
                 def replacer(match):
                     chunk = match.group(1).rstrip()
                     if not chunk:
@@ -138,10 +201,10 @@ def format_math(text):
         new_parts.append(part)
     
     text = '$'.join(new_parts)
-    text = re.sub(r'\$\s*\$', '', result := text)
+    text = re.sub(r'\$\s*\$', '', text)
     text = re.sub(r'\${3,}', '$$', text)
     
-    # 7. 카드 UI 변환
+    # 9. 카드 UI 변환
     def render_cards(match):
         items = [x.strip() for x in match.group(1).split(',') if x.strip()]
         card_html = '<div style="display:inline-flex; gap:8px; margin:8px 0; align-items:center; vertical-align:middle;">'
@@ -149,14 +212,12 @@ def format_math(text):
             card_html += f'<div style="min-width:32px; height:46px; padding:2px 8px; border:2px solid #333; border-radius:6px; background-color:#ffffff; color:#111111; font-weight:bold; font-size:16px; display:inline-flex; align-items:center; justify-content:center; box-shadow:1px 2px 4px rgba(0,0,0,0.12);">{item}</div>'
         card_html += '</div>'
         return card_html
-        
     text = re.sub(r'\[카드\s*:\s*([^\]]+)\]', render_cards, text)
     
-    # ★ 8. SVG 다이어그램을 다크모드에서도 선명하게 보이도록 흰색 삽화 박스로 감싸기
+    # 10. SVG 다이어그램 흰색 카드 박스 감싸기
     def wrap_svg_card(match):
         svg_content = match.group(0)
         return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 12px 18px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
-    
     text = re.sub(r'(<svg[\s\S]*?<\/svg>)', wrap_svg_card, text)
     
     return text
@@ -667,7 +728,7 @@ with tab2:
                     math_text = result_json["text"]
                     math_text = re.sub(r'\\\(\s*', '$', math_text); math_text = re.sub(r'\s*\\\)', '$', math_text); math_text = re.sub(r'\\\[\s*', '$$', math_text); math_text = re.sub(r'\s*\\\]', '$$', math_text)
                     st.session_state.ocr_text = math_text
-                    st.success("수식 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
+                    st.success("수식 및 표 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
                 else:
                     st.error("인식에 실패했습니다. 다시 시도해 주세요.")
             except Exception as e:
@@ -679,20 +740,20 @@ with tab2:
 
         edited_text = st.text_area("도형 조건이나 수식 중 누락된 부분을 수정하세요:", value=st.session_state.ocr_text, height=150)
         st.session_state.ocr_text = edited_text
-        st.markdown("**수식 렌더링 미리보기:**")
+        st.markdown("**수식 및 표 렌더링 미리보기:**")
         st.markdown(format_math(edited_text), unsafe_allow_html=True)
         
         include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("Gemini가 단원 범위와 그림 조건에 맞춰 문제를 출제하고 있습니다..."):
+            with st.spinner("Gemini가 단원 범위, 표, 그림 조건에 맞춰 문제를 출제하고 있습니다..."):
                 try:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ SVG 다이어그램, 빈칸 박스, 카드 UI 출제 지침
+                    # ★ 표(Markdown Table), SVG 다이어그램, 빈칸 박스, 카드 UI 출제 지침
                     prompt = f"""
                     너는 대한민국 고등학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -705,23 +766,22 @@ with tab2:
                        - 원본 문제가 미분/도함수 단원이면, 아직 배우지 않은 '적분 기호($\\int$)'나 적분 개념을 절대로 사용하지 마라.
                        - 원본 문제가 극한 단원이면 미분/적분을 쓰지 마라.
                        - 2번(실력 키우기) 문제 역시 다른 후속 단원과 섞지 말고, **현재 원본 문제 단원 내에서만** 조건을 심화하여 출제하라.
-                    2. **영역 색칠하기 / 지도 / 도형 다이어그램 (매우 중요):**
-                       - 원본 문제가 '영역 색칠하기', '맞닿아 있는 면', '동심원 영역', '지도 색칠' 문제인 경우, 학생들이 각 영역(A, B, C, D)의 인접 관계를 알 수 있도록 **문제 지문 안에 간단한 인라인 SVG 다이어그램(`<svg width="180" height="120" viewBox="..." ...>...</svg>`)**을 반드시 직접 작성하여 넣어라.
-                       - SVG 스타일 규칙:
-                         * 도형 테두리 선: `stroke="#111111"` `stroke-width="2"`
-                         * 영역 내부 채우기: `fill="#f8f9fa"` (면 구분용)
-                         * 영역 글자(A, B, C, D): `fill="#000000"` `font-size="16"` `font-weight="bold"` `font-family="sans-serif"` `text-anchor="middle"` `dominant-baseline="central"` 로 각 영역 정중앙에 선명하게 배치할 것.
-                    3. **빈칸 채우기 및 증명 문제:**
+                    2. **표(Table) 문제 작성 규칙 (매우 중요):**
+                       - 원본 문제에 표(도수분포표, 확률분포표, 집계표 등)가 포함된 경우, 문제 본문에 반드시 **마크다운 표 형식(`| 항목1 | 항목2 | ... |`)**으로 표를 작성하여 넣어라.
+                    3. **영역 색칠하기 / 지도 / 도형 다이어그램:**
+                       - 원본 문제가 '영역 색칠하기', '맞닿아 있는 면', '동심원 영역' 문제인 경우, 문제 본문 안에 인라인 SVG 다이어그램(`<svg width="180" height="120" viewBox="..." ...>...</svg>`)을 직접 작성하여 넣어라.
+                       - SVG 스타일: 테두리는 `stroke="#111111" stroke-width="2"`, 영역 글자(A, B, C, D)는 `fill="#000000" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central"`.
+                    4. **빈칸 채우기 및 증명 문제:**
                        - 빈칸은 반드시 `$\\boxed{{\\text{{ (가) }}}}$`, `$\\boxed{{\\text{{ (나) }}}}$`, `$\\boxed{{\\text{{ (다) }}}}$` 형태로 작성할 것.
                        - 증명 과정의 단계별 줄바꿈과 기하 기호($\\triangle, \\angle, \\overline{{AB}}, \\equiv, \\parallel, \\therefore$)를 명확하게 살려서 작성할 것.
-                    4. **카드 / 경우의 수 문제:**
+                    5. **카드 / 경우의 수 문제:**
                        - 숫자/문자 카드가 필요한 경우 지문에 `[카드: 1, 2, 3, 4, 5]` 형태로 작성하라.
-                    5. **문제 구성:**
+                    6. **문제 구성:**
                        - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
                        - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
 
                     [수식 작성 규칙]
-                    1. 모든 수식, 분수식, 극한식, 기하 기호, 빈칸 박스는 반드시 `$수식$` 기호로 감싸라. (단, `<svg>...</svg>` 태그는 $ 기호 없이 그대로 출력)
+                    1. 모든 수식, 분수식, 극한식, 기하 기호, 빈칸 박스는 반드시 `$수식$` 기호로 감싸라. (단, 표 `|...|` 및 `<svg>...</svg>`는 $ 없이 일반 텍스트로 작성)
                     2. $ 기호 안에는 순수 수식만 넣고 한글은 $ 밖에 둘 것.
                     3. 아래 출력 양식을 정확히 지켜서 출력할 것.
 
