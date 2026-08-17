@@ -150,7 +150,10 @@ def format_math(text):
         return ""
     text = str(text)
     
-    # 0. OCR 기호 오인식 정제
+    # 0. SVG가 마크다운 코드블록(```html ... ```)에 감싸져 있는 경우 자동 해제
+    text = re.sub(r'```(?:html|xml|svg)?\s*(<svg[\s\S]*?<\/svg>)\s*```', r'\1', text)
+    
+    # 0-1. OCR 기호 오인식 정제
     text = text.replace(r'\neg', 'ㄱ').replace(r'\llcorner', 'ㄴ')
     text = re.sub(r'\{\s*\(\s*ㄱ\s*\)\s*\(\s*ㄴ\s*\)\s*\}*', '㉠ ㉡', text)
     text = re.sub(r'\(\s*ㄱ\s*\)', '㉠', text)
@@ -322,10 +325,9 @@ def parse_single_problem(res_text, prob_num):
 # ==========================================
 # ★ 병렬 단일 문제 생성기 (방정식 옆 곡선 화살표 지원)
 # ==========================================
-def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instruction, api_key):
-    fast_model_name = get_fastest_model_name(api_key)
+def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instruction, api_key, model_name):
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(fast_model_name)
+    model = genai.GenerativeModel(model_name)
     
     if prob_num == 1:
         type_instruction = """
@@ -349,8 +351,7 @@ def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instructi
 
     [공통 그래픽/수식 규칙 (속도 최우선)]
     1. **방정식 풀이 과정 / 등식의 성질 (오른쪽 곡선 화살표 ㉠, ㉡, ㉢) 표기 규칙 (매우 중요):**
-       - 원본 문제가 '방정식 풀이 과정 중 등식의 성질 ㉠, ㉡, ㉢ 찾기' 유형인 경우, **반드시 교과서와 똑같이 아래 형태의 초경량 인라인 SVG(`<svg width="220" height="155" viewBox="0 0 220 155">...</svg>`)로 작성하라:**
-         ```html
+       - 원본 문제가 '방정식 풀이 과정 중 등식의 성질 ㉠, ㉡, ㉢ 찾기' 유형인 경우, **마크다운 코드블록(```)을 절대 쓰지 말고 아래와 같이 순수 SVG 태그(`<svg ...>...</svg>`)로 직접 출력**하라:
          <svg width="220" height="155" viewBox="0 0 220 155">
            <rect x="5" y="5" width="210" height="145" rx="10" fill="#ffffff" stroke="#aaaaaa" stroke-width="1.5"/>
            <text x="75" y="32" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">1단계 식</text>
@@ -367,7 +368,6 @@ def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instructi
            <polygon points="135,136 142,131 141,141" fill="#222222"/>
            <text x="168" y="123" font-size="13" font-weight="bold" fill="#000000">㉢</text>
          </svg>
-         ```
     2. **도형/그래프/수직선 SVG 초경량 작성:**
        - 도형이 필요한 경우 6~8줄 이내의 초간단 인라인 SVG(`<svg width="220" height="130" viewBox="0 0 220 130">...</svg>`)로 작성하라.
        - 모든 SVG 텍스트는 `fill="#000000"`으로 작성하라.
@@ -851,10 +851,11 @@ with tab2:
             with st.spinner("AI가 [1번 기본 다지기]와 [2번 실력 키우기]를 동시에 차별화하여 병렬 생성하고 있습니다 (약 3~5초)..."):
                 try:
                     solution_instruction = "단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
+                    fast_model = get_fastest_model_name(gemini_api_key)
                     
                     with ThreadPoolExecutor(max_workers=2) as executor:
-                        future_p1 = executor.submit(generate_one_problem_async, "1번 기본 다지기 문제", 1, edited_text, solution_instruction, gemini_api_key)
-                        future_p2 = executor.submit(generate_one_problem_async, "2번 실력 키우기 문제", 2, edited_text, solution_instruction, gemini_api_key)
+                        future_p1 = executor.submit(generate_one_problem_async, "1번 기본 다지기 문제", 1, edited_text, solution_instruction, gemini_api_key, fast_model)
+                        future_p2 = executor.submit(generate_one_problem_async, "2번 실력 키우기 문제", 2, edited_text, solution_instruction, gemini_api_key, fast_model)
                         
                         p1_res = future_p1.result()
                         p2_res = future_p2.result()
