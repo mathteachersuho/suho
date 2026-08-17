@@ -3,6 +3,7 @@ import streamlit.components.v1 as components
 import requests
 import json
 import base64
+import urllib.parse
 import re
 import os
 import time
@@ -184,10 +185,12 @@ def parse_tag_problems(res_text):
     return None
 
 # ==========================================
-# ★ A4 전용 고화질 인쇄 컴포넌트 생성기
+# ★ A4 규격 인쇄 HTML 및 투명 버튼 생성기
 # ==========================================
 def render_print_button(button_label, title, items):
-    """지정된 과제 목록(단일 세트 또는 날짜 전체)을 A4 규격으로 인쇄하는 컴포넌트"""
+    if not items:
+        return
+    
     html_items = ""
     ans_items = ""
     
@@ -203,7 +206,7 @@ def render_print_button(button_label, title, items):
         if p.get("image_b64"):
             img_tag = f'<div style="text-align:center; margin-bottom:12px;"><img src="data:image/jpeg;base64,{p["image_b64"]}" style="max-height:160px; max-width:100%; border:1px solid #ddd; border-radius:4px;"></div>'
 
-        set_header = f'<h3 style="margin-top:20px; color:#333; border-bottom:1px solid #aaa; padding-bottom:4px;">📌 과제 세트 {idx}</h3>' if len(items) > 1 else ''
+        set_header = f'<h3 style="margin-top:20px; color:#222; border-bottom:1px solid #888; padding-bottom:4px;">📌 과제 세트 {idx}</h3>' if len(items) > 1 else ''
         
         html_items += f"""
         {set_header}
@@ -211,12 +214,12 @@ def render_print_button(button_label, title, items):
         <div style="margin-bottom: 25px;">
             <div style="font-weight:bold; margin-bottom:6px; font-size:15px;">[문제 {idx*2 - 1}] 기본 다지기</div>
             <div style="line-height:1.7; font-size:14px;">{q1_txt}</div>
-            <div style="height: 120px; border-bottom: 1px dashed #ccc; margin-top: 10px;"></div>
+            <div style="height: 120px; border-bottom: 1px dashed #bbb; margin-top: 10px;"></div>
         </div>
         <div style="margin-bottom: 30px;">
             <div style="font-weight:bold; margin-bottom:6px; font-size:15px;">[문제 {idx*2}] 실력 키우기</div>
             <div style="line-height:1.7; font-size:14px;">{q2_txt}</div>
-            <div style="height: 120px; border-bottom: 1px dashed #ccc; margin-top: 10px;"></div>
+            <div style="height: 120px; border-bottom: 1px dashed #bbb; margin-top: 10px;"></div>
         </div>
         """
         
@@ -229,76 +232,67 @@ def render_print_button(button_label, title, items):
         </div>
         """
 
-    full_print_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>{title}</title>
-        <script>
-            window.MathJax = {{
-                tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']] }}
-            }};
-        </script>
-        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
-        <style>
-            @page {{ size: A4 portrait; margin: 15mm; }}
-            body {{ font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; color: #111; background: #fff; margin: 0; padding: 10px; }}
-            .header-box {{ text-align: center; border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 20px; }}
-            .header-title {{ font-size: 20px; font-weight: bold; }}
-            .name-box {{ text-align: right; font-size: 13px; margin-top: 5px; }}
-            .page-break {{ page-break-before: always; }}
-            @media print {{
-                body {{ padding: 0; }}
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="header-box">
-            <div class="header-title">📐 {title}</div>
-            <div class="name-box">학년/반: ______ 이름: ______________</div>
-        </div>
-        {html_items}
-        <div class="page-break"></div>
-        <div class="header-box" style="margin-top:20px;">
-            <div class="header-title" style="font-size:17px;">📋 [정답 및 해설] {title}</div>
-        </div>
-        {ans_items}
-    </body>
-    </html>
-    """
-    
-    clean_html_js = full_print_html.replace('`', '\\`').replace('$', '\\$')
+    full_print_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{title}</title>
+    <script>
+        window.MathJax = {{
+            tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']] }}
+        }};
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+    <style>
+        @page {{ size: A4 portrait; margin: 15mm; }}
+        body {{ font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; color: #111; background: #fff; margin: 0; padding: 10px; }}
+        .header-box {{ text-align: center; border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 20px; }}
+        .header-title {{ font-size: 20px; font-weight: bold; }}
+        .name-box {{ text-align: right; font-size: 13px; margin-top: 5px; }}
+        .page-break {{ page-break-before: always; }}
+        @media print {{ body {{ padding: 0; }} }}
+    </style>
+</head>
+<body onload="setTimeout(function(){{ window.print(); }}, 800);">
+    <div class="header-box">
+        <div class="header-title">📐 {title}</div>
+        <div class="name-box">학년/반: ______ 이름: ______________</div>
+    </div>
+    {html_items}
+    <div class="page-break"></div>
+    <div class="header-box" style="margin-top:20px;">
+        <div class="header-title" style="font-size:17px;">📋 [정답 및 해설] {title}</div>
+    </div>
+    {ans_items}
+</body>
+</html>"""
+
+    encoded_html = urllib.parse.quote(full_print_html)
     
     component_code = f"""
-    <button onclick="openPrintWindow()" style="
-        background-color: #2e7d32; 
-        color: white; 
-        border: none; 
-        padding: 6px 14px; 
-        font-size: 13px; 
-        font-weight: bold; 
-        border-radius: 6px; 
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-    ">
+    <style>
+        body {{ margin: 0; background: transparent; display: flex; align-items: center; }}
+        .print-link-btn {{
+            background-color: #2e7d32;
+            color: #ffffff !important;
+            padding: 7px 16px;
+            font-size: 13px;
+            font-weight: bold;
+            font-family: sans-serif;
+            border-radius: 6px;
+            text-decoration: none;
+            display: inline-block;
+            transition: background-color 0.2s;
+        }}
+        .print-link-btn:hover {{
+            background-color: #1b5e20;
+        }}
+    </style>
+    <a class="print-link-btn" href="data:text/html;charset=utf-8,{encoded_html}" target="_blank">
         {button_label}
-    </button>
-    <script>
-    function openPrintWindow() {{
-        var win = window.open('', '_blank');
-        win.document.write(`{clean_html_js}`);
-        win.document.close();
-        setTimeout(function() {{
-            win.focus();
-            win.print();
-        }}, 800);
-    }}
-    </script>
+    </a>
     """
-    components.html(component_code, height=42)
+    components.html(component_code, height=40)
 
 # ==========================================
 # ★ 모델 설정
@@ -385,7 +379,7 @@ st.caption(f"현재 접속 권한: **{'선생님 (모든 반 관리)' if current
 tab1, tab2 = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기"])
 
 # ------------------------------------------
-# [탭 1] 학생 게시판 (개별 / 날짜별 인쇄 지원)
+# [탭 1] 학생 게시판 (체크리스트 선택 인쇄 지원)
 # ------------------------------------------
 with tab1:
     col_view, col_ref = st.columns([3, 1])
@@ -420,15 +414,39 @@ with tab1:
             
         for d_key, group in grouped_by_date.items():
             with st.expander(f"📅 {group['label']} 과제 ({len(group['items'])}개 세트)", expanded=False):
-                # ★ 1. 날짜별 전체 과제 일괄 인쇄 버튼
-                col_h1, col_h2 = st.columns([2, 1])
-                with col_h1:
-                    st.markdown(f"#### 📅 {group['label']} 수학 학습지")
-                with col_h2:
-                    render_print_button(f"🖨️ {group['label']} 전체 인쇄", f"[{view_class}] {group['label']} 수학 과제", group["items"])
+                # ★ 1. 인쇄할 세트 선택 체크리스트
+                st.markdown(f"#### 🖨️ {group['label']} 과제 인쇄 설정")
+                set_names = [f"과제 세트 {i}" for i in range(1, len(group["items"]) + 1)]
                 
+                selected_set_names = st.multiselect(
+                    "출력할 과제 세트를 선택하세요:",
+                    options=set_names,
+                    default=set_names,
+                    key=f"multisel_{d_key}"
+                )
+                
+                selected_indices = [int(s.replace("과제 세트 ", "")) - 1 for s in selected_set_names]
+                selected_items = [group["items"][i] for i in selected_indices if i < len(group["items"])]
+                
+                if selected_items:
+                    col_pr1, col_pr2 = st.columns([1, 1])
+                    with col_pr1:
+                        render_print_button(f"🖨️ 선택한 {len(selected_items)}개 세트 A4 인쇄", f"[{view_class}] {group['label']} 수학 과제", selected_items)
+                    with col_pr2:
+                        with st.expander("📋 선택한 과제 한글(HWP) 복사용"):
+                            hwp_bundle = f"[{view_class} - {group['label']} 수학 학습지]\n\n"
+                            for s_idx, sp in enumerate(selected_items, start=1):
+                                hwp_bundle += f"■ 과제 세트 {s_idx}\n[문제 1]\n{sp.get('q1','')}\n\n(풀이 공간)\n\n\n[문제 2]\n{sp.get('q2','')}\n\n(풀이 공간)\n\n\n"
+                            hwp_bundle += "--------------------------------------------------\n[정답 및 풀이]\n"
+                            for s_idx, sp in enumerate(selected_items, start=1):
+                                hwp_bundle += f"■ 과제 세트 {s_idx}\n1번 정답: {sp.get('a1','')}\n1번 풀이: {sp.get('s1','')}\n2번 정답: {sp.get('a2','')}\n2번 풀이: {sp.get('s2','')}\n\n"
+                            st.text_area("선택 묶음 복사 텍스트", hwp_bundle, height=130, key=f"bundle_hwp_{d_key}")
+                else:
+                    st.warning("인쇄할 과제 세트를 1개 이상 선택해 주세요.")
+
                 st.divider()
 
+                # 본문 과제 상세 내용
                 for item_idx, p in enumerate(group["items"], start=1):
                     with st.container():
                         st.markdown(f"##### 📌 과제 세트 {item_idx}")
@@ -458,40 +476,6 @@ with tab1:
                             if s2_safe:
                                 st.markdown(f"**풀이:**\n\n{s2_safe}")
                         
-                        # ★ 2. 개별 세트 인쇄 및 HWP 복사 툴바
-                        col_p1, col_p2 = st.columns([1, 2])
-                        with col_p1:
-                            render_print_button(f"🖨️ 세트 {item_idx}만 인쇄", f"[{view_class}] {group['label']} 과제 (세트 {item_idx})", [p])
-                        with col_p2:
-                            with st.expander("📋 한글(HWP) 복사용 텍스트"):
-                                printable_text = f"""[수학 학습지 - {group['label']} 세트 {item_idx}]
-
-[문제 1]
-{p.get('q1', '')}
-
-(풀이 공간)
-
-
-
-
-[문제 2]
-{p.get('q2', '')}
-
-(풀이 공간)
-
-
-
-
---------------------------------------------------
-[정답 및 해설]
-1번 정답: {p.get('a1', '')}
-{f'1번 풀이: {p.get("s1", "")}' if p.get("s1") else ''}
-
-2번 정답: {p.get('a2', '')}
-{f'2번 풀이: {p.get("s2", "")}' if p.get("s2") else ''}
-"""
-                                st.text_area("복사용 텍스트", printable_text, height=120, key=f"hwp_{p.get('id')}")
-
                         if current_role == "admin":
                             if st.button("🗑️ 이 과제 시트에서 삭제하기", key=f"del_{p.get('id')}"):
                                 if delete_problem(p.get('id')):
