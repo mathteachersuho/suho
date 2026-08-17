@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링 & 빈칸 상자(\boxed) 전용 엔진
+# ★ 수식 렌더링, 빈칸 박스, 카드 UI 통합 엔진
 # ==========================================
 def format_math(text):
     if not text:
@@ -97,7 +97,6 @@ def format_math(text):
     text = re.sub(r'\$\$(.*?)\$\$', r'$\1$', text, flags=re.DOTALL)
     
     # 3. 빈칸 문자 및 기호 박스화 자동 변환 (가~라, square 등)
-    # OCR로 들어온 빈 네모상자나 (가) 기호를 $\boxed{\text{ (가) }}$ 형태로 변환
     text = re.sub(r'[□■]\s*\(([가-힣a-zA-Z0-9]+)\)', r'$\\boxed{\\text{ (\1) }}$', text)
     text = re.sub(r'\[\s*\(([가-힣a-zA-Z0-9]+)\)\s*\]', r'$\\boxed{\\text{ (\1) }}$', text)
     
@@ -105,8 +104,8 @@ def format_math(text):
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     
-    # 5. 도형 및 기하 수식 기호 정규화 (\triangle, \overline, \angle, \equiv, \parallel)
-    text = re.sub(r'\\mathrm\{([A-Z]+)\}', r'\1', text)  # \mathrm{ABC} -> ABC
+    # 5. 도형 및 극한 기호 정규화
+    text = re.sub(r'\\mathrm\{([A-Z]+)\}', r'\1', text)
     text = re.sub(r'lim_?\{?xtoa\}?', r'\\lim\\limits_{x \\to a} ', text)
     text = re.sub(r'lim_?\{?x\s*to\s*([a-zA-Z0-9]+)\}?', r'\\lim\\limits_{x \\to \1} ', text)
     text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
@@ -137,10 +136,21 @@ def format_math(text):
             part = re.sub(r'(?<![$\\])\b([fgh]\'?\([a-zA-Z\d+\-*/]*\))(?![$\\])', r'$\1$', part)
         new_parts.append(part)
     
-    result = '$'.join(new_parts)
-    result = re.sub(r'\$\s*\$', '', result)
-    result = re.sub(r'\${3,}', '$$', result)
-    return result
+    text = '$'.join(new_parts)
+    text = re.sub(r'\$\s*\$', '', text)
+    text = re.sub(r'\${3,}', '$$', text)
+    
+    # 7. [카드: 1, 2, 3] 태그를 시각적 카드 박스 HTML로 자동 변환
+    def render_cards(match):
+        items = [x.strip() for x in match.group(1).split(',') if x.strip()]
+        card_html = '<div style="display:inline-flex; gap:8px; margin:8px 0; align-items:center; vertical-align:middle;">'
+        for item in items:
+            card_html += f'<div style="min-width:32px; height:46px; padding:2px 8px; border:2px solid #333; border-radius:6px; background-color:#ffffff; color:#111111; font-weight:bold; font-size:16px; display:inline-flex; align-items:center; justify-content:center; box-shadow:1px 2px 4px rgba(0,0,0,0.12);">{item}</div>'
+        card_html += '</div>'
+        return card_html
+        
+    text = re.sub(r'\[카드\s*:\s*([^\]]+)\]', render_cards, text)
+    return text
 
 def parse_date_group(date_str):
     """모든 날짜 형식을 'M월 D일'로 변환"""
@@ -206,7 +216,7 @@ def parse_tag_problems(res_text):
     return None
 
 # ==========================================
-# ★ A4 규격 인쇄용 HTML 생성기 (빈칸 박스 & 증명 상자 스타일 지원)
+# ★ A4 규격 인쇄용 HTML 생성기 (상하 50:50 균등 분할)
 # ==========================================
 def make_printable_html(title, items):
     html_pages = ""
@@ -598,18 +608,18 @@ with tab1:
                         s2_safe = format_math(p.get("s2", ""))
                         
                         st.markdown("#### [문제 1] 기본 다지기")
-                        st.markdown(q1_safe)
+                        st.markdown(q1_safe, unsafe_allow_html=True)
                         with st.expander("🔍 1번 정답 및 풀이 확인"):
-                            st.markdown(f"**정답:** {a1_safe}")
+                            st.markdown(f"**정답:** {a1_safe}", unsafe_allow_html=True)
                             if s1_safe:
-                                st.markdown(f"**풀이:**\n\n{s1_safe}")
+                                st.markdown(f"**풀이:**\n\n{s1_safe}", unsafe_allow_html=True)
                         
                         st.markdown("#### [문제 2] 실력 키우기")
-                        st.markdown(q2_safe)
+                        st.markdown(q2_safe, unsafe_allow_html=True)
                         with st.expander("🔍 2번 정답 및 풀이 확인"):
-                            st.markdown(f"**정답:** {a2_safe}")
+                            st.markdown(f"**정답:** {a2_safe}", unsafe_allow_html=True)
                             if s2_safe:
-                                st.markdown(f"**풀이:**\n\n{s2_safe}")
+                                st.markdown(f"**풀이:**\n\n{s2_safe}", unsafe_allow_html=True)
                         
                         if current_role == "admin":
                             if st.button("🗑️ 이 과제 시트에서 삭제하기", key=f"del_{p.get('id')}"):
@@ -661,7 +671,7 @@ with tab2:
         edited_text = st.text_area("도형 조건이나 수식 중 누락된 부분을 수정하세요:", value=st.session_state.ocr_text, height=150)
         st.session_state.ocr_text = edited_text
         st.markdown("**수식 렌더링 미리보기:**")
-        st.markdown(format_math(edited_text))
+        st.markdown(format_math(edited_text), unsafe_allow_html=True)
         
         include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
@@ -673,7 +683,7 @@ with tab2:
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ 빈칸 채우기 및 기하 증명 박스 출제 규칙 강화
+                    # ★ 교육과정 준수, 빈칸 박스, 카드 UI 출제 지침
                     prompt = f"""
                     너는 대한민국 고등학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -689,8 +699,9 @@ with tab2:
                     2. **빈칸 채우기 및 증명 문제 작성 규칙:**
                        - 빈칸은 반드시 `$\\boxed{{\\text{{ (가) }}}}$`, `$\\boxed{{\\text{{ (나) }}}}$`, `$\\boxed{{\\text{{ (다) }}}}$` 형태로 작성할 것.
                        - 증명 과정의 단계별 줄바꿈과 기하 기호($\\triangle, \\angle, \\overline{{AB}}, \\equiv, \\parallel, \\therefore$)를 명확하게 살려서 작성할 것.
-                    3. **도형 및 그래프 문제 서술 규칙:**
+                    3. **도형/그래프 및 카드 문제 서술 규칙:**
                        - 원본 문제에 도형/그래프가 있는 경우, 필수 성질이나 개형을 문제 본문에 텍스트/수식 조건으로 명확히 서술하여 새 그림 없이도 완벽히 풀 수 있게 하라.
+                       - 숫자/문자 카드가 필요한 문제의 경우 지문에 `[카드: 1, 2, 3, 4, 5]` 형태로 작성하라.
                     4. **문제 구성:**
                        - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
                        - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
@@ -739,6 +750,7 @@ with tab2:
             p1 = st.session_state.similar_problems[0]
             p2 = st.session_state.similar_problems[1]
             
+            # 관리자(선생님) 전용 과제 등록 바
             if current_role == "admin":
                 col_post1, col_post2 = st.columns([1, 2])
                 with col_post1:
@@ -764,6 +776,7 @@ with tab2:
                                 st.success(f"✅ [{target_class}] 과제 등록 완료!")
                                 time.sleep(0.5)
                 
+                # 빠른 단어·숫자 1초 교체 도구
                 with st.expander("⚡ [빠른 단어·숫자 바꾸기] 화면을 보면서 오타/숫자만 1초 교체", expanded=False):
                     st.caption("수식 코드를 건드릴 필요 없이, 문제 화면에 보이는 글자나 숫자를 적어주시면 즉시 바뀝니다.")
                     col_tgt, col_find, col_replace, col_btn = st.columns([1.2, 1.5, 1.5, 1])
@@ -792,12 +805,12 @@ with tab2:
             # 1번 문제 카드
             with st.container():
                 st.markdown("### [문제 1] 기본 다지기")
-                st.markdown(format_math(p1.get("question", "")))
+                st.markdown(format_math(p1.get("question", "")), unsafe_allow_html=True)
                 
                 with st.expander("🔍 1번 정답 및 풀이 확인"):
-                    st.markdown(f"**정답:** {format_math(p1.get('answer', ''))}")
+                    st.markdown(f"**정답:** {format_math(p1.get('answer', ''))}", unsafe_allow_html=True)
                     if p1.get("solution"):
-                        st.markdown(f"**풀이:**\n\n{format_math(p1.get('solution', ''))}")
+                        st.markdown(f"**풀이:**\n\n{format_math(p1.get('solution', ''))}", unsafe_allow_html=True)
                 
                 if current_role == "admin":
                     if st.checkbox("✏️ 1번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p1"):
@@ -816,12 +829,12 @@ with tab2:
             # 2번 문제 카드
             with st.container():
                 st.markdown("### [문제 2] 실력 키우기")
-                st.markdown(format_math(p2.get("question", "")))
+                st.markdown(format_math(p2.get("question", "")), unsafe_allow_html=True)
                 
                 with st.expander("🔍 2번 정답 및 풀이 확인"):
-                    st.markdown(f"**정답:** {format_math(p2.get('answer', ''))}")
+                    st.markdown(f"**정답:** {format_math(p2.get('answer', ''))}", unsafe_allow_html=True)
                     if p2.get("solution"):
-                        st.markdown(f"**풀이:**\n\n{format_math(p2.get('solution', ''))}")
+                        st.markdown(f"**풀이:**\n\n{format_math(p2.get('solution', ''))}", unsafe_allow_html=True)
                 
                 if current_role == "admin":
                     if st.checkbox("✏️ 2번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p2"):
