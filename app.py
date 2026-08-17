@@ -100,7 +100,7 @@ def format_math(text):
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     
-    # 4. 구형 DB(초기 데이터)의 깨진 수식 표현 자동 복원 (lim_xtoa, frac12 등)
+    # 4. 구형 DB(초기 데이터)의 깨진 수식 표현 자동 복원
     text = re.sub(r'lim_?\{?xtoa\}?', r'\\lim\\limits_{x \\to a} ', text)
     text = re.sub(r'lim_?\{?x\s*to\s*([a-zA-Z0-9]+)\}?', r'\\lim\\limits_{x \\to \1} ', text)
     text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
@@ -200,7 +200,7 @@ def parse_tag_problems(res_text):
     return None
 
 # ==========================================
-# ★ A4 규격 인쇄용 완벽한 HTML 생성 함수 (1페이지 1세트 강제 고정)
+# ★ A4 규격 인쇄용 완벽한 HTML 생성 함수 (상하 50:50 균등 분할)
 # ==========================================
 def make_printable_html(title, items):
     html_pages = ""
@@ -216,27 +216,31 @@ def make_printable_html(title, items):
         
         img_tag = ""
         if p.get("image_b64"):
-            img_tag = f'<div style="text-align:center; margin: 6px 0;"><img src="data:image/jpeg;base64,{p["image_b64"]}" style="max-height:100px; max-width:85%; border:1px solid #ddd; border-radius:4px;"></div>'
+            img_tag = f'<div style="text-align:center; margin: 4px 0;"><img src="data:image/jpeg;base64,{p["image_b64"]}" style="max-height:85px; max-width:80%; border:1px solid #ddd; border-radius:4px;"></div>'
 
         set_title = f"{title} (과제 세트 {idx})" if len(items) > 1 else title
 
-        # ★ 각 과제 세트마다 A4 1페이지 단위로 완전 분리
+        # ★ 상하 50:50 균등 분할 레이아웃 적용
         html_pages += f"""
-        <div class="set-page">
+        <div class="a4-page">
             <div class="header-box">
                 <div class="header-title">📐 {set_title}</div>
                 <div class="name-box">학년/반: ______ 이름: ______________</div>
             </div>
             {img_tag}
-            <div class="problem-box">
-                <div class="prob-title">[문제 1] 기본 다지기</div>
-                <div class="prob-content">{q1}</div>
-                <div class="solution-space"></div>
+            <div class="problem-container">
+                <div class="prob-header">[문제 1] 기본 다지기</div>
+                <div class="prob-body">{q1}</div>
+                <div class="work-space">
+                    <span class="work-label">[풀이 과정]</span>
+                </div>
             </div>
-            <div class="problem-box">
-                <div class="prob-title">[문제 2] 실력 키우기</div>
-                <div class="prob-content">{q2}</div>
-                <div class="solution-space"></div>
+            <div class="problem-container">
+                <div class="prob-header">[문제 2] 실력 키우기</div>
+                <div class="prob-body">{q2}</div>
+                <div class="work-space">
+                    <span class="work-label">[풀이 과정]</span>
+                </div>
             </div>
         </div>
         """
@@ -270,7 +274,7 @@ def make_printable_html(title, items):
     <style>
         @page {{ 
             size: A4 portrait; 
-            margin: 12mm 15mm; 
+            margin: 10mm 15mm; 
         }}
         * {{ box-sizing: border-box; }}
         body {{ 
@@ -278,62 +282,91 @@ def make_printable_html(title, items):
             color: #111; 
             background: #ffffff; 
             margin: 0; 
-            padding: 15px;
-            max-width: 800px;
+            padding: 10px;
+            max-width: 820px;
             margin: 0 auto;
         }}
         
-        /* ★ 1개 세트 = 정확히 1페이지 */
-        .set-page {{
+        /* ★ A4 1장에 1세트 완전 고정 (272mm) */
+        .a4-page {{
             page-break-after: always;
             break-after: page;
-            min-height: 250mm;
+            height: 270mm;
+            max-height: 270mm;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
+            overflow: hidden;
+            margin-bottom: 20px;
+            background: #fff;
         }}
+        
         .header-box {{ 
+            flex-shrink: 0;
             text-align: center; 
             border-bottom: 2px solid #000; 
-            padding-bottom: 6px; 
-            margin-bottom: 12px; 
+            padding-bottom: 5px; 
+            margin-bottom: 8px; 
         }}
-        .header-title {{ font-size: 18px; font-weight: bold; margin-bottom: 4px; }}
+        .header-title {{ font-size: 18px; font-weight: bold; margin-bottom: 3px; }}
         .name-box {{ text-align: right; font-size: 13px; font-weight: 500; color: #444; }}
         
-        .problem-box {{
-            margin-bottom: 8px;
-            flex-grow: 1;
+        /* ★ 문제 영역: 50:50 균등 Flex 배분 */
+        .problem-container {{
+            flex: 1 1 0;
             display: flex;
             flex-direction: column;
+            border-bottom: 1px dashed #aaa;
+            padding-top: 6px;
+            padding-bottom: 6px;
+            margin-bottom: 6px;
         }}
-        .prob-title {{
+        .problem-container:last-child {{
+            border-bottom: none;
+            margin-bottom: 0;
+        }}
+        
+        .prob-header {{
+            flex-shrink: 0;
             font-weight: bold;
-            font-size: 14px;
+            font-size: 14.5px;
             color: #000;
-            margin-bottom: 5px;
+            margin-bottom: 4px;
         }}
-        .prob-content {{
+        .prob-body {{
+            flex-shrink: 0;
             line-height: 1.65;
             font-size: 13.5px;
             color: #111;
         }}
-        .solution-space {{
-            flex-grow: 1;
-            min-height: 70px;
-            border-bottom: 1px dashed #bbb;
+        
+        /* ★ 풀이 공간: 남은 여백을 100% 채우는 반응형 공간 */
+        .work-space {{
+            flex: 1 1 0;
+            min-height: 80px;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
             margin-top: 8px;
-            margin-bottom: 8px;
+            background: #fafafa;
+            border: 1px dotted #ccc;
+            border-radius: 4px;
+            padding: 6px 10px;
+        }}
+        .work-label {{
+            font-size: 11.5px;
+            color: #888;
         }}
         
-        /* 정답 및 해설 전용 페이지 */
         .answer-page {{
             page-break-before: always;
             break-before: page;
+            padding-top: 10px;
         }}
+        
         .print-btn-bar {{
             text-align: center;
-            margin-bottom: 20px;
+            margin-bottom: 15px;
             padding: 10px;
             background: #f0f4f8;
             border-radius: 8px;
@@ -352,7 +385,11 @@ def make_printable_html(title, items):
         @media print {{
             .print-btn-bar {{ display: none !important; }}
             body {{ padding: 0; max-width: 100%; }}
-            .set-page {{ min-height: auto; }}
+            .a4-page {{ 
+                margin-bottom: 0; 
+                height: 272mm;
+            }}
+            .work-space {{ background: transparent; border-color: #bbb; }}
         }}
     </style>
 </head>
