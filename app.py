@@ -16,21 +16,26 @@ st.title("📐 AI 수학 온라인 클래스룸")
 # ==========================================
 # ★ 구글 스프레드시트 연동 DB 함수
 # ==========================================
-sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
+sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "").strip()
 
 def fetch_problems():
-    """구글 시트에서 전체 과제 불러오기"""
+    """구글 시트에서 전체 과제 불러오기 (캐시 방지 적용)"""
     if not sheet_url:
-        # 시트 URL이 없을 경우 로컬 임시 파일 대체
         if os.path.exists("shared_problems.json"):
             with open("shared_problems.json", "r", encoding="utf-8") as f:
                 return json.load(f)
         return []
     
     try:
-        res = requests.get(sheet_url, timeout=10)
+        # 캐싱 방지를 위해 timestamp 파라미터 추가
+        fetch_url = f"{sheet_url}?t={int(time.time() * 1000)}"
+        res = requests.get(fetch_url, timeout=10)
         if res.status_code == 200:
-            return res.json()
+            data = res.json()
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, str):
+                return json.loads(data)
     except Exception as e:
         st.error(f"데이터베이스 연결 오류: {e}")
     return []
@@ -38,7 +43,6 @@ def fetch_problems():
 def save_problem(problem_data):
     """구글 시트에 새 과제 추가하기"""
     if not sheet_url:
-        # 로컬 임시 파일 저장 fallback
         curr = fetch_problems()
         curr.insert(0, problem_data)
         with open("shared_problems.json", "w", encoding="utf-8") as f:
@@ -62,7 +66,7 @@ def delete_problem(prob_id):
         return True
     
     try:
-        res = requests.post(sheet_url, json={"action": "delete", "id": prob_id}, timeout=10)
+        res = requests.post(sheet_url, json={"action": "delete", "id": str(prob_id)}, timeout=10)
         return res.status_code == 200
     except Exception as e:
         st.error(f"과제 삭제 오류: {e}")
@@ -173,22 +177,28 @@ st.caption(f"현재 접속 권한: **{'선생님 (모든 반 관리)' if current
 tab1, tab2 = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기"])
 
 # ------------------------------------------
-# [탭 1] 학생 게시판 (구글 시트 연동 + 날짜별 정렬)
+# [탭 1] 학생 게시판
 # ------------------------------------------
 with tab1:
-    if current_role == "admin":
-        view_class = st.selectbox("👀 조회할 반 게시판을 선택하세요", class_list)
-    else:
-        view_class = current_role
+    col_view, col_ref = st.columns([3, 1])
+    with col_view:
+        if current_role == "admin":
+            view_class = st.selectbox("👀 조회할 반 게시판을 선택하세요", class_list)
+        else:
+            view_class = current_role
+    with col_ref:
+        st.write("")
+        if st.button("🔄 최신 과제 새로고침"):
+            st.rerun()
         
     st.subheader(f"📋 [{view_class}] 과제 게시판")
     
-    with st.spinner("구글 스프레드시트에서 과제 목록을 불러오는 중..."):
+    with st.spinner("과제 목록을 불러오는 중..."):
         all_problems = fetch_problems()
     
-    # 해당 반 과제만 필터링 후, 최신 등록일(날짜 역순) 기준으로 정렬
-    filtered = [p for p in all_problems if str(p.get("class_id", "")) == view_class]
-    filtered.reverse() # 최신 날짜가 맨 위로 오도록 정렬
+    # 반별 필터링 및 최신 등록순 정렬
+    filtered = [p for p in all_problems if str(p.get("class_id", "")).strip() == view_class.strip()]
+    filtered.reverse()
     
     if not filtered:
         st.info(f"아직 [{view_class}]에 등록된 과제가 없습니다.")
@@ -274,8 +284,8 @@ with tab2:
         st.markdown("**수식 렌더링 미리보기:**")
         st.markdown(format_math(edited_text))
         
-        # 비용 절감용 간결 해설 옵션
-        include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성하여 비용 절감)", value=False)
+        # ★ 문구 변경 완료
+        include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
             with st.spinner("Gemini가 정밀하게 문제를 출제하고 있습니다..."):
@@ -336,7 +346,8 @@ with tab2:
                 with col2:
                     st.write("") 
                     st.write("") 
-                    if st.button(f"📢 [{target_class}] 구글 시트에 과제 등록하기", type="primary"):
+                    # ★ 버튼 문구 변경 완료
+                    if st.button(f"📢 [{target_class}] 과제 등록하기", type="primary"):
                         new_prob = {
                             "id": str(int(time.time())),
                             "class_id": target_class, 
@@ -349,9 +360,10 @@ with tab2:
                             "a2": st.session_state.similar_problems[1]["answer"],
                             "s2": st.session_state.similar_problems[1].get("solution", ""),
                         }
-                        with st.spinner("구글 스프레드시트에 영구 저장하는 중..."):
+                        with st.spinner("과제를 등록하는 중..."):
                             if save_problem(new_prob):
-                                st.success(f"✅ [{target_class}] 구글 스프레드시트에 영구 저장 완료!")
+                                # ★ 성공 메시지 문구 변경 완료
+                                st.success(f"✅ [{target_class}] 과제 등록 완료!")
                         
             for idx, item in enumerate(st.session_state.similar_problems, start=1):
                 with st.container():
