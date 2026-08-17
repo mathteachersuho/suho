@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링 전용 엔진 (lim 밑 화살표 배치 완벽 지원)
+# ★ 수식 렌더링 전용 엔진 (신규/과거 데이터 완벽 호환)
 # ==========================================
 def format_math(text):
     if not text:
@@ -93,16 +93,42 @@ def format_math(text):
     # 1. 줄바꿈 기호 변환
     text = text.replace('[br]', '\n\n')
     
-    # 2. 모든 lim 기호의 밑첨자가 정중앙 아래로 오도록 \limits 강제 적용
-    # (\limits 단어 자체의 충돌을 방지하며 \lim에만 안전하게 적용)
-    text = re.sub(r'\\lim(?![a-zA-Z])(?!\s*\\limits)', r'\\lim\\limits', text)
+    # 2. 명령어 앞 중복 백슬래시 정리 (\\lim -> \lim, \\to -> \to, \\{ -> \{)
+    # (단, cases/array 내부 줄바꿈용 \\는 유지)
+    text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
+    text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     
-    # 3. 특수 제어문자 및 손상 단어 복원
+    # 3. 특수 제어문자 및 오타 복원
     text = text.replace('\x0c', r'\f').replace('♀rac', r'\frac').replace('♀', r'\f')
+    text = text.replace('\x08', r'\b').replace('\x07', r'\a').replace('\x0b', r'\v')
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     
-    return text
+    # 4. lim 기호 표준화 (화살표가 정중앙 밑으로 가도록)
+    text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
+    text = re.sub(r'\\lim(?![a-zA-Z])(?!\s*\\limits)', r'\\lim\\limits', text)
+    text = re.sub(r'(\\lim\\limits\s*)+', r'\\lim\\limits ', text)
+    
+    # 5. $ 기호 없이 노출된 과거 수식 덩어리를 $...$로 자동 감싸기
+    parts = text.split('$')
+    new_parts = []
+    for i, part in enumerate(parts):
+        if i % 2 == 0:  # $ 기호 바깥 영역
+            def replacer(match):
+                chunk = match.group(1).rstrip()
+                if not chunk:
+                    return ""
+                return f"${chunk}$"
+            
+            pattern = r'(\\[a-zA-Z]+(?:\{[^{}]*\}|[\w\s+\-*/=<>(),._\^\\{}]*?))(?=[가-힣\n\r]|$)'
+            part = re.sub(pattern, replacer, part)
+        new_parts.append(part)
+    
+    result = '$'.join(new_parts)
+    result = re.sub(r'\$\s*\$', '', result)
+    result = re.sub(r'\${3,}', '$$', result)
+    
+    return result
 
 def parse_date_group(date_str):
     """모든 날짜 형식을 'M월 D일'로 변환"""
