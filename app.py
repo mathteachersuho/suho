@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링 및 구형 DB 데이터 복원 엔진
+# ★ 수식 렌더링 & 빈칸 상자(\boxed) 전용 엔진
 # ==========================================
 def format_math(text):
     if not text:
@@ -96,11 +96,17 @@ def format_math(text):
     # 2. Mathpix의 $$...$$ 블록 수식을 표준 $...$로 정규화
     text = re.sub(r'\$\$(.*?)\$\$', r'$\1$', text, flags=re.DOTALL)
     
-    # 3. 명령어 앞 중복 백슬래시 정리
+    # 3. 빈칸 문자 및 기호 박스화 자동 변환 (가~라, square 등)
+    # OCR로 들어온 빈 네모상자나 (가) 기호를 $\boxed{\text{ (가) }}$ 형태로 변환
+    text = re.sub(r'[□■]\s*\(([가-힣a-zA-Z0-9]+)\)', r'$\\boxed{\\text{ (\1) }}$', text)
+    text = re.sub(r'\[\s*\(([가-힣a-zA-Z0-9]+)\)\s*\]', r'$\\boxed{\\text{ (\1) }}$', text)
+    
+    # 4. 명령어 앞 중복 백슬래시 정리
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     
-    # 4. 구형 DB(초기 데이터)의 깨진 수식 표현 자동 복원
+    # 5. 도형 및 기하 수식 기호 정규화 (\triangle, \overline, \angle, \equiv, \parallel)
+    text = re.sub(r'\\mathrm\{([A-Z]+)\}', r'\1', text)  # \mathrm{ABC} -> ABC
     text = re.sub(r'lim_?\{?xtoa\}?', r'\\lim\\limits_{x \\to a} ', text)
     text = re.sub(r'lim_?\{?x\s*to\s*([a-zA-Z0-9]+)\}?', r'\\lim\\limits_{x \\to \1} ', text)
     text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
@@ -116,7 +122,7 @@ def format_math(text):
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     
-    # 5. $ 기호 없이 노출된 수식 및 함수 자동 감싸기
+    # 6. $ 기호 없이 노출된 수식 및 함수 자동 감싸기
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
@@ -200,7 +206,7 @@ def parse_tag_problems(res_text):
     return None
 
 # ==========================================
-# ★ A4 규격 인쇄용 완벽한 HTML 생성 함수 (상하 50:50 균등 분할)
+# ★ A4 규격 인쇄용 HTML 생성기 (빈칸 박스 & 증명 상자 스타일 지원)
 # ==========================================
 def make_printable_html(title, items):
     html_pages = ""
@@ -332,7 +338,7 @@ def make_printable_html(title, items):
         }}
         .prob-body {{
             flex-shrink: 0;
-            line-height: 1.65;
+            line-height: 1.7;
             font-size: 13.5px;
             color: #111;
         }}
@@ -667,6 +673,7 @@ with tab2:
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
+                    # ★ 빈칸 채우기 및 기하 증명 박스 출제 규칙 강화
                     prompt = f"""
                     너는 대한민국 고등학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -678,15 +685,18 @@ with tab2:
                     1. **단원 범위 준수 (선행 개념 절대 금지):**
                        - 원본 문제가 미분/도함수 단원이면, 아직 배우지 않은 '적분 기호($\\int$)'나 적분 개념을 절대로 사용하지 마라.
                        - 원본 문제가 극한 단원이면 미분/적분을 쓰지 마라.
-                       - 2번(실력 키우기) 문제 역시 다른 후속 단원과 섞지 말고, **현재 원본 문제 단원 내에서만** 조건(계수 비교, 차수 추론 등)을 심화하여 출제하라.
-                    2. **도형 및 그래프 문제 서술 규칙:**
+                       - 2번(실력 키우기) 문제 역시 다른 후속 단원과 섞지 말고, **현재 원본 문제 단원 내에서만** 조건을 심화하여 출제하라.
+                    2. **빈칸 채우기 및 증명 문제 작성 규칙:**
+                       - 빈칸은 반드시 `$\\boxed{{\\text{{ (가) }}}}$`, `$\\boxed{{\\text{{ (나) }}}}$`, `$\\boxed{{\\text{{ (다) }}}}$` 형태로 작성할 것.
+                       - 증명 과정의 단계별 줄바꿈과 기하 기호($\\triangle, \\angle, \\overline{{AB}}, \\equiv, \\parallel, \\therefore$)를 명확하게 살려서 작성할 것.
+                    3. **도형 및 그래프 문제 서술 규칙:**
                        - 원본 문제에 도형/그래프가 있는 경우, 필수 성질이나 개형을 문제 본문에 텍스트/수식 조건으로 명확히 서술하여 새 그림 없이도 완벽히 풀 수 있게 하라.
-                    3. **문제 구성:**
+                    4. **문제 구성:**
                        - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
                        - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
 
                     [수식 작성 규칙]
-                    1. 모든 수식, 분수식, 극한식, 도함수 식은 반드시 `$수식$` 기호로 감싸라.
+                    1. 모든 수식, 분수식, 극한식, 기하 기호, 빈칸 박스는 반드시 `$수식$` 기호로 감싸라.
                     2. $ 기호 안에는 순수 수식만 넣고 한글은 $ 밖에 둘 것.
                     3. 아래 출력 양식을 정확히 지켜서 출력할 것.
 
@@ -729,7 +739,6 @@ with tab2:
             p1 = st.session_state.similar_problems[0]
             p2 = st.session_state.similar_problems[1]
             
-            # 관리자(선생님)일 때: 과제 등록 버튼 상단 배치
             if current_role == "admin":
                 col_post1, col_post2 = st.columns([1, 2])
                 with col_post1:
@@ -755,16 +764,15 @@ with tab2:
                                 st.success(f"✅ [{target_class}] 과제 등록 완료!")
                                 time.sleep(0.5)
                 
-                # ★ [1] 빠른 숫자·단어 일괄 바꾸기 도구 (화면 보면서 1초 교체)
                 with st.expander("⚡ [빠른 단어·숫자 바꾸기] 화면을 보면서 오타/숫자만 1초 교체", expanded=False):
                     st.caption("수식 코드를 건드릴 필요 없이, 문제 화면에 보이는 글자나 숫자를 적어주시면 즉시 바뀝니다.")
                     col_tgt, col_find, col_replace, col_btn = st.columns([1.2, 1.5, 1.5, 1])
                     with col_tgt:
                         replace_target_prob = st.selectbox("수정할 문제", ["1번 문제", "2번 문제", "1번+2번 전체"])
                     with col_find:
-                        find_str = st.text_input("바꿀 대상 (예: 30)", key="find_str")
+                        find_str = st.text_input("바꿀 대상 (예: (가) 또는 30)", key="find_str")
                     with col_replace:
-                        replace_str = st.text_input("새로운 값 (예: 25)", key="replace_str")
+                        replace_str = st.text_input("새로운 값 (예: (나) 또는 25)", key="replace_str")
                     with col_btn:
                         st.write("")
                         st.write("")
@@ -781,7 +789,7 @@ with tab2:
                                 st.success(f"'{find_str}' ➔ '{replace_str}' 교체 완료!")
                                 st.rerun()
 
-            # ★ [2] 문제 카드 1번 (화면 + 인라인 직접 수정)
+            # 1번 문제 카드
             with st.container():
                 st.markdown("### [문제 1] 기본 다지기")
                 st.markdown(format_math(p1.get("question", "")))
@@ -793,7 +801,7 @@ with tab2:
                 
                 if current_role == "admin":
                     if st.checkbox("✏️ 1번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p1"):
-                        p1_q_new = st.text_area("1번 지문 내용:", value=p1.get("question", ""), key="inline_p1_q", height=100)
+                        p1_q_new = st.text_area("1번 지문 내용:", value=p1.get("question", ""), key="inline_p1_q", height=120)
                         col_a1, col_s1 = st.columns([1, 2])
                         with col_a1:
                             p1_a_new = st.text_input("1번 정답:", value=p1.get("answer", ""), key="inline_p1_a")
@@ -805,7 +813,7 @@ with tab2:
                         p1["solution"] = p1_s_new
             st.divider()
 
-            # ★ [3] 문제 카드 2번 (화면 + 인라인 직접 수정)
+            # 2번 문제 카드
             with st.container():
                 st.markdown("### [문제 2] 실력 키우기")
                 st.markdown(format_math(p2.get("question", "")))
@@ -817,7 +825,7 @@ with tab2:
                 
                 if current_role == "admin":
                     if st.checkbox("✏️ 2번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p2"):
-                        p2_q_new = st.text_area("2번 지문 내용:", value=p2.get("question", ""), key="inline_p2_q", height=100)
+                        p2_q_new = st.text_area("2번 지문 내용:", value=p2.get("question", ""), key="inline_p2_q", height=120)
                         col_a2, col_s2 = st.columns([1, 2])
                         with col_a2:
                             p2_a_new = st.text_input("2번 정답:", value=p2.get("answer", ""), key="inline_p2_a")
