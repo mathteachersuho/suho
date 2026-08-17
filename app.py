@@ -84,10 +84,10 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링, 풀이 단계 상자, 전개도 맞춤 표, SVG 통합 엔진
+# ★ 수식 렌더링, 전개도 맞춤 표, SVG 통합 엔진
 # ==========================================
 def convert_frac_to_html(text):
-    """분수(\\frac{a}{b})를 HTML 세로 분수로 변환하여 표/셀 내부 깨짐 방지"""
+    """분수(\frac{a}{b})를 HTML 세로 분수로 변환하여 표/셀 내부 깨짐 방지"""
     def repl(m):
         sign = m.group(1) or ""
         num = m.group(2).strip()
@@ -104,30 +104,6 @@ def _clean_cell(col):
     col = convert_frac_to_html(col)
     col = col.replace('$', '')
     return col
-
-def _render_equation_step_table(lines):
-    """방정식 풀이 과정 화살표(↓ ㉠, ㉡, ㉢) 단계 상자 렌더러"""
-    rows = []
-    for line in lines:
-        if re.match(r'^\|(?:\s*:?-+:?\s*\|)+$', line):
-            continue
-        cols = [c.strip() for c in line.strip('|').split('|')]
-        rows.append(cols)
-    
-    html = '<div style="margin: 12px 0; text-align: center;"><table style="border: 1.5px solid #aaa; border-radius: 8px; border-collapse: collapse; margin: 0 auto; background: #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.06);">'
-    for i, row in enumerate(rows):
-        if i == 0 and ("과정" in row[0] or "단계" in row[-1]):
-            continue
-        html += '<tr>'
-        for col in row:
-            cleaned = col.strip()
-            if any(k in cleaned for k in ["↓", "㉠", "㉡", "㉢", "㉣", "ㄱ", "ㄴ", "ㄷ"]):
-                html += f'<td style="border: none; padding: 6px 14px; font-weight: bold; color: #1976d2; font-size: 14px; text-align: left; vertical-align: middle;">{cleaned}</td>'
-            else:
-                html += f'<td style="border: none; padding: 6px 14px; font-size: 15px; text-align: right; vertical-align: middle; color: #111111;">{cleaned}</td>'
-        html += '</tr>'
-    html += '</table></div>'
-    return html
 
 def _md_table_to_html(lines):
     if not lines:
@@ -174,7 +150,7 @@ def format_math(text):
         return ""
     text = str(text)
     
-    # 0. OCR 기호 오인식 정제 (ㄱ, ㄴ, ㄷ을 \\neg, \\llcorner 등으로 인식하는 오류 해결)
+    # 0. OCR 기호 오인식 정제
     text = text.replace(r'\neg', 'ㄱ').replace(r'\llcorner', 'ㄴ')
     text = re.sub(r'\{\s*\(\s*ㄱ\s*\)\s*\(\s*ㄴ\s*\)\s*\}*', '㉠ ㉡', text)
     text = re.sub(r'\(\s*ㄱ\s*\)', '㉠', text)
@@ -187,7 +163,7 @@ def format_math(text):
     text = re.sub(r'\$([a-zA-Z0-9])\$\s*(모둠|반|팀|그룹|등|점|명|개|권|초|분|시간|원|cm|m)', r'\1 \2', text)
     text = re.sub(r'\$([a-zA-Z])\$', r'\1', text)
     
-    # 2. LaTeX \\begin{tabular} 표를 깔끔한 HTML 표로 변환
+    # 2. LaTeX \begin{tabular} 표를 깔끔한 HTML 표로 변환
     def replace_tabular(match):
         content = match.group(1)
         content = content.replace(r'\hline', '')
@@ -209,7 +185,7 @@ def format_math(text):
     pattern_tab = r'\\begin\{tabular\}(?:\[[^\]]*\])?(?:\{[^\}]*\})([\s\S]*?)\\end\{tabular\}'
     text = re.sub(pattern_tab, replace_tabular, text)
     
-    # 3. 마크다운 표(|...|)를 HTML 표로 변환 (전개도 및 풀이 단계 상자 자동 분기)
+    # 3. 마크다운 표(|...|)를 HTML 표로 변환
     lines = text.split('\n')
     new_lines = []
     table_lines = []
@@ -221,20 +197,12 @@ def format_math(text):
             in_table = True
         else:
             if in_table:
-                is_step_table = any(k in l for l in table_lines for k in ["↓", "㉠", "㉡", "㉢", "㉣"])
-                if is_step_table:
-                    new_lines.append(_render_equation_step_table(table_lines))
-                else:
-                    new_lines.append(_md_table_to_html(table_lines))
+                new_lines.append(_md_table_to_html(table_lines))
                 table_lines = []
                 in_table = False
             new_lines.append(line)
     if in_table:
-        is_step_table = any(k in l for l in table_lines for k in ["↓", "㉠", "㉡", "㉢", "㉣"])
-        if is_step_table:
-            new_lines.append(_render_equation_step_table(table_lines))
-        else:
-            new_lines.append(_md_table_to_html(table_lines))
+        new_lines.append(_md_table_to_html(table_lines))
     text = '\n'.join(new_lines)
 
     # 4. Mathpix $$...$$ 블록 정규화
@@ -352,7 +320,7 @@ def parse_single_problem(res_text, prob_num):
     }
 
 # ==========================================
-# ★ 병렬 단일 문제 생성기 (풀이 과정 단계 상자 지원)
+# ★ 병렬 단일 문제 생성기 (방정식 옆 곡선 화살표 지원)
 # ==========================================
 def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instruction, api_key):
     fast_model_name = get_fastest_model_name(api_key)
@@ -362,7 +330,7 @@ def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instructi
     if prob_num == 1:
         type_instruction = """
         [1번 기본 다지기 출제 원칙]
-        - 원본 문제의 형태와 구조를 그대로 유지하되, **반드시 원본에 주어진 숫자와 문자(예: 계수, 상수 등)를 다른 수치로 확실하게 변경**하여 1문제를 출제하라.
+        - 원본 문제의 형태와 구조를 그대로 유지하되, **반드시 원본에 주어진 숫자(예: 계수, 상수 등)를 다른 수치로 확실하게 변경**하여 1문제를 출제하라.
         """
     else:
         type_instruction = """
@@ -380,24 +348,36 @@ def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instructi
     {type_instruction}
 
     [공통 그래픽/수식 규칙 (속도 최우선)]
-    1. **방정식 풀이 과정 / 등식의 성질 (화살표 ㉠, ㉡, ㉢) 표기 규칙 (매우 중요):**
-       - 원본 문제가 '방정식 풀이 과정 중 등식의 성질 ㉠, ㉡, ㉢ 찾기' 유형인 경우, **반드시 아래와 같은 2열 마크다운 표 형식으로 깔끔하게 작성**하라:
-         | 과정 | 단계 |
-         | :---: | :---: |
-         | $\\frac{{ax+b}}{{c}} = d$ | ↓ ㉠ |
-         | $ax+b = cd$ | ↓ ㉡ |
-         | $ax = cd-b$ | ↓ ㉢ |
-         | $\\therefore x = e$ | |
+    1. **방정식 풀이 과정 / 등식의 성질 (오른쪽 곡선 화살표 ㉠, ㉡, ㉢) 표기 규칙 (매우 중요):**
+       - 원본 문제가 '방정식 풀이 과정 중 등식의 성질 ㉠, ㉡, ㉢ 찾기' 유형인 경우, **반드시 교과서와 똑같이 아래 형태의 초경량 인라인 SVG(`<svg width="220" height="155" viewBox="0 0 220 155">...</svg>`)로 작성하라:**
+         ```html
+         <svg width="220" height="155" viewBox="0 0 220 155">
+           <rect x="5" y="5" width="210" height="145" rx="10" fill="#ffffff" stroke="#aaaaaa" stroke-width="1.5"/>
+           <text x="75" y="32" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">1단계 식</text>
+           <text x="75" y="68" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">2단계 식</text>
+           <text x="75" y="104" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">3단계 식</text>
+           <text x="75" y="138" font-size="14" font-weight="bold" fill="#000000" text-anchor="middle">∴ x = 값</text>
+           <path d="M 130,28 C 160,30 160,62 135,66" fill="none" stroke="#222222" stroke-width="1.5"/>
+           <polygon points="135,66 142,61 141,71" fill="#222222"/>
+           <text x="168" y="51" font-size="13" font-weight="bold" fill="#000000">㉠</text>
+           <path d="M 130,68 C 160,70 160,98 135,102" fill="none" stroke="#222222" stroke-width="1.5"/>
+           <polygon points="135,102 142,97 141,107" fill="#222222"/>
+           <text x="168" y="89" font-size="13" font-weight="bold" fill="#000000">㉡</text>
+           <path d="M 130,104 C 160,106 160,132 135,136" fill="none" stroke="#222222" stroke-width="1.5"/>
+           <polygon points="135,136 142,131 141,141" fill="#222222"/>
+           <text x="168" y="123" font-size="13" font-weight="bold" fill="#000000">㉢</text>
+         </svg>
+         ```
     2. **도형/그래프/수직선 SVG 초경량 작성:**
        - 도형이 필요한 경우 6~8줄 이내의 초간단 인라인 SVG(`<svg width="220" height="130" viewBox="0 0 220 130">...</svg>`)로 작성하라.
        - 모든 SVG 텍스트는 `fill="#000000"`으로 작성하라.
     3. **정육면체 겨냥도/전개도:**
        - 3D 겨냥도는 3면 큐브 SVG로, 펼쳐진 전개도는 3x4 마크다운 격자 표로 작성하라.
-    4. **수식 표기:** 단순 문자(A, B, C, 점 A, 보기 ㄱ, ㄴ, ㄷ 등)에는 $를 쓰지 말고, 분수식/계산식만 `$수식$`으로 작성하라.
+    4. **수식 표기:** 지문 본문에서 단순 문자(A, B, C, 보기 ㄱ, ㄴ, ㄷ 등)에는 $를 쓰지 말고, 분수식/계산식만 `$수식$`으로 작성하라.
 
     [출력 양식]
     [문제]
-    (문제 지문 및 풀이과정 표/SVG)
+    (문제 지문 및 SVG)
     [정답]
     (정답)
     [풀이]
