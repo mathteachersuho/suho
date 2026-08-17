@@ -124,7 +124,11 @@ def format_math(text):
     # 1. 줄바꿈 기호 변환
     text = text.replace('[br]', '\n\n')
     
-    # 2. LaTeX \begin{tabular} 표를 깔끔한 HTML 표로 변환
+    # 2. 지문 속 단순 알파벳/단어에 붙은 불필요한 $ 기호 자동 정제 (예: $A$ 모둠 -> A 모둠)
+    text = re.sub(r'\$([a-zA-Z0-9])\$\s*(모둠|반|팀|그룹|등|점|명|개|권|초|분|시간|원|cm|m)', r'\1 \2', text)
+    text = re.sub(r'\$([a-zA-Z])\$', r'\1', text)
+    
+    # 3. LaTeX \begin{tabular} 표를 깔끔한 HTML 표로 변환
     def replace_tabular(match):
         content = match.group(1)
         content = content.replace(r'\hline', '')
@@ -146,7 +150,7 @@ def format_math(text):
     pattern_tab = r'\\begin\{tabular\}(?:\[[^\]]*\])?(?:\{[^\}]*\})([\s\S]*?)\\end\{tabular\}'
     text = re.sub(pattern_tab, replace_tabular, text)
     
-    # 3. 마크다운 표(|...|)를 HTML 표로 변환
+    # 4. 마크다운 표(|...|)를 HTML 표로 변환
     lines = text.split('\n')
     new_lines = []
     table_lines = []
@@ -166,18 +170,18 @@ def format_math(text):
         new_lines.append(_md_table_to_html(table_lines))
     text = '\n'.join(new_lines)
 
-    # 4. Mathpix $$...$$ 블록 정규화
+    # 5. Mathpix $$...$$ 블록 정규화
     text = re.sub(r'\$\$(.*?)\$\$', r'$\1$', text, flags=re.DOTALL)
     
-    # 5. 빈칸 문자 및 기호 박스화 자동 변환
+    # 6. 빈칸 문자 및 기호 박스화 자동 변환
     text = re.sub(r'[□■]\s*\(([가-힣a-zA-Z0-9]+)\)', r'$\boxed{\text{ (\1) }}$', text)
     text = re.sub(r'\[\s*\(([가-힣a-zA-Z0-9]+)\)\s*\]', r'$\boxed{\text{ (\1) }}$', text)
     
-    # 6. 명령어 앞 중복 백슬래시 정리
+    # 7. 명령어 앞 중복 백슬래시 정리
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     
-    # 7. 도형 및 극한 기호 정규화
+    # 8. 도형 및 극한 기호 정규화
     text = re.sub(r'\\mathrm\{([A-Z]+)\}', r'\1', text)
     text = re.sub(r'lim_?\{?xtoa\}?', r'\\lim\\limits_{x \\to a} ', text)
     text = re.sub(r'lim_?\{?x\s*to\s*([a-zA-Z0-9]+)\}?', r'\\lim\\limits_{x \\to \1} ', text)
@@ -194,7 +198,7 @@ def format_math(text):
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     
-    # 8. $ 기호 없이 노출된 수식 자동 감싸기 (HTML 태그 보호)
+    # 9. $ 기호 없이 노출된 수식 자동 감싸기 (HTML 태그 보호)
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
@@ -214,7 +218,7 @@ def format_math(text):
     text = re.sub(r'\$\s*\$', '', text)
     text = re.sub(r'\${3,}', '$$', text)
     
-    # 9. 카드 UI 변환
+    # 10. 카드 UI 변환
     def render_cards(match):
         items = [x.strip() for x in match.group(1).split(',') if x.strip()]
         card_html = '<div style="display:inline-flex; gap:8px; margin:8px 0; align-items:center; vertical-align:middle;">'
@@ -224,10 +228,10 @@ def format_math(text):
         return card_html
     text = re.sub(r'\[카드\s*:\s*([^\]]+)\]', render_cards, text)
     
-    # 10. 그래프/토너먼트/도형 SVG 다이어그램 흰색 카드 박스 감싸기
+    # 11. 그래프/토너먼트/도형 SVG 다이어그램 흰색 카드 박스 감싸기
     def wrap_svg_card(match):
         svg_content = match.group(0)
-        return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 10px 14px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
+        return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 12px 18px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
     text = re.sub(r'(<svg[\s\S]*?<\/svg>)', wrap_svg_card, text)
     
     return text
@@ -763,7 +767,7 @@ with tab2:
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ 초경량(Minimal) SVG 생성 규칙 적용: 토큰 수 80% 절감
+                    # ★ 세로축 눈금 숫자 필수 + 불필요한 $ 방지 + 경량 SVG 최적화 프롬프트
                     prompt = f"""
                     너는 대한민국 고등학교 및 중학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -774,10 +778,10 @@ with tab2:
                     [출제 원칙 및 교육과정 준수]
                     1. **단원 범위 준수 (선행 개념 절대 금지):**
                        - 원본 문제 단원 범위를 절대 벗어나지 마라.
-                    2. **그래프 / 다이어그램 초경량 생성 규칙 (매우 중요):**
-                       - 꺾은선그래프, 막대그래프인 경우 **복잡한 모눈 격자선과 장식 코드를 일체 작성하지 말고, 토큰 생성을 줄이기 위해 5~6줄 이내의 초간단 인라인 SVG(`<svg width="220" height="120" viewBox="0 0 220 120">...</svg>`)로만 작성**하라.
-                       - 꺾은선그래프는 기준 축 2개(`<line>`)와 단 1줄의 `<polyline points="x1,y1 x2,y2 ..." fill="none" stroke="#1976d2" stroke-width="2"/>` 및 축 숫자만 작성하라.
-                       - 막대그래프는 축 2개와 `<rect>` 4~5개로만 간단히 작성하라.
+                    2. **그래프 / 다이어그램 필수 구성 (세로축 눈금 필수 & 가벼운 SVG):**
+                       - 꺾은선그래프, 막대그래프인 경우 **반드시 세로축(y축)에 도수 눈금 숫자(예: 0, 2, 4, 6, 8 또는 1, 2, 3, 4, 5)와 단위((명), (권) 등)를 `<text>` 태그로 표시**하여 그래프만 보고도 값을 읽을 수 있게 하라.
+                       - 가로축(x축)에도 각 계급 점수(예: 60, 70, 80, 90, 100)와 단위((점))를 표시하라.
+                       - 빠른 생성을 위해 복잡한 배경 모눈 격자는 생략하고, 기준 축 2개(`<line>`), 축 눈금 숫자(`<text>`), 데이터 라인(`<polyline points="..." fill="none" stroke="#1976d2" stroke-width="2"/>`)으로 가볍고 깔끔한 인라인 SVG(`<svg width="250" height="130" viewBox="0 0 250 130">...</svg>`)로 작성하라.
                        - 모든 텍스트 레이블(숫자, 축 이름)은 반드시 `fill="#000000"` (검정색)으로 지정할 것.
                     3. **토너먼트 / 대진표 문제:**
                        - 대진표인 경우 심플한 SVG 트리로 작성할 것 (글자 색상 `fill="#000000"`).
@@ -789,9 +793,9 @@ with tab2:
                        - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
                        - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
 
-                    [수식 작성 규칙]
-                    1. 모든 수식, 분수식, 대푯값 기호는 `$수식$` 기호로 감싸라. (단, 표 `|...|` 및 `<svg>...</svg>`는 $ 없이 일반 텍스트로 작성)
-                    2. $ 기호 안에는 순수 수식만 넣고 한글은 $ 밖에 둘 것.
+                    [수식 및 텍스트 작성 규칙]
+                    1. 분수식, 극한식, 복잡한 계산식만 `$수식$`으로 감싸라.
+                    2. **단순 문자(A 모둠, B 모둠, 보기 ㄱ, ㄴ, ㄷ, 일반 숫자 등)에는 절대로 $ 기호를 붙이지 말고 순수 텍스트로 작성하라.**
                     3. 아래 출력 양식을 정확히 지켜서 출력할 것.
 
                     [출력 양식]
