@@ -83,28 +83,44 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링 전용 엔진
+# ★ 수식 렌더링 및 구형 DB 데이터 복원 엔진
 # ==========================================
 def format_math(text):
     if not text:
         return ""
     text = str(text)
+    
+    # 1. 줄바꿈 기호 변환
     text = text.replace('[br]', '\n\n')
+    
+    # 2. Mathpix의 $$...$$ 블록 수식을 표준 $...$로 정규화
     text = re.sub(r'\$\$(.*?)\$\$', r'$\1$', text, flags=re.DOTALL)
+    
+    # 3. 명령어 앞 중복 백슬래시 정리
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
-    text = text.replace('\x0c', r'\f').replace('♀rac', r'\frac').replace('♀', r'\f')
-    text = text.replace('\x08', r'\b').replace('\x07', r'\a').replace('\x0b', r'\v')
-    text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
-    text = re.sub(r'\bight\b', r'\\right', text)
+    
+    # 4. 구형 DB(초기 데이터)의 깨진 수식 표현 자동 복원 (lim_xtoa, frac12 등)
+    text = re.sub(r'lim_?\{?xtoa\}?', r'\\lim\\limits_{x \\to a} ', text)
+    text = re.sub(r'lim_?\{?x\s*to\s*([a-zA-Z0-9]+)\}?', r'\\lim\\limits_{x \\to \1} ', text)
     text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
     text = re.sub(r'\\lim(?![a-zA-Z])(?!\s*\\limits)', r'\\lim\\limits', text)
     text = re.sub(r'(\\lim\\limits\s*)+', r'\\lim\\limits ', text)
     
+    text = re.sub(r'\bfrac([0-9])([0-9])\b', r'\\frac{\1}{\2}', text)
+    text = re.sub(r'\bfracf\(x\)g\(x\)', r'\\frac{f(x)}{g(x)}', text)
+    text = re.sub(r'\bfracg\(x\)f\(x\)', r'\\frac{g(x)}{f(x)}', text)
+    text = re.sub(r'(?<!\\)\bfrac\{', r'\\frac{', text)
+    text = text.replace('\x0c', r'\f').replace('♀rac', r'\frac').replace('♀', r'\f')
+    text = text.replace('\x08', r'\b').replace('\x07', r'\a').replace('\x0b', r'\v')
+    text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
+    text = re.sub(r'\bight\b', r'\\right', text)
+    
+    # 5. $ 기호 없이 노출된 수식 및 함수 자동 감싸기
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
-        if i % 2 == 0:
+        if i % 2 == 0:  # $ 기호 바깥 영역
             def replacer(match):
                 chunk = match.group(1).rstrip()
                 if not chunk:
@@ -112,6 +128,9 @@ def format_math(text):
                 return f"${chunk}$"
             pattern = r'(\\[a-zA-Z]+(?:\{[^{}]*\}|[\w\s+\-*/=<>(),._\^\\{}]*?))(?=[가-힣\n\r]|$)'
             part = re.sub(pattern, replacer, part)
+            
+            # f(x), g(x), f'(x) 함수 래핑
+            part = re.sub(r'(?<![$\\])\b([fgh]\'?\([a-zA-Z\d+\-*/]*\))(?![$\\])', r'$\1$', part)
         new_parts.append(part)
     
     result = '$'.join(new_parts)
@@ -183,19 +202,20 @@ def parse_tag_problems(res_text):
     return None
 
 # ==========================================
-# ★ A4 규격 인쇄용 완벽한 HTML 생성 함수
+# ★ A4 규격 인쇄용 완벽한 HTML 생성 함수 (format_math 연결 완료)
 # ==========================================
 def make_printable_html(title, items):
     html_items = ""
     ans_items = ""
     
     for idx, p in enumerate(items, start=1):
-        q1 = str(p.get("q1", "")).replace('\n', '<br>')
-        q2 = str(p.get("q2", "")).replace('\n', '<br>')
-        a1 = str(p.get("a1", "")).replace('\n', '<br>')
-        s1 = str(p.get("s1", "")).replace('\n', '<br>')
-        a2 = str(p.get("a2", "")).replace('\n', '<br>')
-        s2 = str(p.get("s2", "")).replace('\n', '<br>')
+        # format_math를 통과시켜 모든 수식을 완전 복원
+        q1 = format_math(p.get("q1", "")).replace('\n', '<br>')
+        q2 = format_math(p.get("q2", "")).replace('\n', '<br>')
+        a1 = format_math(p.get("a1", "")).replace('\n', '<br>')
+        s1 = format_math(p.get("s1", "")).replace('\n', '<br>')
+        a2 = format_math(p.get("a2", "")).replace('\n', '<br>')
+        s2 = format_math(p.get("s2", "")).replace('\n', '<br>')
         
         img_tag = ""
         if p.get("image_b64"):
@@ -448,7 +468,6 @@ with tab1:
                     
                     col_pr1, col_pr2 = st.columns([1, 1])
                     with col_pr1:
-                        # ★ 네이티브 다운로드 버튼: 클릭 즉시 인쇄용 HTML 파일 생성
                         st.download_button(
                             label=f"📥 선택한 {len(selected_items)}개 세트 인쇄용 파일 열기",
                             data=print_html_content,
@@ -463,10 +482,16 @@ with tab1:
                         with st.expander("📋 선택한 과제 한글(HWP) 복사용"):
                             hwp_bundle = f"[{view_class} - {group['label']} 수학 학습지]\n\n"
                             for s_idx, sp in enumerate(selected_items, start=1):
-                                hwp_bundle += f"■ 과제 세트 {s_idx}\n[문제 1]\n{sp.get('q1','')}\n\n(풀이 공간)\n\n\n[문제 2]\n{sp.get('q2','')}\n\n(풀이 공간)\n\n\n"
+                                q1_hwp = format_math(sp.get('q1',''))
+                                q2_hwp = format_math(sp.get('q2',''))
+                                hwp_bundle += f"■ 과제 세트 {s_idx}\n[문제 1]\n{q1_hwp}\n\n(풀이 공간)\n\n\n[문제 2]\n{q2_hwp}\n\n(풀이 공간)\n\n\n"
                             hwp_bundle += "--------------------------------------------------\n[정답 및 풀이]\n"
                             for s_idx, sp in enumerate(selected_items, start=1):
-                                hwp_bundle += f"■ 과제 세트 {s_idx}\n1번 정답: {sp.get('a1','')}\n1번 풀이: {sp.get('s1','')}\n2번 정답: {sp.get('a2','')}\n2번 풀이: {sp.get('s2','')}\n\n"
+                                a1_hwp = format_math(sp.get('a1',''))
+                                s1_hwp = format_math(sp.get('s1',''))
+                                a2_hwp = format_math(sp.get('a2',''))
+                                s2_hwp = format_math(sp.get('s2',''))
+                                hwp_bundle += f"■ 과제 세트 {s_idx}\n1번 정답: {a1_hwp}\n1번 풀이: {s1_hwp}\n2번 정답: {a2_hwp}\n2번 풀이: {s2_hwp}\n\n"
                             st.text_area("선택 묶음 복사 텍스트", hwp_bundle, height=130, key=f"bundle_hwp_{d_key}")
                 else:
                     st.warning("인쇄할 과제 세트를 1개 이상 선택해 주세요.")
