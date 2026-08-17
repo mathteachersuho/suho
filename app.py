@@ -120,7 +120,7 @@ def format_math(text):
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
-        if i % 2 == 0:  # $ 기호 바깥 영역
+        if i % 2 == 0:
             def replacer(match):
                 chunk = match.group(1).rstrip()
                 if not chunk:
@@ -528,7 +528,6 @@ with tab1:
         for d_key, group in grouped_by_date.items():
             with st.expander(f"📅 {group['label']} 과제 ({len(group['items'])}개 세트)", expanded=False):
                 
-                # ★ 인쇄 설정 영역을 접이식 메뉴(기본 닫힘)로 숨김 처리
                 with st.expander("🖨️ 이 날짜 시험지 인쇄 및 HWP 복사 설정", expanded=False):
                     set_names = [f"과제 세트 {i}" for i in range(1, len(group["items"]) + 1)]
                     
@@ -577,7 +576,6 @@ with tab1:
 
                 st.divider()
 
-                # 본문 과제 상세 내용 (날짜를 누르면 곧바로 문제가 나타남)
                 for item_idx, p in enumerate(group["items"], start=1):
                     with st.container():
                         st.markdown(f"##### 📌 과제 세트 {item_idx}")
@@ -669,6 +667,7 @@ with tab2:
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
+                    # ★ 원래의 정밀한 출제 프롬프트 100% 유지
                     prompt = f"""
                     너는 대한민국 고등학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -722,7 +721,7 @@ with tab2:
                     st.error(f"오류가 발생했습니다: {e}")
 
         # ==========================================
-        # ★ 생성된 문제 검토 & 선생님 직접 수정 에디터
+        # ★ 직관적인 탭 분리형 실시간 수정 에디터
         # ==========================================
         if st.session_state.similar_problems:
             st.divider()
@@ -732,24 +731,42 @@ with tab2:
             p2 = st.session_state.similar_problems[1]
             
             if current_role == "admin":
-                st.info("✏️ **선생님 검토 및 수정 모드:** 오타나 숫자를 고치면 아래 수식 화면에 실시간으로 반영됩니다.")
-                
-                with st.expander("🛠️ 1번 / 2번 문제 및 정답 직접 수정하기", expanded=False):
-                    st.markdown("##### [1번 기본 다지기 수정]")
-                    p1_q_edit = st.text_area("1번 문제 텍스트:", value=p1.get("question", ""), key="edit_p1_q", height=100)
-                    col_e1, col_e2 = st.columns(2)
-                    with col_e1:
-                        p1_a_edit = st.text_input("1번 정답:", value=p1.get("answer", ""), key="edit_p1_a")
-                    with col_e2:
-                        p1_s_edit = st.text_input("1번 풀이:", value=p1.get("solution", ""), key="edit_p1_s")
+                with st.expander("🛠️ 1번 / 2번 문제 및 정답 직접 수정하기 (클릭하여 열기)", expanded=False):
+                    tab_e1, tab_e2 = st.tabs(["✏️ [1번 기본 다지기] 수정", "✏️ [2번 실력 키우기] 수정"])
                     
-                    st.markdown("##### [2번 실력 키우기 수정]")
-                    p2_q_edit = st.text_area("2번 문제 텍스트:", value=p2.get("question", ""), key="edit_p2_q", height=100)
-                    col_e3, col_e4 = st.columns(2)
-                    with col_e3:
-                        p2_a_edit = st.text_input("2번 정답:", value=p2.get("answer", ""), key="edit_p2_a")
-                    with col_e4:
-                        p2_s_edit = st.text_input("2번 풀이:", value=p2.get("solution", ""), key="edit_p2_s")
+                    with tab_e1:
+                        p1_q_edit = st.text_area("1번 문제 지문:", value=p1.get("question", ""), key="edit_p1_q", height=120)
+                        st.caption("1번 지문 실시간 렌더링:")
+                        st.markdown(format_math(p1_q_edit))
+                        
+                        col_ans1, col_ans2 = st.columns([1, 1])
+                        with col_ans1:
+                            p1_a_edit = st.text_input("1번 정답:", value=p1.get("answer", ""), key="edit_p1_a")
+                        with col_ans2:
+                            st.write("")
+                            st.markdown(f"**정답 확인:** {format_math(p1_a_edit or '')}")
+                            
+                        p1_s_edit = st.text_area("1번 풀이 및 해설 (넓은 입력창):", value=p1.get("solution", ""), key="edit_p1_s", height=150)
+                        if p1_s_edit:
+                            st.caption("1번 풀이 실시간 렌더링:")
+                            st.markdown(format_math(p1_s_edit))
+                    
+                    with tab_e2:
+                        p2_q_edit = st.text_area("2번 문제 지문:", value=p2.get("question", ""), key="edit_p2_q", height=120)
+                        st.caption("2번 지문 실시간 렌더링:")
+                        st.markdown(format_math(p2_q_edit))
+                        
+                        col_ans3, col_ans4 = st.columns([1, 1])
+                        with col_ans3:
+                            p2_a_edit = st.text_input("2번 정답:", value=p2.get("answer", ""), key="edit_p2_a")
+                        with col_ans4:
+                            st.write("")
+                            st.markdown(f"**정답 확인:** {format_math(p2_a_edit or '')}")
+                            
+                        p2_s_edit = st.text_area("2번 풀이 및 해설 (넓은 입력창):", value=p2.get("solution", ""), key="edit_p2_s", height=150)
+                        if p2_s_edit:
+                            st.caption("2번 풀이 실시간 렌더링:")
+                            st.markdown(format_math(p2_s_edit))
                     
                     p1["question"], p1["answer"], p1["solution"] = p1_q_edit, p1_a_edit, p1_s_edit
                     p2["question"], p2["answer"], p2["solution"] = p2_q_edit, p2_a_edit, p2_s_edit
