@@ -83,51 +83,13 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 복원 및 렌더링 전용 엔진 (오류 원천 차단)
+# ★ 수식 렌더링 및 날짜 함수 (수식 변형 완전 제거)
 # ==========================================
 def format_math(text):
     if not text:
         return ""
     text = str(text)
-    
-    # 1. 변질된 특수 제어문자 복원 (♀rac -> \frac 등)
-    text = text.replace('\x0c', r'\f').replace('♀rac', r'\frac').replace('♀', r'\f')
-    text = text.replace('\x08', r'\b').replace('\x07', r'\a').replace('\x0b', r'\v')
-    
-    # 2. 탭/줄바꿈 문자로 변질된 수식 복원 (\to, \times, \theta, \right 등)
-    text = re.sub(r'\t([a-zA-Z])', r'\\t\1', text)
-    text = re.sub(r'\r([a-zA-Z])', r'\\r\1', text)
-    
-    # 3. 백슬래시 누락 단어 복구
-    text = re.sub(r'(?<!\\)\bfrac\b', r'\\frac', text)
-    text = re.sub(r'(?<!\\)\bleft\b', r'\\left', text)
-    text = re.sub(r'(?<!\\)\bright\b', r'\\right', text)
-    text = re.sub(r'(?<!\\)\bcirc\b', r'\\circ', text)
-    text = re.sub(r'(?<!\\)\blim\b', r'\\lim', text)
-    text = re.sub(r'\bight\b', r'\\right', text)
-    text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
-    
-    # 4. 극한 기호 표준화
-    text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
-    text = re.sub(r'\\lim(?!\s*\\limits)', r'\\lim\\limits', text)
-    
-    # 5. 수식에 $ 기호가 누락된 경우 자동 $ 래핑 보정
-    lines = text.split('\n')
-    fixed_lines = []
-    for line in lines:
-        if ('\\lim' in line or '\\frac' in line or '\\sqrt' in line) and '$' not in line:
-            match = re.search(r'(\\lim[\s\S]+?)(?=\s+[가-힣]|$)', line)
-            if match:
-                math_part = match.group(1).strip()
-                korean_part = line[match.end():]
-                prefix = line[:match.start()]
-                line = f"{prefix}${math_part}${korean_part}"
-            else:
-                line = f"${line}$"
-        fixed_lines.append(line)
-    text = '\n'.join(fixed_lines)
-    
-    # 6. 줄바꿈 처리
+    # 줄바꿈 변환
     text = text.replace('[br]', '\n\n')
     return text
 
@@ -419,7 +381,7 @@ with tab2:
                     - 2번 문제: 핵심 개념 기반의 응용 변형 문제
 
                     [수식 작성 규칙 (필수)]
-                    1. 문제에 들어가는 모든 수식, 분수식, 극한식은 반드시 `$수식$` 기호로 감싸야 함.
+                    1. 모든 수식, 분수식, 극한식은 원본 문제처럼 반드시 `$수식$` 기호로 감싸야 함.
                        (예: 두 함수 $f(x)=x^2, g(x)=3x-2$ 에 대하여 $\\lim_{{x \\to 1}} \\frac{{(f \\circ g)(x)-(g \\circ f)(x)}}{{(x^2-1)(x^3-1)}}$ 의 값을 구하시오.)
                     2. $ 기호 안에는 순수 수식만 넣고 한글은 $ 밖에 둘 것.
                     3. 아래 출력 양식을 정확히 지켜서 출력할 것.
