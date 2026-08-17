@@ -85,6 +85,14 @@ def set_app_status(status):
 # ==========================================
 # ★ 수식 렌더링, 표(Table), SVG, 빈칸 박스 통합 엔진
 # ==========================================
+def _clean_cell(col):
+    """표 내부 셀의 불필요한 달러 기호($) 제거"""
+    col = col.strip()
+    col = re.sub(r'\$([0-9a-zA-Z가-힣\s,.~%+-]+)\$', r'\1', col)
+    if col.startswith('$') and col.endswith('$') and '\\' not in col:
+        col = col[1:-1].strip()
+    return col
+
 def _md_table_to_html(lines):
     if not lines:
         return ""
@@ -100,9 +108,10 @@ def _md_table_to_html(lines):
     for i, row in enumerate(rows):
         html += '<tr>'
         for col in row:
+            cleaned_col = _clean_cell(col)
             bg = '#f1f3f5' if i == 0 else '#ffffff'
             fw = 'bold' if i == 0 else 'normal'
-            html += f'<td style="border: 1px solid #777; padding: 5px 12px; background-color: {bg}; font-weight: {fw}; color: #111111;">{col}</td>'
+            html += f'<td style="border: 1px solid #777; padding: 5px 12px; background-color: {bg}; font-weight: {fw}; color: #111111;">{cleaned_col}</td>'
         html += '</tr>'
     html += '</table></div>'
     return html
@@ -127,9 +136,10 @@ def format_math(text):
             cols = [c.strip() for c in row.split('&')]
             html += '<tr>'
             for col in cols:
+                cleaned_col = _clean_cell(col)
                 bg = '#f1f3f5' if i == 0 else '#ffffff'
                 fw = 'bold' if i == 0 else 'normal'
-                html += f'<td style="border: 1px solid #777; padding: 5px 12px; background-color: {bg}; font-weight: {fw}; color: #111111;">{col}</td>'
+                html += f'<td style="border: 1px solid #777; padding: 5px 12px; background-color: {bg}; font-weight: {fw}; color: #111111;">{cleaned_col}</td>'
             html += '</tr>'
         html += '</table></div>'
         return html
@@ -768,6 +778,7 @@ with tab2:
                        - 2번(실력 키우기) 문제 역시 다른 후속 단원과 섞지 말고, **현재 원본 문제 단원 내에서만** 조건을 심화하여 출제하라.
                     2. **표(Table) 문제 작성 규칙 (매우 중요):**
                        - 원본 문제에 표(도수분포표, 확률분포표, 집계표 등)가 포함된 경우, 문제 본문에 반드시 **마크다운 표 형식(`| 항목1 | 항목2 | ... |`)**으로 표를 작성하여 넣어라.
+                       - 표 내부의 일반 숫자나 글자(예: 7, 5, A형, 학생 수 등)에는 $ 기호를 붙이지 말고 순수 텍스트/숫자로 작성할 것.
                     3. **영역 색칠하기 / 지도 / 도형 다이어그램:**
                        - 원본 문제가 '영역 색칠하기', '맞닿아 있는 면', '동심원 영역' 문제인 경우, 문제 본문 안에 인라인 SVG 다이어그램(`<svg width="180" height="120" viewBox="..." ...>...</svg>`)을 직접 작성하여 넣어라.
                        - SVG 스타일: 테두리는 `stroke="#111111" stroke-width="2"`, 영역 글자(A, B, C, D)는 `fill="#000000" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central"`.
