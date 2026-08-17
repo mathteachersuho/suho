@@ -83,12 +83,52 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 및 날짜 파싱 전용 함수
+# ★ 수식 복원 및 렌더링 전용 엔진 (오류 원천 차단)
 # ==========================================
 def format_math(text):
     if not text:
         return ""
-    text = str(text).replace('[br]', '\n\n')
+    text = str(text)
+    
+    # 1. 변질된 특수 제어문자 복원 (♀rac -> \frac 등)
+    text = text.replace('\x0c', r'\f').replace('♀rac', r'\frac').replace('♀', r'\f')
+    text = text.replace('\x08', r'\b').replace('\x07', r'\a').replace('\x0b', r'\v')
+    
+    # 2. 탭/줄바꿈 문자로 변질된 수식 복원 (\to, \times, \theta, \right 등)
+    text = re.sub(r'\t([a-zA-Z])', r'\\t\1', text)
+    text = re.sub(r'\r([a-zA-Z])', r'\\r\1', text)
+    
+    # 3. 백슬래시 누락 단어 복구
+    text = re.sub(r'(?<!\\)\bfrac\b', r'\\frac', text)
+    text = re.sub(r'(?<!\\)\bleft\b', r'\\left', text)
+    text = re.sub(r'(?<!\\)\bright\b', r'\\right', text)
+    text = re.sub(r'(?<!\\)\bcirc\b', r'\\circ', text)
+    text = re.sub(r'(?<!\\)\blim\b', r'\\lim', text)
+    text = re.sub(r'\bight\b', r'\\right', text)
+    text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
+    
+    # 4. 극한 기호 표준화
+    text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
+    text = re.sub(r'\\lim(?!\s*\\limits)', r'\\lim\\limits', text)
+    
+    # 5. 수식에 $ 기호가 누락된 경우 자동 $ 래핑 보정
+    lines = text.split('\n')
+    fixed_lines = []
+    for line in lines:
+        if ('\\lim' in line or '\\frac' in line or '\\sqrt' in line) and '$' not in line:
+            match = re.search(r'(\\lim[\s\S]+?)(?=\s+[가-힣]|$)', line)
+            if match:
+                math_part = match.group(1).strip()
+                korean_part = line[match.end():]
+                prefix = line[:match.start()]
+                line = f"{prefix}${math_part}${korean_part}"
+            else:
+                line = f"${line}$"
+        fixed_lines.append(line)
+    text = '\n'.join(fixed_lines)
+    
+    # 6. 줄바꿈 처리
+    text = text.replace('[br]', '\n\n')
     return text
 
 def parse_date_group(date_str):
@@ -129,7 +169,7 @@ def parse_date_group(date_str):
     return date_str, date_str
 
 def parse_tag_problems(res_text):
-    """JSON 오류를 원천 차단하는 태그 기반 파서"""
+    """태그 기반 파서"""
     p1_q = re.search(r'\[문제\s*1\]([\s\S]*?)(?=\[정답\s*1\]|$)', res_text)
     p1_a = re.search(r'\[정답\s*1\]([\s\S]*?)(?=\[풀이\s*1\]|$)', res_text)
     p1_s = re.search(r'\[풀이\s*1\]([\s\S]*?)(?=\[문제\s*2\]|$)', res_text)
@@ -156,7 +196,7 @@ def parse_tag_problems(res_text):
     return None
 
 # ==========================================
-# ★ 속도 및 모델 설정
+# ★ 모델 설정
 # ==========================================
 @st.cache_data(show_spinner=False)
 def get_fastest_model_name(api_key):
@@ -367,35 +407,33 @@ with tab2:
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ JSON 대신 원본 텍스트를 완벽 보존하는 태그 프롬프트
                     prompt = f"""
-                    너는 대한민국 수학 교과 출제 위원이야. 
-                    아래 [원본 문제]를 바탕으로 [유사 문제 1]과 [유사 문제 2]를 만들어줘.
+                    너는 대한민국 고등학교 수학 출제 위원이야. 
+                    아래 [원본 문제]를 바탕으로 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
 
                     [원본 문제]
                     {edited_text}
 
                     [출제 원칙]
-                    - 1번 문제: 조건/숫자만 살짝 바꾼 기본 다지기 문제
+                    - 1번 문제: 조건과 숫자만 살짝 바꾼 기본 다지기 문제
                     - 2번 문제: 핵심 개념 기반의 응용 변형 문제
 
-                    [수식 작성 절대 규칙]
-                    1. 모든 수식, 극한식, 분수식 등은 반드시 `$수식$` 형태로 감싸서 작성할 것.
-                       (예: 두 함수 $f(x)=x^2, g(x)=2x-1$ 에 대하여 $\\lim_{{x \\to 1}} \\frac{{f(x)}}{{g(x)}}$ 의 값을 구하시오.)
-                    2. $ 기호 안에는 한글을 절대 넣지 말 것.
-                    3. 보기가 있는 문제는 ㄱ, ㄴ, ㄷ 각 항목을 줄바꿈하여 한 줄씩 작성할 것.
-                    4. 반드시 아래의 태그 양식을 한 글자도 틀리지 말고 그대로 지켜서 출력할 것.
+                    [수식 작성 규칙 (필수)]
+                    1. 문제에 들어가는 모든 수식, 분수식, 극한식은 반드시 `$수식$` 기호로 감싸야 함.
+                       (예: 두 함수 $f(x)=x^2, g(x)=3x-2$ 에 대하여 $\\lim_{{x \\to 1}} \\frac{{(f \\circ g)(x)-(g \\circ f)(x)}}{{(x^2-1)(x^3-1)}}$ 의 값을 구하시오.)
+                    2. $ 기호 안에는 순수 수식만 넣고 한글은 $ 밖에 둘 것.
+                    3. 아래 출력 양식을 정확히 지켜서 출력할 것.
 
                     [출력 양식]
                     [문제 1]
-                    (1번 문제 내용)
+                    (1번 문제 본문)
                     [정답 1]
                     (1번 정답)
                     [풀이 1]
                     ({solution_instruction})
 
                     [문제 2]
-                    (2번 문제 내용)
+                    (2번 문제 본문)
                     [정답 2]
                     (2번 정답)
                     [풀이 2]
