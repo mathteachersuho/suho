@@ -120,7 +120,7 @@ def format_math(text):
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
-        if i % 2 == 0:  # $ 기호 바깥 영역
+        if i % 2 == 0:
             def replacer(match):
                 chunk = match.group(1).rstrip()
                 if not chunk:
@@ -200,10 +200,10 @@ def parse_tag_problems(res_text):
     return None
 
 # ==========================================
-# ★ A4 규격 인쇄용 완벽한 HTML 생성 함수 (페이지 분할 방지 적용)
+# ★ A4 규격 인쇄용 완벽한 HTML 생성 함수 (1페이지 1세트 강제 고정)
 # ==========================================
 def make_printable_html(title, items):
-    html_items = ""
+    html_pages = ""
     ans_items = ""
     
     for idx, p in enumerate(items, start=1):
@@ -216,32 +216,38 @@ def make_printable_html(title, items):
         
         img_tag = ""
         if p.get("image_b64"):
-            img_tag = f'<div class="no-break" style="text-align:center; margin: 15px 0;"><img src="data:image/jpeg;base64,{p["image_b64"]}" style="max-height:160px; max-width:90%; border:1px solid #ddd; border-radius:4px;"></div>'
+            img_tag = f'<div style="text-align:center; margin: 6px 0;"><img src="data:image/jpeg;base64,{p["image_b64"]}" style="max-height:100px; max-width:85%; border:1px solid #ddd; border-radius:4px;"></div>'
 
-        set_header = f'<h3 class="no-break" style="margin-top:25px; color:#222; border-bottom:2px solid #333; padding-bottom:5px;">📌 과제 세트 {idx}</h3>' if len(items) > 1 else ''
-        
-        # 각 문제를 .problem-card 클래스로 감싸 페이지 중간 잘림 원천 차단
-        html_items += f"""
-        {set_header}
-        {img_tag}
-        <div class="problem-card">
-            <div style="font-weight:bold; margin-bottom:8px; font-size:15px; color:#000;">[문제 {idx*2 - 1}] 기본 다지기</div>
-            <div style="line-height:1.8; font-size:14.5px; color:#111;">{q1}</div>
-            <div style="height: 120px; border-bottom: 1px dashed #aaa; margin-top: 15px;"></div>
-        </div>
-        <div class="problem-card">
-            <div style="font-weight:bold; margin-bottom:8px; font-size:15px; color:#000;">[문제 {idx*2}] 실력 키우기</div>
-            <div style="line-height:1.8; font-size:14.5px; color:#111;">{q2}</div>
-            <div style="height: 120px; border-bottom: 1px dashed #aaa; margin-top: 15px;"></div>
+        set_title = f"{title} (과제 세트 {idx})" if len(items) > 1 else title
+
+        # ★ 각 과제 세트마다 A4 1페이지 단위로 완전 분리
+        html_pages += f"""
+        <div class="set-page">
+            <div class="header-box">
+                <div class="header-title">📐 {set_title}</div>
+                <div class="name-box">학년/반: ______ 이름: ______________</div>
+            </div>
+            {img_tag}
+            <div class="problem-box">
+                <div class="prob-title">[문제 1] 기본 다지기</div>
+                <div class="prob-content">{q1}</div>
+                <div class="solution-space"></div>
+            </div>
+            <div class="problem-box">
+                <div class="prob-title">[문제 2] 실력 키우기</div>
+                <div class="prob-content">{q2}</div>
+                <div class="solution-space"></div>
+            </div>
         </div>
         """
         
         ans_items += f"""
-        <div class="answer-card" style="margin-bottom: 18px; font-size:13.5px; line-height:1.7; border-bottom: 1px solid #eee; padding-bottom: 10px;">
-            <strong>[문제 {idx*2 - 1}] 정답:</strong> {a1}<br>
+        <div class="answer-card" style="margin-bottom: 15px; font-size:13px; line-height:1.6; border-bottom: 1px solid #eee; padding-bottom: 8px;">
+            <div style="font-weight:bold; margin-bottom:4px; color:#1976d2;">📌 과제 세트 {idx}</div>
+            <strong>[문제 1] 정답:</strong> {a1}<br>
             {f'<strong>풀이:</strong> {s1}<br>' if s1 else ''}
-            <div style="margin-top:6px;"></div>
-            <strong>[문제 {idx*2}] 정답:</strong> {a2}<br>
+            <div style="margin-top:4px;"></div>
+            <strong>[문제 2] 정답:</strong> {a2}<br>
             {f'<strong>풀이:</strong> {s2}' if s2 else ''}
         </div>
         """
@@ -262,41 +268,73 @@ def make_printable_html(title, items):
     </script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
-        @page {{ size: A4 portrait; margin: 18mm 15mm; }}
+        @page {{ 
+            size: A4 portrait; 
+            margin: 12mm 15mm; 
+        }}
+        * {{ box-sizing: border-box; }}
         body {{ 
             font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', '맑은 고딕', sans-serif; 
             color: #111; 
             background: #ffffff; 
             margin: 0; 
-            padding: 20px;
+            padding: 15px;
             max-width: 800px;
             margin: 0 auto;
+        }}
+        
+        /* ★ 1개 세트 = 정확히 1페이지 */
+        .set-page {{
+            page-break-after: always;
+            break-after: page;
+            min-height: 250mm;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }}
         .header-box {{ 
             text-align: center; 
             border-bottom: 2px solid #000; 
-            padding-bottom: 12px; 
-            margin-bottom: 25px; 
+            padding-bottom: 6px; 
+            margin-bottom: 12px; 
         }}
-        .header-title {{ font-size: 22px; font-weight: bold; margin-bottom: 8px; }}
-        .name-box {{ text-align: right; font-size: 14px; font-weight: 500; color: #444; }}
-        .page-break {{ page-break-before: always; }}
+        .header-title {{ font-size: 18px; font-weight: bold; margin-bottom: 4px; }}
+        .name-box {{ text-align: right; font-size: 13px; font-weight: 500; color: #444; }}
         
-        /* ★ 핵심: 문제 및 해설이 페이지 중간에서 쪼개지지 않도록 방지 */
-        .problem-card {{
-            break-inside: avoid !important;
-            page-break-inside: avoid !important;
-            margin-bottom: 30px;
+        .problem-box {{
+            margin-bottom: 8px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
         }}
-        .answer-card, .no-break {{
-            break-inside: avoid !important;
-            page-break-inside: avoid !important;
+        .prob-title {{
+            font-weight: bold;
+            font-size: 14px;
+            color: #000;
+            margin-bottom: 5px;
         }}
-
+        .prob-content {{
+            line-height: 1.65;
+            font-size: 13.5px;
+            color: #111;
+        }}
+        .solution-space {{
+            flex-grow: 1;
+            min-height: 70px;
+            border-bottom: 1px dashed #bbb;
+            margin-top: 8px;
+            margin-bottom: 8px;
+        }}
+        
+        /* 정답 및 해설 전용 페이지 */
+        .answer-page {{
+            page-break-before: always;
+            break-before: page;
+        }}
         .print-btn-bar {{
             text-align: center;
             margin-bottom: 20px;
-            padding: 12px;
+            padding: 10px;
             background: #f0f4f8;
             border-radius: 8px;
         }}
@@ -314,6 +352,7 @@ def make_printable_html(title, items):
         @media print {{
             .print-btn-bar {{ display: none !important; }}
             body {{ padding: 0; max-width: 100%; }}
+            .set-page {{ min-height: auto; }}
         }}
     </style>
 </head>
@@ -323,18 +362,14 @@ def make_printable_html(title, items):
         <div style="font-size:12px; color:#666; margin-top:6px;">※ 수식이 모두 로드된 후 인쇄 버튼을 누르시면 깨끗하게 출력됩니다.</div>
     </div>
     
-    <div class="header-box">
-        <div class="header-title">📐 {title}</div>
-        <div class="name-box">학년/반: ______ 이름: ______________</div>
-    </div>
+    {html_pages}
     
-    {html_items}
-    
-    <div class="page-break"></div>
-    <div class="header-box" style="margin-top:30px;">
-        <div class="header-title" style="font-size:18px;">📋 [정답 및 해설] {title}</div>
+    <div class="answer-page">
+        <div class="header-box">
+            <div class="header-title" style="font-size:18px;">📋 [정답 및 해설] {title}</div>
+        </div>
+        {ans_items}
     </div>
-    {ans_items}
 </body>
 </html>"""
     return full_html
@@ -659,6 +694,9 @@ with tab2:
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
 
+        # ==========================================
+        # ★ 생성된 문제 검토 & 선생님 직접 수정 에디터
+        # ==========================================
         if st.session_state.similar_problems:
             st.divider()
             st.subheader("🎯 생성된 연습 문제")
