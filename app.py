@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import requests
 import json
 import base64
@@ -89,29 +90,18 @@ def format_math(text):
     if not text:
         return ""
     text = str(text)
-    
-    # 1. 줄바꿈 기호 변환
     text = text.replace('[br]', '\n\n')
-    
-    # 2. Mathpix의 $$...$$ 블록 수식을 표준 $...$로 정규화
     text = re.sub(r'\$\$(.*?)\$\$', r'$\1$', text, flags=re.DOTALL)
-    
-    # 3. 명령어 앞 중복 백슬래시 정리
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
-    
-    # 4. 특수 제어문자 및 손상 단어 복원
     text = text.replace('\x0c', r'\f').replace('♀rac', r'\frac').replace('♀', r'\f')
     text = text.replace('\x08', r'\b').replace('\x07', r'\a').replace('\x0b', r'\v')
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
-    
-    # 5. lim 기호 표준화 (화살표가 정중앙 밑으로 배치)
     text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
     text = re.sub(r'\\lim(?![a-zA-Z])(?!\s*\\limits)', r'\\lim\\limits', text)
     text = re.sub(r'(\\lim\\limits\s*)+', r'\\lim\\limits ', text)
     
-    # 6. $ 기호 없이 노출된 수식 덩어리 자동 감싸기
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
@@ -128,7 +118,6 @@ def format_math(text):
     result = '$'.join(new_parts)
     result = re.sub(r'\$\s*\$', '', result)
     result = re.sub(r'\${3,}', '$$', result)
-    
     return result
 
 def parse_date_group(date_str):
@@ -169,7 +158,6 @@ def parse_date_group(date_str):
     return date_str, date_str
 
 def parse_tag_problems(res_text):
-    """태그 기반 파서"""
     p1_q = re.search(r'\[(?:문제\s*1|1번\s*문제)\]([\s\S]*?)(?=\[(?:정답\s*1|1번\s*정답)\]|$)', res_text)
     p1_a = re.search(r'\[(?:정답\s*1|1번\s*정답)\]([\s\S]*?)(?=\[(?:풀이\s*1|1번\s*풀이)\]|$)', res_text)
     p1_s = re.search(r'\[(?:풀이\s*1|1번\s*풀이)\]([\s\S]*?)(?=\[(?:문제\s*2|2번\s*문제)\]|$)', res_text)
@@ -194,6 +182,123 @@ def parse_tag_problems(res_text):
             }
         ]
     return None
+
+# ==========================================
+# ★ A4 전용 고화질 인쇄 컴포넌트 생성기
+# ==========================================
+def render_print_button(button_label, title, items):
+    """지정된 과제 목록(단일 세트 또는 날짜 전체)을 A4 규격으로 인쇄하는 컴포넌트"""
+    html_items = ""
+    ans_items = ""
+    
+    for idx, p in enumerate(items, start=1):
+        q1_txt = format_math(p.get("q1", "")).replace('\n', '<br>')
+        q2_txt = format_math(p.get("q2", "")).replace('\n', '<br>')
+        a1_txt = format_math(p.get("a1", "")).replace('\n', '<br>')
+        s1_txt = format_math(p.get("s1", "")).replace('\n', '<br>')
+        a2_txt = format_math(p.get("a2", "")).replace('\n', '<br>')
+        s2_txt = format_math(p.get("s2", "")).replace('\n', '<br>')
+        
+        img_tag = ""
+        if p.get("image_b64"):
+            img_tag = f'<div style="text-align:center; margin-bottom:12px;"><img src="data:image/jpeg;base64,{p["image_b64"]}" style="max-height:160px; max-width:100%; border:1px solid #ddd; border-radius:4px;"></div>'
+
+        set_header = f'<h3 style="margin-top:20px; color:#333; border-bottom:1px solid #aaa; padding-bottom:4px;">📌 과제 세트 {idx}</h3>' if len(items) > 1 else ''
+        
+        html_items += f"""
+        {set_header}
+        {img_tag}
+        <div style="margin-bottom: 25px;">
+            <div style="font-weight:bold; margin-bottom:6px; font-size:15px;">[문제 {idx*2 - 1}] 기본 다지기</div>
+            <div style="line-height:1.7; font-size:14px;">{q1_txt}</div>
+            <div style="height: 120px; border-bottom: 1px dashed #ccc; margin-top: 10px;"></div>
+        </div>
+        <div style="margin-bottom: 30px;">
+            <div style="font-weight:bold; margin-bottom:6px; font-size:15px;">[문제 {idx*2}] 실력 키우기</div>
+            <div style="line-height:1.7; font-size:14px;">{q2_txt}</div>
+            <div style="height: 120px; border-bottom: 1px dashed #ccc; margin-top: 10px;"></div>
+        </div>
+        """
+        
+        ans_items += f"""
+        <div style="margin-bottom: 14px; font-size:13px; line-height:1.6;">
+            <strong>[문제 {idx*2 - 1}] 정답:</strong> {a1_txt}<br>
+            {f'<strong>풀이:</strong> {s1_txt}<br>' if s1_txt else ''}
+            <strong>[문제 {idx*2}] 정답:</strong> {a2_txt}<br>
+            {f'<strong>풀이:</strong> {s2_txt}' if s2_txt else ''}
+        </div>
+        """
+
+    full_print_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>{title}</title>
+        <script>
+            window.MathJax = {{
+                tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']] }}
+            }};
+        </script>
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+        <style>
+            @page {{ size: A4 portrait; margin: 15mm; }}
+            body {{ font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; color: #111; background: #fff; margin: 0; padding: 10px; }}
+            .header-box {{ text-align: center; border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 20px; }}
+            .header-title {{ font-size: 20px; font-weight: bold; }}
+            .name-box {{ text-align: right; font-size: 13px; margin-top: 5px; }}
+            .page-break {{ page-break-before: always; }}
+            @media print {{
+                body {{ padding: 0; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="header-box">
+            <div class="header-title">📐 {title}</div>
+            <div class="name-box">학년/반: ______ 이름: ______________</div>
+        </div>
+        {html_items}
+        <div class="page-break"></div>
+        <div class="header-box" style="margin-top:20px;">
+            <div class="header-title" style="font-size:17px;">📋 [정답 및 해설] {title}</div>
+        </div>
+        {ans_items}
+    </body>
+    </html>
+    """
+    
+    clean_html_js = full_print_html.replace('`', '\\`').replace('$', '\\$')
+    
+    component_code = f"""
+    <button onclick="openPrintWindow()" style="
+        background-color: #2e7d32; 
+        color: white; 
+        border: none; 
+        padding: 6px 14px; 
+        font-size: 13px; 
+        font-weight: bold; 
+        border-radius: 6px; 
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+    ">
+        {button_label}
+    </button>
+    <script>
+    function openPrintWindow() {{
+        var win = window.open('', '_blank');
+        win.document.write(`{clean_html_js}`);
+        win.document.close();
+        setTimeout(function() {{
+            win.focus();
+            win.print();
+        }}, 800);
+    }}
+    </script>
+    """
+    components.html(component_code, height=42)
 
 # ==========================================
 # ★ 모델 설정
@@ -280,7 +385,7 @@ st.caption(f"현재 접속 권한: **{'선생님 (모든 반 관리)' if current
 tab1, tab2 = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기"])
 
 # ------------------------------------------
-# [탭 1] 학생 게시판
+# [탭 1] 학생 게시판 (개별 / 날짜별 인쇄 지원)
 # ------------------------------------------
 with tab1:
     col_view, col_ref = st.columns([3, 1])
@@ -315,10 +420,18 @@ with tab1:
             
         for d_key, group in grouped_by_date.items():
             with st.expander(f"📅 {group['label']} 과제 ({len(group['items'])}개 세트)", expanded=False):
+                # ★ 1. 날짜별 전체 과제 일괄 인쇄 버튼
+                col_h1, col_h2 = st.columns([2, 1])
+                with col_h1:
+                    st.markdown(f"#### 📅 {group['label']} 수학 학습지")
+                with col_h2:
+                    render_print_button(f"🖨️ {group['label']} 전체 인쇄", f"[{view_class}] {group['label']} 수학 과제", group["items"])
+                
+                st.divider()
+
                 for item_idx, p in enumerate(group["items"], start=1):
                     with st.container():
-                        if len(group["items"]) > 1:
-                            st.markdown(f"##### 📌 과제 세트 {item_idx}")
+                        st.markdown(f"##### 📌 과제 세트 {item_idx}")
                         
                         if p.get("image_b64"):
                             st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
@@ -345,9 +458,13 @@ with tab1:
                             if s2_safe:
                                 st.markdown(f"**풀이:**\n\n{s2_safe}")
                         
-                        # 인쇄용 및 HWP 복사용 뷰
-                        with st.expander("🖨️ 인쇄용 시험지 보기 / 📋 텍스트 복사"):
-                            printable_text = f"""[수학 학습지 - {group['label']}]
+                        # ★ 2. 개별 세트 인쇄 및 HWP 복사 툴바
+                        col_p1, col_p2 = st.columns([1, 2])
+                        with col_p1:
+                            render_print_button(f"🖨️ 세트 {item_idx}만 인쇄", f"[{view_class}] {group['label']} 과제 (세트 {item_idx})", [p])
+                        with col_p2:
+                            with st.expander("📋 한글(HWP) 복사용 텍스트"):
+                                printable_text = f"""[수학 학습지 - {group['label']} 세트 {item_idx}]
 
 [문제 1]
 {p.get('q1', '')}
@@ -368,13 +485,13 @@ with tab1:
 --------------------------------------------------
 [정답 및 해설]
 1번 정답: {p.get('a1', '')}
-1번 풀이: {p.get('s1', '')}
+{f'1번 풀이: {p.get("s1", "")}' if p.get("s1") else ''}
 
 2번 정답: {p.get('a2', '')}
-2번 풀이: {p.get('s2', '')}
+{f'2번 풀이: {p.get("s2", "")}' if p.get("s2") else ''}
 """
-                            st.text_area("한글(HWP) 복사용 텍스트", printable_text, height=180)
-                        
+                                st.text_area("복사용 텍스트", printable_text, height=120, key=f"hwp_{p.get('id')}")
+
                         if current_role == "admin":
                             if st.button("🗑️ 이 과제 시트에서 삭제하기", key=f"del_{p.get('id')}"):
                                 if delete_problem(p.get('id')):
@@ -499,7 +616,6 @@ with tab2:
             p1 = st.session_state.similar_problems[0]
             p2 = st.session_state.similar_problems[1]
             
-            # 관리자(선생님)일 때: 실시간 수정 에디터 활성화
             if current_role == "admin":
                 st.info("✏️ **선생님 검토 및 수정 모드:** 오타나 숫자를 고치면 아래 수식 화면에 실시간으로 반영됩니다.")
                 
@@ -520,7 +636,6 @@ with tab2:
                     with col_e4:
                         p2_s_edit = st.text_input("2번 풀이:", value=p2.get("solution", ""), key="edit_p2_s")
                     
-                    # 수정된 내용 세션에 실시간 반영
                     p1["question"], p1["answer"], p1["solution"] = p1_q_edit, p1_a_edit, p1_s_edit
                     p2["question"], p2["answer"], p2["solution"] = p2_q_edit, p2_a_edit, p2_s_edit
                 
@@ -547,7 +662,6 @@ with tab2:
                             if save_problem(new_prob):
                                 st.success(f"✅ [{target_class}] 과제 등록 완료!")
 
-            # 실시간 수식 렌더링 화면
             for idx, item in enumerate([p1, p2], start=1):
                 with st.container():
                     st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
