@@ -120,7 +120,7 @@ def format_math(text):
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
-        if i % 2 == 0:
+        if i % 2 == 0:  # $ 기호 바깥 영역
             def replacer(match):
                 chunk = match.group(1).rstrip()
                 if not chunk:
@@ -614,7 +614,7 @@ with tab1:
                     st.divider()
 
 # ------------------------------------------
-# [탭 2] 개인용 문제 생성기 & 선생님 AI 간편 수정 에디터
+# [탭 2] 개인용 문제 생성기 & 화면 직관적 수정 에디터
 # ------------------------------------------
 with tab2:
     st.subheader("📸 모르는 문제를 찍어 유사 문제를 만드세요")
@@ -720,7 +720,7 @@ with tab2:
                     st.error(f"오류가 발생했습니다: {e}")
 
         # ==========================================
-        # ★ 선생님 전용: AI 자연어 원클릭 수정 & 직접 수정
+        # ★ 화면에서 직관적으로 수정하는 실시간 인터페이스
         # ==========================================
         if st.session_state.similar_problems:
             st.divider()
@@ -729,113 +729,15 @@ with tab2:
             p1 = st.session_state.similar_problems[0]
             p2 = st.session_state.similar_problems[1]
             
+            # 관리자(선생님)일 때: 과제 등록 버튼 상단 배치
             if current_role == "admin":
-                with st.expander("🛠️ 문제 / 풀이 수정하기 (AI 말로 수정 or 직접 수정)", expanded=False):
-                    st.markdown("#### 🤖 1. AI에게 말로 쉽게 수정 요청하기 (강력 추천!)")
-                    st.caption("수식 코드를 건드릴 필요 없이, 변경하고 싶은 내용을 편하게 적어주시면 AI가 수식과 풀이, 정답을 즉시 다시 계산해 줍니다.")
-                    
-                    col_ai_txt, col_ai_btn = st.columns([3, 1])
-                    with col_ai_txt:
-                        ai_instruction = st.text_input(
-                            "수정할 내용 입력:",
-                            placeholder="예: 1번 문제 30초를 25초로 바꾸고 정답/풀이 다시 계산해줘 / 2번 식 부호를 -에서 +로 바꿔줘",
-                            key="ai_edit_input"
-                        )
-                    with col_ai_btn:
-                        st.write("")
-                        if st.button("🪄 AI로 수정 반영", type="secondary"):
-                            if ai_instruction.strip():
-                                with st.spinner("AI가 요청사항에 맞춰 수식과 정답을 다시 계산하고 있습니다..."):
-                                    try:
-                                        fast_model_name = get_fastest_model_name(gemini_api_key)
-                                        model = genai.GenerativeModel(fast_model_name)
-                                        
-                                        revise_prompt = f"""
-                                        너는 대한민국 고등학교 수학 출제 위원이야.
-                                        현재 생성된 [문제 1]과 [문제 2]가 있어:
-
-                                        [현재 문제 1]
-                                        {p1.get('question','')}
-                                        [현재 정답 1]
-                                        {p1.get('answer','')}
-                                        [현재 풀이 1]
-                                        {p1.get('solution','')}
-
-                                        [현재 문제 2]
-                                        {p2.get('question','')}
-                                        [현재 정답 2]
-                                        {p2.get('answer','')}
-                                        [현재 풀이 2]
-                                        {p2.get('solution','')}
-
-                                        선생님의 수정 요청:
-                                        "{ai_instruction}"
-
-                                        [지침]
-                                        위 수정 요청을 완벽히 반영하여 문제, 정답, 풀이를 오차 없이 다시 계산하고 작성해줘.
-                                        수정 요청이 없는 문제는 기존 내용을 그대로 유지해.
-                                        모든 수식은 `$수식$` 기호로 감싸라.
-
-                                        [출력 양식]
-                                        [문제 1]
-                                        (1번 문제 본문)
-                                        [정답 1]
-                                        (1번 정답)
-                                        [풀이 1]
-                                        (1번 풀이)
-
-                                        [문제 2]
-                                        (2번 문제 본문)
-                                        [정답 2]
-                                        (2번 정답)
-                                        [풀이 2]
-                                        (2번 풀이)
-                                        """
-                                        
-                                        rev_res = model.generate_content(revise_prompt)
-                                        rev_problems = parse_tag_problems(rev_res.text.strip())
-                                        if rev_problems:
-                                            st.session_state.similar_problems = rev_problems
-                                            st.success("✅ AI 수정 및 재계산 완료!")
-                                            time.sleep(0.3)
-                                            st.rerun()
-                                    except Exception as ex:
-                                        st.error(f"수정 오류: {ex}")
-                    
-                    st.divider()
-                    st.markdown("#### ✏️ 2. 글자/숫자 직접 수정 (선택 사항)")
-                    tab_e1, tab_e2 = st.tabs(["✏️ [1번 문제] 직접 수정", "✏️ [2번 문제] 직접 수정"])
-                    
-                    with tab_e1:
-                        p1_q_edit = st.text_area("1번 문제 지문:", value=p1.get("question", ""), key="edit_p1_q", height=100)
-                        col_ans1, col_ans2 = st.columns([1, 1])
-                        with col_ans1:
-                            p1_a_edit = st.text_input("1번 정답:", value=p1.get("answer", ""), key="edit_p1_a")
-                        with col_ans2:
-                            st.write("")
-                            st.markdown(f"**정답 미리보기:** {format_math(p1_a_edit or '')}")
-                        p1_s_edit = st.text_area("1번 풀이 및 해설:", value=p1.get("solution", ""), key="edit_p1_s", height=120)
-                    
-                    with tab_e2:
-                        p2_q_edit = st.text_area("2번 문제 지문:", value=p2.get("question", ""), key="edit_p2_q", height=100)
-                        col_ans3, col_ans4 = st.columns([1, 1])
-                        with col_ans3:
-                            p2_a_edit = st.text_input("2번 정답:", value=p2.get("answer", ""), key="edit_p2_a")
-                        with col_ans4:
-                            st.write("")
-                            st.markdown(f"**정답 미리보기:** {format_math(p2_a_edit or '')}")
-                        p2_s_edit = st.text_area("2번 풀이 및 해설:", value=p2.get("solution", ""), key="edit_p2_s", height=120)
-                    
-                    p1["question"], p1["answer"], p1["solution"] = p1_q_edit, p1_a_edit, p1_s_edit
-                    p2["question"], p2["answer"], p2["solution"] = p2_q_edit, p2_a_edit, p2_s_edit
-
-                col1, col2 = st.columns([1, 2])
-                with col1:
-                    target_class = st.selectbox("게시할 반", class_list)
-                with col2:
-                    st.write("") 
-                    st.write("") 
-                    if st.button(f"📢 [{target_class}] 과제 등록하기", type="primary"):
+                col_post1, col_post2 = st.columns([1, 2])
+                with col_post1:
+                    target_class = st.selectbox("📢 게시할 반 선택", class_list)
+                with col_post2:
+                    st.write("")
+                    st.write("")
+                    if st.button(f"🚀 [{target_class}] 과제 바로 등록하기", type="primary"):
                         new_prob = {
                             "id": str(int(time.time())),
                             "class_id": target_class, 
@@ -851,18 +753,78 @@ with tab2:
                         with st.spinner("과제를 등록하는 중..."):
                             if save_problem(new_prob):
                                 st.success(f"✅ [{target_class}] 과제 등록 완료!")
+                                time.sleep(0.5)
+                
+                # ★ [1] 빠른 숫자·단어 일괄 바꾸기 도구 (화면 보면서 1초 교체)
+                with st.expander("⚡ [빠른 단어·숫자 바꾸기] 화면을 보면서 오타/숫자만 1초 교체", expanded=False):
+                    st.caption("수식 코드를 건드릴 필요 없이, 문제 화면에 보이는 글자나 숫자를 적어주시면 즉시 바뀝니다.")
+                    col_tgt, col_find, col_replace, col_btn = st.columns([1.2, 1.5, 1.5, 1])
+                    with col_tgt:
+                        replace_target_prob = st.selectbox("수정할 문제", ["1번 문제", "2번 문제", "1번+2번 전체"])
+                    with col_find:
+                        find_str = st.text_input("바꿀 대상 (예: 30)", key="find_str")
+                    with col_replace:
+                        replace_str = st.text_input("새로운 값 (예: 25)", key="replace_str")
+                    with col_btn:
+                        st.write("")
+                        st.write("")
+                        if st.button("🔄 바꾸기"):
+                            if find_str:
+                                if "1번" in replace_target_prob or "전체" in replace_target_prob:
+                                    p1["question"] = p1["question"].replace(find_str, replace_str)
+                                    p1["answer"] = p1["answer"].replace(find_str, replace_str)
+                                    p1["solution"] = p1["solution"].replace(find_str, replace_str)
+                                if "2번" in replace_target_prob or "전체" in replace_target_prob:
+                                    p2["question"] = p2["question"].replace(find_str, replace_str)
+                                    p2["answer"] = p2["answer"].replace(find_str, replace_str)
+                                    p2["solution"] = p2["solution"].replace(find_str, replace_str)
+                                st.success(f"'{find_str}' ➔ '{replace_str}' 교체 완료!")
+                                st.rerun()
 
-            # 실시간 수식 렌더링 화면
-            for idx, item in enumerate([p1, p2], start=1):
-                with st.container():
-                    st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
-                    display_q = format_math(item.get("question", ""))
-                    display_a = format_math(item.get("answer", ""))
-                    display_s = format_math(item.get("solution", ""))
-                    
-                    st.markdown(display_q)
-                    with st.expander("🔍 정답 및 풀이 확인"):
-                        st.markdown(f"**정답:** {display_a}")
-                        if display_s:
-                            st.markdown(f"**풀이:**\n\n{display_s}")
-                    st.write("")
+            # ★ [2] 문제 카드 1번 (화면 + 인라인 직접 수정)
+            with st.container():
+                st.markdown("### [문제 1] 기본 다지기")
+                st.markdown(format_math(p1.get("question", "")))
+                
+                with st.expander("🔍 1번 정답 및 풀이 확인"):
+                    st.markdown(f"**정답:** {format_math(p1.get('answer', ''))}")
+                    if p1.get("solution"):
+                        st.markdown(f"**풀이:**\n\n{format_math(p1.get('solution', ''))}")
+                
+                if current_role == "admin":
+                    if st.checkbox("✏️ 1번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p1"):
+                        p1_q_new = st.text_area("1번 지문 내용:", value=p1.get("question", ""), key="inline_p1_q", height=100)
+                        col_a1, col_s1 = st.columns([1, 2])
+                        with col_a1:
+                            p1_a_new = st.text_input("1번 정답:", value=p1.get("answer", ""), key="inline_p1_a")
+                        with col_s1:
+                            p1_s_new = st.text_input("1번 풀이:", value=p1.get("solution", ""), key="inline_p1_s")
+                        
+                        p1["question"] = p1_q_new
+                        p1["answer"] = p1_a_new
+                        p1["solution"] = p1_s_new
+            st.divider()
+
+            # ★ [3] 문제 카드 2번 (화면 + 인라인 직접 수정)
+            with st.container():
+                st.markdown("### [문제 2] 실력 키우기")
+                st.markdown(format_math(p2.get("question", "")))
+                
+                with st.expander("🔍 2번 정답 및 풀이 확인"):
+                    st.markdown(f"**정답:** {format_math(p2.get('answer', ''))}")
+                    if p2.get("solution"):
+                        st.markdown(f"**풀이:**\n\n{format_math(p2.get('solution', ''))}")
+                
+                if current_role == "admin":
+                    if st.checkbox("✏️ 2번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p2"):
+                        p2_q_new = st.text_area("2번 지문 내용:", value=p2.get("question", ""), key="inline_p2_q", height=100)
+                        col_a2, col_s2 = st.columns([1, 2])
+                        with col_a2:
+                            p2_a_new = st.text_input("2번 정답:", value=p2.get("answer", ""), key="inline_p2_a")
+                        with col_s2:
+                            p2_s_new = st.text_input("2번 풀이:", value=p2.get("solution", ""), key="inline_p2_s")
+                        
+                        p2["question"] = p2_q_new
+                        p2["answer"] = p2_a_new
+                        p2["solution"] = p2_s_new
+            st.write("")
