@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링, 표(Table), 그래프/도형 SVG 통합 엔진
+# ★ 수식 렌더링, 전개도 맞춤 표, 그래프/도형 SVG 통합 엔진
 # ==========================================
 def _clean_cell(col):
     """표 내부 셀의 불필요한 달러 기호($) 제거"""
@@ -104,17 +104,37 @@ def _md_table_to_html(lines):
         rows.append(cols)
     if not rows:
         return ""
-    html = '<div style="margin: 10px 0; overflow-x: auto;"><table style="border-collapse: collapse; margin: 0 auto; text-align: center; font-size: 13.5px; border: 1px solid #777;">'
-    for i, row in enumerate(rows):
-        html += '<tr>'
-        for col in row:
-            cleaned_col = _clean_cell(col)
-            bg = '#f1f3f5' if i == 0 else '#ffffff'
-            fw = 'bold' if i == 0 else 'normal'
-            html += f'<td style="border: 1px solid #777; padding: 5px 12px; background-color: {bg}; font-weight: {fw}; color: #111111;">{cleaned_col}</td>'
-        html += '</tr>'
-    html += '</table></div>'
-    return html
+    
+    # 빈칸이 존재하는지 확인 (전개도 표인지 일반 데이터 표인지 자동 판별)
+    has_empty = any(_clean_cell(c) == '' for row in rows for c in row)
+    
+    if has_empty:
+        # ★ 전개도 스타일: 빈칸은 테두리/배경 완전히 제거, 글자 있는 면만 정사각형 굵은 테두리 적용
+        html = '<div style="margin: 12px 0; overflow-x: auto;"><table style="border-collapse: collapse; margin: 0 auto; text-align: center; font-size: 15px;">'
+        for row in rows:
+            html += '<tr>'
+            for col in row:
+                cleaned_col = _clean_cell(col)
+                if not cleaned_col:
+                    html += '<td style="border: none; width: 44px; height: 44px; padding: 2px; background: transparent;"></td>'
+                else:
+                    html += f'<td style="border: 2px solid #222222; width: 44px; height: 44px; padding: 4px; background-color: #ffffff; font-weight: bold; color: #111111; text-align: center; vertical-align: middle; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">{cleaned_col}</td>'
+            html += '</tr>'
+        html += '</table></div>'
+        return html
+    else:
+        # 일반 데이터 표 스타일 (도수분포표, 집계표 등)
+        html = '<div style="margin: 10px 0; overflow-x: auto;"><table style="border-collapse: collapse; margin: 0 auto; text-align: center; font-size: 13.5px; border: 1px solid #777;">'
+        for i, row in enumerate(rows):
+            html += '<tr>'
+            for col in row:
+                cleaned_col = _clean_cell(col)
+                bg = '#f1f3f5' if i == 0 else '#ffffff'
+                fw = 'bold' if i == 0 else 'normal'
+                html += f'<td style="border: 1px solid #777; padding: 5px 12px; background-color: {bg}; font-weight: {fw}; color: #111111;">{cleaned_col}</td>'
+            html += '</tr>'
+        html += '</table></div>'
+        return html
 
 def format_math(text):
     if not text:
@@ -150,7 +170,7 @@ def format_math(text):
     pattern_tab = r'\\begin\{tabular\}(?:\[[^\]]*\])?(?:\{[^\}]*\})([\s\S]*?)\\end\{tabular\}'
     text = re.sub(pattern_tab, replace_tabular, text)
     
-    # 4. 마크다운 표(|...|)를 HTML 표로 변환
+    # 4. 마크다운 표(|...|)를 HTML 표로 변환 (전개도 자동 분기)
     lines = text.split('\n')
     new_lines = []
     table_lines = []
@@ -760,14 +780,13 @@ with tab2:
         include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("Gemini가 단원 범위, 표, 격자 전개도 조건에 맞춰 문제를 출제하고 있습니다..."):
+            with st.spinner("Gemini가 단원 범위, 표, 전개도 조건에 맞춰 문제를 출제하고 있습니다..."):
                 try:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ 2번 전개도 격자 표 최적화 + 수직선 등분점 + 세로축 눈금 프롬프트
                     prompt = f"""
                     너는 대한민국 고등학교 및 중학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -778,18 +797,16 @@ with tab2:
                     [출제 원칙 및 교육과정 준수]
                     1. **단원 범위 준수 (선행 개념 절대 금지):**
                        - 원본 문제 단원 범위를 절대 벗어나지 마라.
-                    2. **전개도 문제 작성 규칙 (★ 초고속 격자 표 블록 2번 방식 적용 ★):**
-                       - 원본 문제가 정육면체/직육면체/입체도형 전개도 문제인 경우, **절대로 무겁고 느린 SVG 그림을 그리지 마라.**
-                       - 전개도는 **초고속 생성을 위해 아래 예시와 같이 4x3 또는 3x3 마크다운 격자 표 블록(빈칸은 공백, 면에는 문자 A, B, C...)**으로 작성하라:
-                         |   | A |   |   |
+                    2. **전개도 문제 작성 규칙 (초고속 격자 표 블록):**
+                       - 원본 문제가 정육면체/직육면체 전개도 문제인 경우, 무거운 SVG 대신 **3x4 또는 4x3 마크다운 격자 표 블록(빈칸은 공백, 면에는 문자/숫자)**으로 작성하라:
+                         |   | x |   |   |
                          |---|---|---|---|
-                         | B | C | D | E |
-                         |   | F |   |   |
-                       - 위와 같이 표로 표현하면 학생들이 접었을 때 마주보는 면이나 모서리를 정확히 파악할 수 있다.
+                         | y | 3 | z | -3 |
+                         |   | -4|   |   |
                     3. **수직선 문제 작성 규칙:**
                        - 수직선 위의 점이 분수/소수 위치에 있는 경우, 작은 등분 눈금선(`<line x1="x" y1="53" x2="x" y2="67" stroke="#777" stroke-width="1"/>`)을 넣어 2등분/3등분임을 표시하는 간단한 SVG로 작성하라.
                     4. **꺾은선그래프 / 막대그래프 규칙:**
-                       - 세로축(y축)에 도수 눈금 숫자(0, 2, 4... 또는 1, 2, 3...)와 단위를 `<text>`로 표시하고, 데이터 라인(`<polyline>`) 또는 막대(`<rect>`)로 가볍게 작성하라.
+                       - 세로축(y축)에 도수 눈금 숫자와 단위를 `<text>`로 표시하고 데이터 라인/막대로 가볍게 작성하라.
                     5. **토너먼트 / 대진표 문제:**
                        - 대진표인 경우 심플한 SVG 트리로 작성할 것.
                     6. **표(Table) 문제 작성 규칙:**
