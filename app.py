@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링 전용 엔진 (신규/과거 데이터 완벽 호환)
+# ★ 수식 렌더링 전용 엔진 (도함수/블록 수식/극한 완벽 지원)
 # ==========================================
 def format_math(text):
     if not text:
@@ -93,23 +93,26 @@ def format_math(text):
     # 1. 줄바꿈 기호 변환
     text = text.replace('[br]', '\n\n')
     
-    # 2. 명령어 앞 중복 백슬래시 정리 (\\lim -> \lim, \\to -> \to, \\{ -> \{)
-    # (단, cases/array 내부 줄바꿈용 \\는 유지)
+    # 2. Mathpix의 $$...$$ 블록 수식을 표준 $...$로 안전하게 정규화
+    text = re.sub(r'\$\$(.*?)\$\$', r'$\1$', text, flags=re.DOTALL)
+    
+    # 3. 명령어 앞 중복 백슬래시 정리 (\\lim -> \lim, \\to -> \to, \\{ -> \{)
+    # (cases/array 내부 줄바꿈용 \\는 보존)
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     
-    # 3. 특수 제어문자 및 오타 복원
+    # 4. 특수 제어문자 및 손상 단어 복원
     text = text.replace('\x0c', r'\f').replace('♀rac', r'\frac').replace('♀', r'\f')
     text = text.replace('\x08', r'\b').replace('\x07', r'\a').replace('\x0b', r'\v')
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     
-    # 4. lim 기호 표준화 (화살표가 정중앙 밑으로 가도록)
+    # 5. lim 기호 표준화 (화살표가 정중앙 밑으로 배치)
     text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
     text = re.sub(r'\\lim(?![a-zA-Z])(?!\s*\\limits)', r'\\lim\\limits', text)
     text = re.sub(r'(\\lim\\limits\s*)+', r'\\lim\\limits ', text)
     
-    # 5. $ 기호 없이 노출된 과거 수식 덩어리를 $...$로 자동 감싸기
+    # 6. $ 기호 없이 노출된 과거 데이터 수식 덩어리를 $...$로 자동 감싸기
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
@@ -420,7 +423,7 @@ with tab2:
                     [수식 작성 규칙 (필수)]
                     1. 극한식은 화살표 조건이 lim 바로 밑에 오도록 반드시 `\\lim\\limits_{{x \\to a}}` 형태로 작성할 것.
                     2. 조건부 함수(구간별 정의 함수)는 반드시 `$\\begin{{cases}} 식1 & (조건1) \\\\ 식2 & (조건2) \\end{{cases}}$` 형태로 작성할 것.
-                    3. 모든 수식, 분수식, 극한식은 원본 문제처럼 반드시 `$수식$` 기호로 감싸야 함.
+                    3. 모든 수식, 분수식, 극한식, 도함수 식은 원본 문제처럼 반드시 `$수식$` 기호로 감싸야 함.
                     4. $ 기호 안에는 순수 수식만 넣고 한글은 $ 밖에 둘 것.
                     5. 아래 출력 양식을 정확히 지켜서 출력할 것.
 
