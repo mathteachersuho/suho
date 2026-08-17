@@ -83,20 +83,12 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링 및 제어문자 복원 함수
+# ★ 수식 및 날짜 파싱 전용 함수
 # ==========================================
 def format_math(text):
     if not text:
         return ""
     text = str(text).replace('[br]', '\n\n')
-    
-    # JSON에서 변질된 제어문자(\f, \r 등) 강제 복구
-    text = text.replace('\x0c', r'\f')
-    
-    # 중복 \lim 보정
-    text = re.sub(r'(\\lim\s*)+', r'\\lim ', text)
-    text = re.sub(r'\\lim\s*\\limits', r'\\lim\\limits', text)
-    
     return text
 
 def parse_date_group(date_str):
@@ -135,6 +127,33 @@ def parse_date_group(date_str):
         return date_key, date_label
 
     return date_str, date_str
+
+def parse_tag_problems(res_text):
+    """JSON 오류를 원천 차단하는 태그 기반 파서"""
+    p1_q = re.search(r'\[문제\s*1\]([\s\S]*?)(?=\[정답\s*1\]|$)', res_text)
+    p1_a = re.search(r'\[정답\s*1\]([\s\S]*?)(?=\[풀이\s*1\]|$)', res_text)
+    p1_s = re.search(r'\[풀이\s*1\]([\s\S]*?)(?=\[문제\s*2\]|$)', res_text)
+    
+    p2_q = re.search(r'\[문제\s*2\]([\s\S]*?)(?=\[정답\s*2\]|$)', res_text)
+    p2_a = re.search(r'\[정답\s*2\]([\s\S]*?)(?=\[풀이\s*2\]|$)', res_text)
+    p2_s = re.search(r'\[풀이\s*2\]([\s\S]*?)$', res_text)
+    
+    if p1_q and p2_q:
+        return [
+            {
+                "problem_num": 1,
+                "question": p1_q.group(1).strip(),
+                "answer": p1_a.group(1).strip() if p1_a else "",
+                "solution": p1_s.group(1).strip() if p1_s else ""
+            },
+            {
+                "problem_num": 2,
+                "question": p2_q.group(1).strip(),
+                "answer": p2_a.group(1).strip() if p2_a else "",
+                "solution": p2_s.group(1).strip() if p2_s else ""
+            }
+        ]
+    return None
 
 # ==========================================
 # ★ 속도 및 모델 설정
@@ -348,42 +367,51 @@ with tab2:
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
+                    # ★ JSON 대신 원본 텍스트를 완벽 보존하는 태그 프롬프트
                     prompt = f"""
-                    너는 수학 교과 출제 위원이야. [원본 문제]를 바탕으로 [유사 문제] 딱 2개를 만들어줘.
-                    
+                    너는 대한민국 수학 교과 출제 위원이야. 
+                    아래 [원본 문제]를 바탕으로 [유사 문제 1]과 [유사 문제 2]를 만들어줘.
+
                     [원본 문제]
                     {edited_text}
-                    
+
                     [출제 원칙]
-                    1번 문제: 조건/숫자만 살짝 바꾼 기본 문제
-                    2번 문제: 핵심 개념 기반의 응용 변형 문제
-                    
-                    [출력 형식]
-                    오직 JSON으로만 반환: {{ "problems": [ {{"problem_num": 1, "question": "문제", "answer": "정답", "solution": "{solution_instruction}"}}, {{"problem_num": 2, "question": "문제", "answer": "정답", "solution": "{solution_instruction}"}} ] }}
-                    
-                    ⚠️ [수식 작성 절대 규칙]
-                    1. 모든 수학 식은 예외 없이 `$수식$` 기호로 감싸라. (예: `$\\lim_{{x \\to 1}} \\frac{{f(x)}}{{g(x)}}$ 의 값`)
-                    2. $ 기호 안에는 순수 수식 기호만 들어가야 하며 한글은 절대 넣지 마라.
-                    3. 줄바꿈은 \\n 대신 [br] 사용.
-                    4. ```json 마크다운 태그 없이 순수 JSON만 출력.
+                    - 1번 문제: 조건/숫자만 살짝 바꾼 기본 다지기 문제
+                    - 2번 문제: 핵심 개념 기반의 응용 변형 문제
+
+                    [수식 작성 절대 규칙]
+                    1. 모든 수식, 극한식, 분수식 등은 반드시 `$수식$` 형태로 감싸서 작성할 것.
+                       (예: 두 함수 $f(x)=x^2, g(x)=2x-1$ 에 대하여 $\\lim_{{x \\to 1}} \\frac{{f(x)}}{{g(x)}}$ 의 값을 구하시오.)
+                    2. $ 기호 안에는 한글을 절대 넣지 말 것.
+                    3. 보기가 있는 문제는 ㄱ, ㄴ, ㄷ 각 항목을 줄바꿈하여 한 줄씩 작성할 것.
+                    4. 반드시 아래의 태그 양식을 한 글자도 틀리지 말고 그대로 지켜서 출력할 것.
+
+                    [출력 양식]
+                    [문제 1]
+                    (1번 문제 내용)
+                    [정답 1]
+                    (1번 정답)
+                    [풀이 1]
+                    ({solution_instruction})
+
+                    [문제 2]
+                    (2번 문제 내용)
+                    [정답 2]
+                    (2번 정답)
+                    [풀이 2]
+                    ({solution_instruction})
                     """
                     
                     response = model.generate_content(prompt)
                     res_text = response.text.strip()
-                    if res_text.startswith("```json"): res_text = res_text[7:-3].strip()
-                    elif res_text.startswith("```"): res_text = res_text[3:-3].strip()
                     
-                    # ★ [핵심 해결 필터] JSON 제어문자로 오인되는 단일 백슬래시를 이중 백슬래시로 보호
-                    clean_json = re.sub(r'\\(?!["]|\\)', r'\\\\', res_text)
-                    
-                    parsed = json.loads(clean_json)
-                    problems = parsed.get("problems", [])
+                    problems = parse_tag_problems(res_text)
                     
                     if problems:
                         st.session_state.similar_problems = problems
                         st.success(f"⚡ 생성 완료! (사용된 모델: {fast_model_name})")
                     else:
-                        st.error("문제 생성에 실패했습니다.")
+                        st.error("문제 생성 양식 분석에 실패했습니다. 다시 생성 버튼을 눌러주세요.")
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
 
