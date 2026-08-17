@@ -106,7 +106,7 @@ def format_math(text):
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     
-    # 5. lim 기호 표준화
+    # 5. lim 기호 표준화 (화살표가 정중앙 밑으로 배치)
     text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
     text = re.sub(r'\\lim(?![a-zA-Z])(?!\s*\\limits)', r'\\lim\\limits', text)
     text = re.sub(r'(\\lim\\limits\s*)+', r'\\lim\\limits ', text)
@@ -345,6 +345,36 @@ with tab1:
                             if s2_safe:
                                 st.markdown(f"**풀이:**\n\n{s2_safe}")
                         
+                        # 인쇄용 및 HWP 복사용 뷰
+                        with st.expander("🖨️ 인쇄용 시험지 보기 / 📋 텍스트 복사"):
+                            printable_text = f"""[수학 학습지 - {group['label']}]
+
+[문제 1]
+{p.get('q1', '')}
+
+(풀이 공간)
+
+
+
+
+[문제 2]
+{p.get('q2', '')}
+
+(풀이 공간)
+
+
+
+
+--------------------------------------------------
+[정답 및 해설]
+1번 정답: {p.get('a1', '')}
+1번 풀이: {p.get('s1', '')}
+
+2번 정답: {p.get('a2', '')}
+2번 풀이: {p.get('s2', '')}
+"""
+                            st.text_area("한글(HWP) 복사용 텍스트", printable_text, height=180)
+                        
                         if current_role == "admin":
                             if st.button("🗑️ 이 과제 시트에서 삭제하기", key=f"del_{p.get('id')}"):
                                 if delete_problem(p.get('id')):
@@ -354,7 +384,7 @@ with tab1:
                     st.divider()
 
 # ------------------------------------------
-# [탭 2] 개인용 문제 생성기
+# [탭 2] 개인용 문제 생성기 & 선생님 실시간 편집기
 # ------------------------------------------
 with tab2:
     st.subheader("📸 모르는 문제를 찍어 유사 문제를 만드세요")
@@ -407,20 +437,21 @@ with tab2:
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ 단원 범위 이탈 금지 및 선행 개념(적분 등) 배제 규칙 추가
                     prompt = f"""
                     너는 대한민국 고등학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
-                    원본 문제에 도형이나 그래프가 있는 경우, 그래프의 개형이나 도형의 필수 성질을 문제 본문에 텍스트/수식 조건으로 명확히 서술하여 별도의 새 그림 없이도 풀 수 있도록 제작할 것.
+
                     [원본 문제]
                     {edited_text}
 
-                    [교육과정 및 출제 원칙 (매우 중요)]
-                    1. **단원 범위 준수(선행 개념 출제 절대 금지):**
-                       - 원본 문제가 '미분/도함수' 단원이면, 아직 배우지 않은 '적분 기호($\\int$)'나 적분 개념을 절대로 사용하지 마라.
-                       - 원본 문제가 '극한' 단원이면 미분/적분을 쓰지 마라.
-                       - 2번(실력 키우기) 문제 역시 다른 후속 단원과 섞지 말고, **현재 원본 문제 단원 내에서만** 조건(계수 비교, 차수 결정, 항등식 등)을 심화하여 출제하라.
-                    2. **문제 구성:**
+                    [출제 원칙 및 교육과정 준수]
+                    1. **단원 범위 준수 (선행 개념 절대 금지):**
+                       - 원본 문제가 미분/도함수 단원이면, 아직 배우지 않은 '적분 기호($\\int$)'나 적분 개념을 절대로 사용하지 마라.
+                       - 원본 문제가 극한 단원이면 미분/적분을 쓰지 마라.
+                       - 2번(실력 키우기) 문제 역시 다른 후속 단원과 섞지 말고, **현재 원본 문제 단원 내에서만** 조건(계수 비교, 차수 추론 등)을 심화하여 출제하라.
+                    2. **도형 및 그래프 문제 서술 규칙:**
+                       - 원본 문제에 도형/그래프가 있는 경우, 필수 성질이나 개형을 문제 본문에 텍스트/수식 조건으로 명확히 서술하여 새 그림 없이도 완벽히 풀 수 있게 하라.
+                    3. **문제 구성:**
                        - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
                        - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
 
@@ -458,12 +489,41 @@ with tab2:
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
 
+        # ==========================================
+        # ★ 생성된 문제 검토 & 선생님 직접 수정 에디터
+        # ==========================================
         if st.session_state.similar_problems:
             st.divider()
             st.subheader("🎯 생성된 연습 문제")
             
+            p1 = st.session_state.similar_problems[0]
+            p2 = st.session_state.similar_problems[1]
+            
+            # 관리자(선생님)일 때: 실시간 수정 에디터 활성화
             if current_role == "admin":
-                st.info("💡 이 문제를 특정 반 학생들에게 숙제로 낼 수 있습니다.")
+                st.info("✏️ **선생님 검토 및 수정 모드:** 오타나 숫자를 고치면 아래 수식 화면에 실시간으로 반영됩니다.")
+                
+                with st.expander("🛠️ 1번 / 2번 문제 및 정답 직접 수정하기", expanded=False):
+                    st.markdown("##### [1번 기본 다지기 수정]")
+                    p1_q_edit = st.text_area("1번 문제 텍스트:", value=p1.get("question", ""), key="edit_p1_q", height=100)
+                    col_e1, col_e2 = st.columns(2)
+                    with col_e1:
+                        p1_a_edit = st.text_input("1번 정답:", value=p1.get("answer", ""), key="edit_p1_a")
+                    with col_e2:
+                        p1_s_edit = st.text_input("1번 풀이:", value=p1.get("solution", ""), key="edit_p1_s")
+                    
+                    st.markdown("##### [2번 실력 키우기 수정]")
+                    p2_q_edit = st.text_area("2번 문제 텍스트:", value=p2.get("question", ""), key="edit_p2_q", height=100)
+                    col_e3, col_e4 = st.columns(2)
+                    with col_e3:
+                        p2_a_edit = st.text_input("2번 정답:", value=p2.get("answer", ""), key="edit_p2_a")
+                    with col_e4:
+                        p2_s_edit = st.text_input("2번 풀이:", value=p2.get("solution", ""), key="edit_p2_s")
+                    
+                    # 수정된 내용 세션에 실시간 반영
+                    p1["question"], p1["answer"], p1["solution"] = p1_q_edit, p1_a_edit, p1_s_edit
+                    p2["question"], p2["answer"], p2["solution"] = p2_q_edit, p2_a_edit, p2_s_edit
+                
                 col1, col2 = st.columns([1, 2])
                 with col1:
                     target_class = st.selectbox("게시할 반", class_list)
@@ -476,18 +536,19 @@ with tab2:
                             "class_id": target_class, 
                             "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                             "image_b64": st.session_state.current_image_b64 or "",
-                            "q1": st.session_state.similar_problems[0]["question"],
-                            "a1": st.session_state.similar_problems[0]["answer"],
-                            "s1": st.session_state.similar_problems[0].get("solution", ""),
-                            "q2": st.session_state.similar_problems[1]["question"],
-                            "a2": st.session_state.similar_problems[1]["answer"],
-                            "s2": st.session_state.similar_problems[1].get("solution", ""),
+                            "q1": p1["question"],
+                            "a1": p1["answer"],
+                            "s1": p1.get("solution", ""),
+                            "q2": p2["question"],
+                            "a2": p2["answer"],
+                            "s2": p2.get("solution", ""),
                         }
                         with st.spinner("과제를 등록하는 중..."):
                             if save_problem(new_prob):
                                 st.success(f"✅ [{target_class}] 과제 등록 완료!")
-                        
-            for idx, item in enumerate(st.session_state.similar_problems, start=1):
+
+            # 실시간 수식 렌더링 화면
+            for idx, item in enumerate([p1, p2], start=1):
                 with st.container():
                     st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
                     display_q = format_math(item.get("question", ""))
