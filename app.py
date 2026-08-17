@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 및 날짜 파싱 전용 함수
+# ★ 수식 및 날짜 파싱 전용 함수 (영문 날짜 완벽 대응)
 # ==========================================
 def format_math(text):
     if not text:
@@ -92,22 +92,43 @@ def format_math(text):
     return text
 
 def parse_date_group(date_str):
-    """'2026-08-17 13:50' 등의 문자열을 '8월 17일'로 변환하고 그룹 키를 생성"""
+    """모든 날짜 형식을 'M월 D일'로 변환"""
     if not date_str:
         return "9999-99-99", "날짜 미상"
     date_str = str(date_str).strip()
+
+    month_map = {
+        'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+        'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
+    }
+    
+    # 1. 영문 표준 형식 처리 (예: Mon Aug 17 2026...)
+    eng_match = re.search(r'([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})', date_str)
+    if eng_match:
+        mon_str, d, y = eng_match.groups()
+        m = month_map.get(mon_str.capitalize(), None)
+        if m:
+            date_key = f"{y}-{int(m):02d}-{int(d):02d}"
+            date_label = f"{int(m)}월 {int(d)}일"
+            return date_key, date_label
+
+    # 2. YYYY-MM-DD 또는 YYYY.MM.DD 형식 처리
     match = re.search(r'(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})', date_str)
     if match:
         y, m, d = match.groups()
         date_key = f"{y}-{int(m):02d}-{int(d):02d}"
         date_label = f"{int(m)}월 {int(d)}일"
         return date_key, date_label
-    match_kor = re.search(r'(\d{1,2})월\s*(\d{1,2})일', date_str)
+
+    # 3. 한글 날짜 형식 처리 (예: 8월 17일)
+    match_kor = re.search(r'(?:(\d{4})년\s*)?(\d{1,2})월\s*(\d{1,2})일', date_str)
     if match_kor:
-        m, d = match_kor.groups()
-        date_key = f"2026-{int(m):02d}-{int(d):02d}"
+        y, m, d = match_kor.groups()
+        y = y if y else "2026"
+        date_key = f"{y}-{int(m):02d}-{int(d):02d}"
         date_label = f"{int(m)}월 {int(d)}일"
         return date_key, date_label
+
     return date_str, date_str
 
 # ==========================================
@@ -195,7 +216,7 @@ st.caption(f"현재 접속 권한: **{'선생님 (모든 반 관리)' if current
 tab1, tab2 = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기"])
 
 # ------------------------------------------
-# [탭 1] 학생 게시판 (날짜별 그룹화 및 '몇월 며칠' 표시)
+# [탭 1] 학생 게시판 (날짜별 접이식 아코디언 UI)
 # ------------------------------------------
 with tab1:
     col_view, col_ref = st.columns([3, 1])
@@ -214,16 +235,13 @@ with tab1:
     with st.spinner("과제 목록을 불러오는 중..."):
         all_problems = fetch_problems()
     
-    # 반별 필터링
     filtered = [p for p in all_problems if str(p.get("class_id", "")).strip() == view_class.strip()]
     
     if not filtered:
         st.info(f"아직 [{view_class}]에 등록된 과제가 없습니다.")
     else:
-        # 최신 등록순으로 정렬
         filtered.reverse()
         
-        # ★ 날짜별로 그룹화 (날짜 순서 유지)
         grouped_by_date = {}
         for p in filtered:
             d_key, d_label = parse_date_group(p.get('date', ''))
@@ -231,49 +249,46 @@ with tab1:
                 grouped_by_date[d_key] = {"label": d_label, "items": []}
             grouped_by_date[d_key]["items"].append(p)
             
-        # 날짜별 묶음 출력
+        # ★ 날짜별 아코디언(접이식) 형태로 출력
         for d_key, group in grouped_by_date.items():
-            st.markdown(f"### 📅 {group['label']} 과제")
-            
-            for item_idx, p in enumerate(group["items"], start=1):
-                with st.container():
-                    # 하루에 여러 과제 세트가 등록된 경우 구분
-                    if len(group["items"]) > 1:
-                        st.markdown(f"##### 📌 과제 세트 {item_idx}")
-                    
-                    if p.get("image_b64"):
-                        st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
-                    
-                    q1_safe = format_math(p.get("q1", ""))
-                    a1_safe = format_math(p.get("a1", ""))
-                    s1_safe = format_math(p.get("s1", ""))
-                    
-                    q2_safe = format_math(p.get("q2", ""))
-                    a2_safe = format_math(p.get("a2", ""))
-                    s2_safe = format_math(p.get("s2", ""))
-                    
-                    st.markdown("#### [문제 1] 기본 다지기")
-                    st.markdown(q1_safe)
-                    with st.expander("🔍 1번 정답 및 풀이 확인"):
-                        st.markdown(f"**정답:** {a1_safe}")
-                        if s1_safe:
-                            st.markdown(f"**풀이:**\n\n{s1_safe}")
-                    
-                    st.markdown("#### [문제 2] 실력 키우기")
-                    st.markdown(q2_safe)
-                    with st.expander("🔍 2번 정답 및 풀이 확인"):
-                        st.markdown(f"**정답:** {a2_safe}")
-                        if s2_safe:
-                            st.markdown(f"**풀이:**\n\n{s2_safe}")
-                    
-                    if current_role == "admin":
-                        if st.button("🗑️ 이 과제 시트에서 삭제하기", key=f"del_{p.get('id')}"):
-                            if delete_problem(p.get('id')):
-                                st.success("구글 시트에서 삭제되었습니다!")
-                                time.sleep(0.5)
-                                st.rerun()
-                st.write("")
-            st.divider()
+            with st.expander(f"📅 {group['label']} 과제 ({len(group['items'])}개 세트)", expanded=False):
+                for item_idx, p in enumerate(group["items"], start=1):
+                    with st.container():
+                        if len(group["items"]) > 1:
+                            st.markdown(f"##### 📌 과제 세트 {item_idx}")
+                        
+                        if p.get("image_b64"):
+                            st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
+                        
+                        q1_safe = format_math(p.get("q1", ""))
+                        a1_safe = format_math(p.get("a1", ""))
+                        s1_safe = format_math(p.get("s1", ""))
+                        
+                        q2_safe = format_math(p.get("q2", ""))
+                        a2_safe = format_math(p.get("a2", ""))
+                        s2_safe = format_math(p.get("s2", ""))
+                        
+                        st.markdown("#### [문제 1] 기본 다지기")
+                        st.markdown(q1_safe)
+                        with st.expander("🔍 1번 정답 및 풀이 확인"):
+                            st.markdown(f"**정답:** {a1_safe}")
+                            if s1_safe:
+                                st.markdown(f"**풀이:**\n\n{s1_safe}")
+                        
+                        st.markdown("#### [문제 2] 실력 키우기")
+                        st.markdown(q2_safe)
+                        with st.expander("🔍 2번 정답 및 풀이 확인"):
+                            st.markdown(f"**정답:** {a2_safe}")
+                            if s2_safe:
+                                st.markdown(f"**풀이:**\n\n{s2_safe}")
+                        
+                        if current_role == "admin":
+                            if st.button("🗑️ 이 과제 시트에서 삭제하기", key=f"del_{p.get('id')}"):
+                                if delete_problem(p.get('id')):
+                                    st.success("구글 시트에서 삭제되었습니다!")
+                                    time.sleep(0.5)
+                                    st.rerun()
+                    st.divider()
 
 # ------------------------------------------
 # [탭 2] 개인용 문제 생성기
