@@ -128,8 +128,6 @@ def format_math(text):
                 return f"${chunk}$"
             pattern = r'(\\[a-zA-Z]+(?:\{[^{}]*\}|[\w\s+\-*/=<>(),._\^\\{}]*?))(?=[가-힣\n\r]|$)'
             part = re.sub(pattern, replacer, part)
-            
-            # f(x), g(x), f'(x) 함수 래핑
             part = re.sub(r'(?<![$\\])\b([fgh]\'?\([a-zA-Z\d+\-*/]*\))(?![$\\])', r'$\1$', part)
         new_parts.append(part)
     
@@ -202,14 +200,13 @@ def parse_tag_problems(res_text):
     return None
 
 # ==========================================
-# ★ A4 규격 인쇄용 완벽한 HTML 생성 함수 (format_math 연결 완료)
+# ★ A4 규격 인쇄용 완벽한 HTML 생성 함수 (페이지 분할 방지 적용)
 # ==========================================
 def make_printable_html(title, items):
     html_items = ""
     ans_items = ""
     
     for idx, p in enumerate(items, start=1):
-        # format_math를 통과시켜 모든 수식을 완전 복원
         q1 = format_math(p.get("q1", "")).replace('\n', '<br>')
         q2 = format_math(p.get("q2", "")).replace('\n', '<br>')
         a1 = format_math(p.get("a1", "")).replace('\n', '<br>')
@@ -219,19 +216,20 @@ def make_printable_html(title, items):
         
         img_tag = ""
         if p.get("image_b64"):
-            img_tag = f'<div style="text-align:center; margin: 15px 0;"><img src="data:image/jpeg;base64,{p["image_b64"]}" style="max-height:160px; max-width:90%; border:1px solid #ddd; border-radius:4px;"></div>'
+            img_tag = f'<div class="no-break" style="text-align:center; margin: 15px 0;"><img src="data:image/jpeg;base64,{p["image_b64"]}" style="max-height:160px; max-width:90%; border:1px solid #ddd; border-radius:4px;"></div>'
 
-        set_header = f'<h3 style="margin-top:25px; color:#222; border-bottom:2px solid #333; padding-bottom:5px;">📌 과제 세트 {idx}</h3>' if len(items) > 1 else ''
+        set_header = f'<h3 class="no-break" style="margin-top:25px; color:#222; border-bottom:2px solid #333; padding-bottom:5px;">📌 과제 세트 {idx}</h3>' if len(items) > 1 else ''
         
+        # 각 문제를 .problem-card 클래스로 감싸 페이지 중간 잘림 원천 차단
         html_items += f"""
         {set_header}
         {img_tag}
-        <div style="margin-bottom: 25px;">
+        <div class="problem-card">
             <div style="font-weight:bold; margin-bottom:8px; font-size:15px; color:#000;">[문제 {idx*2 - 1}] 기본 다지기</div>
             <div style="line-height:1.8; font-size:14.5px; color:#111;">{q1}</div>
             <div style="height: 120px; border-bottom: 1px dashed #aaa; margin-top: 15px;"></div>
         </div>
-        <div style="margin-bottom: 35px;">
+        <div class="problem-card">
             <div style="font-weight:bold; margin-bottom:8px; font-size:15px; color:#000;">[문제 {idx*2}] 실력 키우기</div>
             <div style="line-height:1.8; font-size:14.5px; color:#111;">{q2}</div>
             <div style="height: 120px; border-bottom: 1px dashed #aaa; margin-top: 15px;"></div>
@@ -239,7 +237,7 @@ def make_printable_html(title, items):
         """
         
         ans_items += f"""
-        <div style="margin-bottom: 18px; font-size:13.5px; line-height:1.7; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+        <div class="answer-card" style="margin-bottom: 18px; font-size:13.5px; line-height:1.7; border-bottom: 1px solid #eee; padding-bottom: 10px;">
             <strong>[문제 {idx*2 - 1}] 정답:</strong> {a1}<br>
             {f'<strong>풀이:</strong> {s1}<br>' if s1 else ''}
             <div style="margin-top:6px;"></div>
@@ -283,6 +281,18 @@ def make_printable_html(title, items):
         .header-title {{ font-size: 22px; font-weight: bold; margin-bottom: 8px; }}
         .name-box {{ text-align: right; font-size: 14px; font-weight: 500; color: #444; }}
         .page-break {{ page-break-before: always; }}
+        
+        /* ★ 핵심: 문제 및 해설이 페이지 중간에서 쪼개지지 않도록 방지 */
+        .problem-card {{
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+            margin-bottom: 30px;
+        }}
+        .answer-card, .no-break {{
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+        }}
+
         .print-btn-bar {{
             text-align: center;
             margin-bottom: 20px;
@@ -449,7 +459,6 @@ with tab1:
             
         for d_key, group in grouped_by_date.items():
             with st.expander(f"📅 {group['label']} 과제 ({len(group['items'])}개 세트)", expanded=False):
-                # ★ 1. 인쇄할 세트 선택 체크리스트
                 st.markdown(f"#### 🖨️ {group['label']} 과제 인쇄 설정")
                 set_names = [f"과제 세트 {i}" for i in range(1, len(group["items"]) + 1)]
                 
@@ -498,7 +507,6 @@ with tab1:
 
                 st.divider()
 
-                # 본문 과제 상세 내용
                 for item_idx, p in enumerate(group["items"], start=1):
                     with st.container():
                         st.markdown(f"##### 📌 과제 세트 {item_idx}")
@@ -528,7 +536,6 @@ with tab1:
                             if s2_safe:
                                 st.markdown(f"**풀이:**\n\n{s2_safe}")
                         
-                        # 개별 세트 다운로드/인쇄 버튼
                         single_html = make_printable_html(f"[{view_class}] {group['label']} (과제 세트 {item_idx})", [p])
                         st.download_button(
                             label=f"📥 세트 {item_idx}만 인쇄용 파일 열기",
@@ -652,9 +659,6 @@ with tab2:
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
 
-        # ==========================================
-        # ★ 생성된 문제 검토 & 선생님 직접 수정 에디터
-        # ==========================================
         if st.session_state.similar_problems:
             st.divider()
             st.subheader("🎯 생성된 연습 문제")
