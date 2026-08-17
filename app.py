@@ -83,13 +83,18 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 및 날짜 파싱 전용 함수
+# ★ 수식 렌더링 및 빨간 글씨 에러 복원 함수
 # ==========================================
 def format_math(text):
     if not text:
         return ""
     text = str(text).replace('[br]', '\n\n')
-    # 혹시라도 lim_{x \to a}로 적힌 경우 자동으로 밑으로 오도록 \limits 보정
+    
+    # 1. 불필요하게 겹쳐진 백슬래시(\\\\)를 단일 백슬래시(\)로 완벽 복원 (빨간 글씨 에러 해결)
+    text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
+    text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
+    
+    # 2. 극한 기호 화살표가 lim 바로 밑에 위치하도록 \limits 자동 보정
     text = re.sub(r'\\lim(?!\s*\\limits)', r'\\lim\\limits', text)
     return text
 
@@ -342,7 +347,6 @@ with tab2:
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ 프롬프트에 limits 사용 및 보기 한 줄 작성 원칙 강화
                     prompt = f"""
                     너는 수학 교과 출제 위원이야. [원본 문제]를 바탕으로 [유사 문제] 딱 2개를 만들어줘.
                     
@@ -356,14 +360,14 @@ with tab2:
                     [출력 형식]
                     JSON으로만 반환: {{ "problems": [ {{"problem_num": 1, "question": "문제", "answer": "정답", "solution": "{solution_instruction}"}}, {{"problem_num": 2, "question": "문제", "answer": "정답", "solution": "{solution_instruction}"}} ] }}
                     
-                    ⚠️ 규칙:
-                    1. 극한 기호는 화살표가 lim 바로 밑에 오도록 반드시 `$\\lim\\limits_{{x \\to a}}$` 형태로 작성할 것. (절대로 \\limits를 생략하지 말 것)
-                    2. [보기]가 있는 문제는 ㄱ, ㄴ, ㄷ 각 항목을 문장 중간에 줄바꿈하지 말고 한 줄로 깔끔하게 작성할 것.
+                    ⚠️ [수식 및 레이아웃 규칙]
+                    1. 모든 수식은 반드시 $ 기호로 감싸고, $ 기호 안에는 순수 수식 기호만 넣어 (한글 절대 포함 금지).
+                       (⭕ `$\\lim\\limits_{{x \\to a}} f(x)$ 의 값이`, ❌ `$\\lim f(x)의 값이$`)
+                    2. 극한 기호는 화살표가 lim 바로 밑에 오도록 반드시 `\\lim\\limits_{{x \\to a}}` 로 작성해.
+                    3. [보기]의 각 항목(ㄱ, ㄴ, ㄷ)은 문장 중간에 끊지 말고 한 줄로 깔끔하게 이어서 작성해.
                        (예: [보기][br]ㄱ. $\\lim\\limits_{{x \\to a}} f(x)$와 $\\lim\\limits_{{x \\to a}} g(x)$의 값이 모두 존재하면 ...[br]ㄴ. ...)
-                    3. 수식 기호($) 안에 한글 금지 (예: `$x=2$` 이므로)
-                    4. 줄바꿈은 \\n 대신 [br] 사용
-                    5. 백슬래시는 두 개(\\\\)로 이스케이프하여 출력
-                    6. ```json 없이 순수 JSON만 출력
+                    4. 줄바꿈은 \\n 대신 [br] 사용.
+                    5. ```json 없이 순수 JSON만 출력.
                     """
                     
                     response = model.generate_content(prompt)
@@ -371,13 +375,11 @@ with tab2:
                     if res_text.startswith("```json"): res_text = res_text[7:-3].strip()
                     elif res_text.startswith("```"): res_text = res_text[3:-3].strip()
                         
-                    # ★ JSON 제어문자(\t, \n, \f 등)로 수학 백슬래시가 증발하는 것을 방지하는 필터
-                    fixed_json = re.sub(r'(?<!\\)\\(?=[a-zA-Z{}])', r'\\\\', res_text)
                     try:
-                        parsed = json.loads(fixed_json)
+                        parsed = json.loads(res_text)
                     except json.JSONDecodeError:
-                        safe_res_text = res_text.replace('\\', '\\\\').replace('\\\\"', '\\"')
-                        parsed = json.loads(safe_res_text)
+                        safe_text = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', res_text)
+                        parsed = json.loads(safe_text)
                         
                     problems = parsed.get("problems", [])
                     if problems:
