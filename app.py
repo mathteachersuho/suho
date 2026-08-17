@@ -6,6 +6,7 @@ import re
 import os
 import time
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
 
 # 페이지 기본 설정
@@ -116,11 +117,9 @@ def _md_table_to_html(lines):
     if not rows:
         return ""
     
-    # 빈칸이 존재하는지 확인 (전개도 표인지 일반 데이터 표인지 자동 판별)
     has_empty = any(_clean_cell(c) == '' for row in rows for c in row)
     
     if has_empty:
-        # ★ 전개도 스타일: 빈칸은 투명, 면은 정사각형 굵은 테두리
         html = '<div style="margin: 12px 0; overflow-x: auto;"><table style="border-collapse: collapse; margin: 0 auto; text-align: center; font-size: 14.5px;">'
         for row in rows:
             html += '<tr>'
@@ -134,7 +133,6 @@ def _md_table_to_html(lines):
         html += '</table></div>'
         return html
     else:
-        # 일반 데이터 표 스타일
         html = '<div style="margin: 10px 0; overflow-x: auto;"><table style="border-collapse: collapse; margin: 0 auto; text-align: center; font-size: 13.5px; border: 1px solid #777;">'
         for i, row in enumerate(rows):
             html += '<tr>'
@@ -152,14 +150,10 @@ def format_math(text):
         return ""
     text = str(text)
     
-    # 1. 줄바꿈 기호 변환
     text = text.replace('[br]', '\n\n')
-    
-    # 2. 지문 속 단순 알파벳/단어에 붙은 불필요한 $ 기호 자동 정제
     text = re.sub(r'\$([a-zA-Z0-9])\$\s*(모둠|반|팀|그룹|등|점|명|개|권|초|분|시간|원|cm|m)', r'\1 \2', text)
     text = re.sub(r'\$([a-zA-Z])\$', r'\1', text)
     
-    # 3. LaTeX \begin{tabular} 표를 깔끔한 HTML 표로 변환
     def replace_tabular(match):
         content = match.group(1)
         content = content.replace(r'\hline', '')
@@ -181,7 +175,6 @@ def format_math(text):
     pattern_tab = r'\\begin\{tabular\}(?:\[[^\]]*\])?(?:\{[^\}]*\})([\s\S]*?)\\end\{tabular\}'
     text = re.sub(pattern_tab, replace_tabular, text)
     
-    # 4. 마크다운 표(|...|)를 HTML 표로 변환 (전개도 자동 분기)
     lines = text.split('\n')
     new_lines = []
     table_lines = []
@@ -201,25 +194,17 @@ def format_math(text):
         new_lines.append(_md_table_to_html(table_lines))
     text = '\n'.join(new_lines)
 
-    # 5. Mathpix $$...$$ 블록 정규화
     text = re.sub(r'\$\$(.*?)\$\$', r'$\1$', text, flags=re.DOTALL)
-    
-    # 6. 빈칸 문자 및 기호 박스화 자동 변환
     text = re.sub(r'[□■]\s*\(([가-힣a-zA-Z0-9]+)\)', r'$\boxed{\text{ (\1) }}$', text)
     text = re.sub(r'\[\s*\(([가-힣a-zA-Z0-9]+)\)\s*\]', r'$\boxed{\text{ (\1) }}$', text)
-    
-    # 7. 명령어 앞 중복 백슬래시 정리
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
-    
-    # 8. 도형 및 극한 기호 정규화
     text = re.sub(r'\\mathrm\{([A-Z]+)\}', r'\1', text)
     text = re.sub(r'lim_?\{?xtoa\}?', r'\\lim\\limits_{x \\to a} ', text)
     text = re.sub(r'lim_?\{?x\s*to\s*([a-zA-Z0-9]+)\}?', r'\\lim\\limits_{x \\to \1} ', text)
     text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
     text = re.sub(r'\\lim(?![a-zA-Z])(?!\s*\\limits)', r'\\lim\\limits', text)
     text = re.sub(r'(\\lim\\limits\s*)+', r'\\lim\\limits ', text)
-    
     text = re.sub(r'\bfrac([0-9])([0-9])\b', r'\\frac{\1}{\2}', text)
     text = re.sub(r'\bfracf\(x\)g\(x\)', r'\\frac{f(x)}{g(x)}', text)
     text = re.sub(r'\bfracg\(x\)f\(x\)', r'\\frac{g(x)}{f(x)}', text)
@@ -229,7 +214,6 @@ def format_math(text):
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     
-    # 9. $ 기호 없이 노출된 수식 자동 감싸기 (HTML 태그 보호)
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
@@ -249,7 +233,6 @@ def format_math(text):
     text = re.sub(r'\$\s*\$', '', text)
     text = re.sub(r'\${3,}', '$$', text)
     
-    # 10. 카드 UI 변환
     def render_cards(match):
         items = [x.strip() for x in match.group(1).split(',') if x.strip()]
         card_html = '<div style="display:inline-flex; gap:8px; margin:8px 0; align-items:center; vertical-align:middle;">'
@@ -259,7 +242,6 @@ def format_math(text):
         return card_html
     text = re.sub(r'\[카드\s*:\s*([^\]]+)\]', render_cards, text)
     
-    # 11. 수직선/겨냥도/그래프/도형 SVG 다이어그램 흰색 카드 박스 감싸기
     def wrap_svg_card(match):
         svg_content = match.group(0)
         return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 10px 14px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
@@ -268,7 +250,6 @@ def format_math(text):
     return text
 
 def parse_date_group(date_str):
-    """모든 날짜 형식을 'M월 D일'로 변환"""
     if not date_str:
         return "9999-99-99", "날짜 미상"
     date_str = str(date_str).strip()
@@ -304,31 +285,55 @@ def parse_date_group(date_str):
 
     return date_str, date_str
 
-def parse_tag_problems(res_text):
-    p1_q = re.search(r'\[(?:문제\s*1|1번\s*문제)\]([\s\S]*?)(?=\[(?:정답\s*1|1번\s*정답)\]|$)', res_text)
-    p1_a = re.search(r'\[(?:정답\s*1|1번\s*정답)\]([\s\S]*?)(?=\[(?:풀이\s*1|1번\s*풀이)\]|$)', res_text)
-    p1_s = re.search(r'\[(?:풀이\s*1|1번\s*풀이)\]([\s\S]*?)(?=\[(?:문제\s*2|2번\s*문제)\]|$)', res_text)
+def parse_single_problem(res_text, prob_num):
+    q_match = re.search(r'\[문제\]([\s\S]*?)(?=\[정답\]|$)', res_text)
+    a_match = re.search(r'\[정답\]([\s\S]*?)(?=\[풀이\]|$)', res_text)
+    s_match = re.search(r'\[풀이\]([\s\S]*?)$', res_text)
     
-    p2_q = re.search(r'\[(?:문제\s*2|2번\s*문제)\]([\s\S]*?)(?=\[(?:정답\s*2|2번\s*정답)\]|$)', res_text)
-    p2_a = re.search(r'\[(?:정답\s*2|2번\s*정답)\]([\s\S]*?)(?=\[(?:풀이\s*2|2번\s*풀이)\]|$)', res_text)
-    p2_s = re.search(r'\[(?:풀이\s*2|2번\s*풀이)\]([\s\S]*?)$', res_text)
+    return {
+        "problem_num": prob_num,
+        "question": q_match.group(1).strip() if q_match else res_text.strip(),
+        "answer": a_match.group(1).strip() if a_match else "",
+        "solution": s_match.group(1).strip() if s_match else ""
+    }
+
+# ==========================================
+# ★ 병렬 단일 문제 생성기 (초고속 스레드 처리)
+# ==========================================
+def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instruction, api_key):
+    fast_model_name = get_fastest_model_name(api_key)
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(fast_model_name)
     
-    if p1_q and p2_q:
-        return [
-            {
-                "problem_num": 1,
-                "question": p1_q.group(1).strip(),
-                "answer": p1_a.group(1).strip() if p1_a else "",
-                "solution": p1_s.group(1).strip() if p1_s else ""
-            },
-            {
-                "problem_num": 2,
-                "question": p2_q.group(1).strip(),
-                "answer": p2_a.group(1).strip() if p2_a else "",
-                "solution": p2_s.group(1).strip() if p2_s else ""
-            }
-        ]
-    return None
+    prompt = f"""
+    너는 대한민국 수학 출제 위원이야. 원본 문제를 바탕으로 [{prob_type}]를 1개만 제작하라.
+
+    [원본 문제]
+    {ocr_text}
+
+    [출제 원칙]
+    1. **{prob_type} 제작:** {'조건과 숫자만 바꾼 기본 다지기 문제' if prob_num==1 else '같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제'}
+    2. **도형/그래프/수직선/다각형 SVG 초경량 작성 규칙 (속도 최우선):**
+       - 사각형/삼각형/다각형/대각선/수선 도형인 경우, **반드시 6~8줄 이내의 초간단 인라인 SVG(`<svg width="220" height="130" viewBox="0 0 220 130">...</svg>`)로 작성**하라.
+       - 외곽선: `<polygon points="x1,y1 x2,y2 x3,y3 x4,y4" fill="#f8f9fa" stroke="#111" stroke-width="1.5"/>`
+       - 대각선/수선: 점선(`<line stroke-dasharray="3,3" stroke="#555"/>`), 직각표시 사각형(`<polyline points="..." fill="none" stroke="#222"/>`)
+       - 문자/숫자 레이블: `<text x="..." y="..." font-size="12" font-weight="bold" fill="#000000">글자</text>`
+    3. **정육면체 겨냥도/전개도:**
+       - 3D 겨냥도인 경우 3면(윗면/왼쪽/오른쪽) 큐브 SVG로 작성하라.
+       - 펼쳐진 전개도인 경우 3x4 마크다운 격자 표 블록으로 작성하라.
+    4. **수식 표기:** 단순 문자(A, B, C, 점 A 등)에는 $를 쓰지 말고, 분수식 등 계산식만 `$수식$`으로 작성하라.
+
+    [출력 양식]
+    [문제]
+    (문제 지문 및 SVG/표)
+    [정답]
+    (정답)
+    [풀이]
+    ({solution_instruction})
+    """
+    
+    res = model.generate_content(prompt)
+    return parse_single_problem(res.text.strip(), prob_num)
 
 # ==========================================
 # ★ A4 규격 인쇄용 HTML 생성기 (상하 50:50 균등 분할)
@@ -791,83 +796,20 @@ with tab2:
         include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("Gemini가 단원 범위, 겨냥도/전개도 조건에 맞춰 문제를 출제하고 있습니다..."):
+            with st.spinner("AI가 1번·2번 문제를 동시에 병렬 생성하고 있습니다 (약 3~5초 소요)..."):
                 try:
-                    fast_model_name = get_fastest_model_name(gemini_api_key)
-                    model = genai.GenerativeModel(fast_model_name)
+                    solution_instruction = "단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
+                    # ★ 1번 문제와 2번 문제를 2개의 스레드로 동시 병렬 요청 (시간 50% 단축)
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        future_p1 = executor.submit(generate_one_problem_async, "1번 기본 다지기 문제", 1, edited_text, solution_instruction, gemini_api_key)
+                        future_p2 = executor.submit(generate_one_problem_async, "2번 실력 키우기 문제", 2, edited_text, solution_instruction, gemini_api_key)
+                        
+                        p1_res = future_p1.result()
+                        p2_res = future_p2.result()
                     
-                    # ★ 3D 겨냥도 SVG + 전개도 표 규칙 강화 프롬프트
-                    prompt = f"""
-                    너는 대한민국 고등학교 및 중학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
-                    아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
-
-                    [원본 문제]
-                    {edited_text}
-
-                    [출제 원칙 및 교육과정 준수]
-                    1. **단원 범위 준수 (선행 개념 절대 금지):**
-                       - 원본 문제 단원 범위를 절대 벗어나지 마라.
-                    2. **정육면체 겨냥도 문제 작성 규칙 (★ 3면이 보이는 3D 큐브 SVG ★):**
-                       - 원본 문제가 3면이 보이는 정육면체 입체도형(겨냥도) 문제인 경우, **억지로 전개도로 바꾸지 말고 아래와 같이 1초 만에 렌더링되는 10줄짜리 3D 큐브 인라인 SVG(`<svg width="150" height="120" viewBox="0 0 150 120">...</svg>`)로 작성하라:**
-                         * 윗면: `<polygon points="75,15 120,35 75,55 30,35" fill="#f8f9fa" stroke="#111" stroke-width="1.5"/>` 및 글자/숫자 `<text x="75" y="38" font-size="12" font-weight="bold" fill="#000" text-anchor="middle">윗면값</text>`
-                         * 왼쪽면: `<polygon points="30,35 75,55 75,105 30,85" fill="#ffffff" stroke="#111" stroke-width="1.5"/>` 및 글자/숫자 `<text x="52" y="75" font-size="12" font-weight="bold" fill="#000" text-anchor="middle">왼쪽값</text>`
-                         * 오른쪽면: `<polygon points="75,55 120,35 120,85 75,105" fill="#f1f3f5" stroke="#111" stroke-width="1.5"/>` 및 글자/숫자 `<text x="98" y="75" font-size="12" font-weight="bold" fill="#000" text-anchor="middle">오른쪽값</text>`
-                    3. **정육면체 전개도 문제 작성 규칙 (초고속 격자 표 블록):**
-                       - 원본 문제가 펼쳐진 전개도 문제인 경우, 3x4 또는 4x3 마크다운 격자 표 블록(빈칸은 공백, 면에는 문자/숫자)으로 작성하라:
-                         |   | 0.25 |   |   |
-                         |---|---|---|---|
-                         | a | $-\\frac{{5}}{{2}}$ | b | -0.8 |
-                         |   | c |   |   |
-                    4. **수직선 위 정사각형 회전 문제:**
-                       - 수직선 위에 놓인 정사각형(ABCD) 회전 문제인 경우, 수직선과 마름모꼴 사각형이 결합된 가벼운 SVG(`<svg width="240" height="120">...</svg>`)로 작성하라.
-                    5. **수직선 문제 작성 규칙:**
-                       - 수직선 위의 점이 분수/소수 위치에 있는 경우 작은 등분 눈금선을 넣어 2등분/3등분임을 표시하는 간단한 SVG로 작성하라.
-                    6. **꺾은선그래프 / 막대그래프 규칙:**
-                       - 세로축(y축)에 도수 눈금 숫자와 단위를 `<text>`로 표시하고 데이터 라인/막대로 가볍게 작성하라.
-                    7. **토너먼트 / 대진표 문제:**
-                       - 대진표인 경우 심플한 SVG 트리로 작성할 것.
-                    8. **표(Table) 문제 작성 규칙:**
-                       - 일반 표(도수분포표 등)가 필요한 경우 마크다운 표 형식으로 작성하고 셀 내부에 불필요한 $를 쓰지 마라.
-                    9. **빈칸 채우기 및 증명 문제:**
-                       - 빈칸은 반드시 `$\\boxed{{\\text{{ (가) }}}}$`, `$\\boxed{{\\text{{ (나) }}}}$` 형태로 작성할 것.
-                    10. **문제 구성:**
-                       - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
-                       - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
-
-                    [수식 및 텍스트 작성 규칙]
-                    1. 분수식, 극한식, 복잡한 계산식만 `$수식$`으로 감싸라.
-                    2. **단순 문자(A, B, C, D, 면 A, A 모둠, 보기 ㄱ, ㄴ, ㄷ, 일반 숫자 등)에는 절대로 $ 기호를 붙이지 말고 순수 텍스트로 작성하라.**
-                    3. 모든 SVG 글자 색상은 반드시 `fill="#000000"`으로 지정하라.
-                    4. 아래 출력 양식을 정확히 지켜서 출력할 것.
-
-                    [출력 양식]
-                    [문제 1]
-                    (1번 문제 본문)
-                    [정답 1]
-                    (1번 정답)
-                    [풀이 1]
-                    ({solution_instruction})
-
-                    [문제 2]
-                    (2번 문제 본문)
-                    [정답 2]
-                    (2번 정답)
-                    [풀이 2]
-                    ({solution_instruction})
-                    """
-                    
-                    response = model.generate_content(prompt)
-                    res_text = response.text.strip()
-                    
-                    problems = parse_tag_problems(res_text)
-                    
-                    if problems:
-                        st.session_state.similar_problems = problems
-                        st.success(f"⚡ 생성 완료! (사용된 모델: {fast_model_name})")
-                    else:
-                        st.error("문제 생성 양식 분석에 실패했습니다. 다시 생성 버튼을 눌러주세요.")
+                    st.session_state.similar_problems = [p1_res, p2_res]
+                    st.success("⚡ 초고속 병렬 생성 완료!")
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
 
