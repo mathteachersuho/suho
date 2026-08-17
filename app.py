@@ -120,7 +120,7 @@ def format_math(text):
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
-        if i % 2 == 0:
+        if i % 2 == 0:  # $ 기호 바깥 영역
             def replacer(match):
                 chunk = match.group(1).rstrip()
                 if not chunk:
@@ -209,10 +209,10 @@ def make_printable_html(title, items):
     for idx, p in enumerate(items, start=1):
         q1 = format_math(p.get("q1", "")).replace('\n', '<br>')
         q2 = format_math(p.get("q2", "")).replace('\n', '<br>')
-        a1 = format_math(p.get("a1", "")).replace('\n', '<br>')
-        s1 = format_math(p.get("s1", "")).replace('\n', '<br>')
-        a2 = format_math(p.get("a2", "")).replace('\n', '<br>')
-        s2 = format_math(p.get("s2", "")).replace('\n', '<br>')
+        a1 = format_math(p.get("a1", ""))
+        s1 = format_math(p.get("s1", ""))
+        a2 = format_math(p.get("a2", ""))
+        s2 = format_math(p.get("s2", ""))
         
         img_tag = ""
         if p.get("image_b64"):
@@ -220,7 +220,6 @@ def make_printable_html(title, items):
 
         set_title = f"{title} (과제 세트 {idx})" if len(items) > 1 else title
 
-        # ★ 상하 50:50 균등 분할 레이아웃 적용
         html_pages += f"""
         <div class="a4-page">
             <div class="header-box">
@@ -287,7 +286,6 @@ def make_printable_html(title, items):
             margin: 0 auto;
         }}
         
-        /* ★ A4 1장에 1세트 완전 고정 (272mm) */
         .a4-page {{
             page-break-after: always;
             break-after: page;
@@ -311,7 +309,6 @@ def make_printable_html(title, items):
         .header-title {{ font-size: 18px; font-weight: bold; margin-bottom: 3px; }}
         .name-box {{ text-align: right; font-size: 13px; font-weight: 500; color: #444; }}
         
-        /* ★ 문제 영역: 50:50 균등 Flex 배분 */
         .problem-container {{
             flex: 1 1 0;
             display: flex;
@@ -340,7 +337,6 @@ def make_printable_html(title, items):
             color: #111;
         }}
         
-        /* ★ 풀이 공간: 남은 여백을 100% 채우는 반응형 공간 */
         .work-space {{
             flex: 1 1 0;
             min-height: 80px;
@@ -496,7 +492,7 @@ st.caption(f"현재 접속 권한: **{'선생님 (모든 반 관리)' if current
 tab1, tab2 = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기"])
 
 # ------------------------------------------
-# [탭 1] 학생 게시판 (체크리스트 선택 인쇄 지원)
+# [탭 1] 학생 게시판 (인쇄 메뉴 기본 숨김 접이식 적용)
 # ------------------------------------------
 with tab1:
     col_view, col_ref = st.columns([3, 1])
@@ -531,54 +527,57 @@ with tab1:
             
         for d_key, group in grouped_by_date.items():
             with st.expander(f"📅 {group['label']} 과제 ({len(group['items'])}개 세트)", expanded=False):
-                st.markdown(f"#### 🖨️ {group['label']} 과제 인쇄 설정")
-                set_names = [f"과제 세트 {i}" for i in range(1, len(group["items"]) + 1)]
                 
-                selected_set_names = st.multiselect(
-                    "출력할 과제 세트를 선택하세요:",
-                    options=set_names,
-                    default=set_names,
-                    key=f"multisel_{d_key}"
-                )
-                
-                selected_indices = [int(s.replace("과제 세트 ", "")) - 1 for s in selected_set_names]
-                selected_items = [group["items"][i] for i in selected_indices if i < len(group["items"])]
-                
-                if selected_items:
-                    print_html_content = make_printable_html(f"[{view_class}] {group['label']} 수학 학습지", selected_items)
+                # ★ 인쇄 설정 영역을 접이식 메뉴(기본 닫힘)로 숨김 처리
+                with st.expander("🖨️ 이 날짜 시험지 인쇄 및 HWP 복사 설정", expanded=False):
+                    set_names = [f"과제 세트 {i}" for i in range(1, len(group["items"]) + 1)]
                     
-                    col_pr1, col_pr2 = st.columns([1, 1])
-                    with col_pr1:
-                        st.download_button(
-                            label=f"📥 선택한 {len(selected_items)}개 세트 인쇄용 파일 열기",
-                            data=print_html_content,
-                            file_name=f"{view_class}_{group['label']}_수학_학습지.html",
-                            mime="text/html",
-                            key=f"dl_btn_{d_key}",
-                            type="primary"
-                        )
-                        st.caption("💡 다운로드된 파일을 클릭하여 열면 바로 인쇄 창이 뜹니다.")
+                    selected_set_names = st.multiselect(
+                        "출력할 과제 세트를 선택하세요:",
+                        options=set_names,
+                        default=set_names,
+                        key=f"multisel_{d_key}"
+                    )
+                    
+                    selected_indices = [int(s.replace("과제 세트 ", "")) - 1 for s in selected_set_names]
+                    selected_items = [group["items"][i] for i in selected_indices if i < len(group["items"])]
+                    
+                    if selected_items:
+                        print_html_content = make_printable_html(f"[{view_class}] {group['label']} 수학 학습지", selected_items)
                         
-                    with col_pr2:
-                        with st.expander("📋 선택한 과제 한글(HWP) 복사용"):
-                            hwp_bundle = f"[{view_class} - {group['label']} 수학 학습지]\n\n"
-                            for s_idx, sp in enumerate(selected_items, start=1):
-                                q1_hwp = format_math(sp.get('q1',''))
-                                q2_hwp = format_math(sp.get('q2',''))
-                                hwp_bundle += f"■ 과제 세트 {s_idx}\n[문제 1]\n{q1_hwp}\n\n(풀이 공간)\n\n\n[문제 2]\n{q2_hwp}\n\n(풀이 공간)\n\n\n"
-                            hwp_bundle += "--------------------------------------------------\n[정답 및 풀이]\n"
-                            for s_idx, sp in enumerate(selected_items, start=1):
-                                a1_hwp = format_math(sp.get('a1',''))
-                                s1_hwp = format_math(sp.get('s1',''))
-                                a2_hwp = format_math(sp.get('a2',''))
-                                s2_hwp = format_math(sp.get('s2',''))
-                                hwp_bundle += f"■ 과제 세트 {s_idx}\n1번 정답: {a1_hwp}\n1번 풀이: {s1_hwp}\n2번 정답: {a2_hwp}\n2번 풀이: {s2_hwp}\n\n"
-                            st.text_area("선택 묶음 복사 텍스트", hwp_bundle, height=130, key=f"bundle_hwp_{d_key}")
-                else:
-                    st.warning("인쇄할 과제 세트를 1개 이상 선택해 주세요.")
+                        col_pr1, col_pr2 = st.columns([1, 1])
+                        with col_pr1:
+                            st.download_button(
+                                label=f"📥 선택한 {len(selected_items)}개 세트 인쇄용 파일 열기",
+                                data=print_html_content,
+                                file_name=f"{view_class}_{group['label']}_수학_학습지.html",
+                                mime="text/html",
+                                key=f"dl_btn_{d_key}",
+                                type="primary"
+                            )
+                            st.caption("💡 다운로드된 파일을 클릭하여 열면 바로 인쇄 창이 뜹니다.")
+                            
+                        with col_pr2:
+                            with st.expander("📋 선택한 과제 한글(HWP) 복사용"):
+                                hwp_bundle = f"[{view_class} - {group['label']} 수학 학습지]\n\n"
+                                for s_idx, sp in enumerate(selected_items, start=1):
+                                    q1_hwp = format_math(sp.get('q1',''))
+                                    q2_hwp = format_math(sp.get('q2',''))
+                                    hwp_bundle += f"■ 과제 세트 {s_idx}\n[문제 1]\n{q1_hwp}\n\n(풀이 공간)\n\n\n[문제 2]\n{q2_hwp}\n\n(풀이 공간)\n\n\n"
+                                hwp_bundle += "--------------------------------------------------\n[정답 및 풀이]\n"
+                                for s_idx, sp in enumerate(selected_items, start=1):
+                                    a1_hwp = format_math(sp.get('a1',''))
+                                    s1_hwp = format_math(sp.get('s1',''))
+                                    a2_hwp = format_math(sp.get('a2',''))
+                                    s2_hwp = format_math(sp.get('s2',''))
+                                    hwp_bundle += f"■ 과제 세트 {s_idx}\n1번 정답: {a1_hwp}\n1번 풀이: {s1_hwp}\n2번 정답: {a2_hwp}\n2번 풀이: {s2_hwp}\n\n"
+                                st.text_area("선택 묶음 복사 텍스트", hwp_bundle, height=130, key=f"bundle_hwp_{d_key}")
+                    else:
+                        st.warning("인쇄할 과제 세트를 1개 이상 선택해 주세요.")
 
                 st.divider()
 
+                # 본문 과제 상세 내용 (날짜를 누르면 곧바로 문제가 나타남)
                 for item_idx, p in enumerate(group["items"], start=1):
                     with st.container():
                         st.markdown(f"##### 📌 과제 세트 {item_idx}")
@@ -607,15 +606,6 @@ with tab1:
                             st.markdown(f"**정답:** {a2_safe}")
                             if s2_safe:
                                 st.markdown(f"**풀이:**\n\n{s2_safe}")
-                        
-                        single_html = make_printable_html(f"[{view_class}] {group['label']} (과제 세트 {item_idx})", [p])
-                        st.download_button(
-                            label=f"📥 세트 {item_idx}만 인쇄용 파일 열기",
-                            data=single_html,
-                            file_name=f"{view_class}_{group['label']}_세트{item_idx}.html",
-                            mime="text/html",
-                            key=f"dl_single_{p.get('id')}"
-                        )
                         
                         if current_role == "admin":
                             if st.button("🗑️ 이 과제 시트에서 삭제하기", key=f"del_{p.get('id')}"):
