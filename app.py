@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 복원 및 렌더링 전용 함수 (빨간 글씨 원천 차단)
+# ★ 수식 복원 및 렌더링 전용 엔진 (과거 데이터 완벽 호환)
 # ==========================================
 def format_math(text):
     if not text:
@@ -93,26 +93,31 @@ def format_math(text):
     # 1. 줄바꿈 처리
     text = text.replace('[br]', '\n\n')
     
-    # 2. 변질된 특수 제어문자 및 손상된 단어 자동 복원
+    # 2. 이중 백슬래시(\\)를 단일 백슬래시(\)로 통일
+    text = re.sub(r'\\\\', r'\\', text)
+    text = re.sub(r'\\\\', r'\\', text)
+    
+    # 3. 잘못 쪼개진 괄호 및 제어문자 보정
+    text = text.replace(r'\{', '{').replace(r'\}', '}')
     text = text.replace('\x0c', r'\f').replace('♀rac', r'\frac').replace('♀', r'\f')
-    text = text.replace('\x08', r'\b').replace('\x07', r'\a').replace('\x0b', r'\v')
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
     
-    # 3. 중복된 \lim 제거 및 표준화
+    # 4. 중복된 lim 정리
     text = re.sub(r'(\\lim(\s*\\limits)?\s*)+', r'\\lim\\limits ', text)
     
-    # 4. $ 기호가 빠진 TeX 수식 구역을 자동으로 감싸기
+    # 5. $ 기호 없이 노출된 과거 수식 덩어리를 $...$로 자동 래핑
     parts = text.split('$')
     fixed_parts = []
     for i, part in enumerate(parts):
         if i % 2 == 0:  # $ 기호 바깥쪽 영역
-            # \lim, \frac 등이 $ 바깥에 노출되어 있으면 자동 감싸기
-            part = re.sub(r'(\\[a-zA-Z]+(?:[\s\S]*?[^\s가-힣])?)(\s+[가-힣]|$)', r'$\1$\2', part)
+            # \lim, \frac, \sqrt 등이 $ 없이 노출된 경우 감싸기
+            part = re.sub(r'(\\(?:lim|frac|sqrt|left|right|to|circ)[^\s가-힣]*(?:\s+[^\s가-힣]+)*)', r'$\1$', part)
         fixed_parts.append(part)
     text = '$'.join(fixed_parts)
     text = re.sub(r'\${3,}', '$$', text)
+    text = text.replace('$$', '$')  # 단일 inline $로 정리
     
     return text
 
@@ -154,7 +159,7 @@ def parse_date_group(date_str):
     return date_str, date_str
 
 def parse_tag_problems(res_text):
-    """태그 기반 파서 (유연한 정규식 적용)"""
+    """태그 기반 파서"""
     p1_q = re.search(r'\[(?:문제\s*1|1번\s*문제)\]([\s\S]*?)(?=\[(?:정답\s*1|1번\s*정답)\]|$)', res_text)
     p1_a = re.search(r'\[(?:정답\s*1|1번\s*정답)\]([\s\S]*?)(?=\[(?:풀이\s*1|1번\s*풀이)\]|$)', res_text)
     p1_s = re.search(r'\[(?:풀이\s*1|1번\s*풀이)\]([\s\S]*?)(?=\[(?:문제\s*2|2번\s*문제)\]|$)', res_text)
