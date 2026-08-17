@@ -1,9 +1,7 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import requests
 import json
 import base64
-import urllib.parse
 import re
 import os
 import time
@@ -185,114 +183,131 @@ def parse_tag_problems(res_text):
     return None
 
 # ==========================================
-# ★ A4 규격 인쇄 HTML 및 투명 버튼 생성기
+# ★ A4 규격 인쇄용 완벽한 HTML 생성 함수
 # ==========================================
-def render_print_button(button_label, title, items):
-    if not items:
-        return
-    
+def make_printable_html(title, items):
     html_items = ""
     ans_items = ""
     
     for idx, p in enumerate(items, start=1):
-        q1_txt = format_math(p.get("q1", "")).replace('\n', '<br>')
-        q2_txt = format_math(p.get("q2", "")).replace('\n', '<br>')
-        a1_txt = format_math(p.get("a1", "")).replace('\n', '<br>')
-        s1_txt = format_math(p.get("s1", "")).replace('\n', '<br>')
-        a2_txt = format_math(p.get("a2", "")).replace('\n', '<br>')
-        s2_txt = format_math(p.get("s2", "")).replace('\n', '<br>')
+        q1 = str(p.get("q1", "")).replace('\n', '<br>')
+        q2 = str(p.get("q2", "")).replace('\n', '<br>')
+        a1 = str(p.get("a1", "")).replace('\n', '<br>')
+        s1 = str(p.get("s1", "")).replace('\n', '<br>')
+        a2 = str(p.get("a2", "")).replace('\n', '<br>')
+        s2 = str(p.get("s2", "")).replace('\n', '<br>')
         
         img_tag = ""
         if p.get("image_b64"):
-            img_tag = f'<div style="text-align:center; margin-bottom:12px;"><img src="data:image/jpeg;base64,{p["image_b64"]}" style="max-height:160px; max-width:100%; border:1px solid #ddd; border-radius:4px;"></div>'
+            img_tag = f'<div style="text-align:center; margin: 15px 0;"><img src="data:image/jpeg;base64,{p["image_b64"]}" style="max-height:160px; max-width:90%; border:1px solid #ddd; border-radius:4px;"></div>'
 
-        set_header = f'<h3 style="margin-top:20px; color:#222; border-bottom:1px solid #888; padding-bottom:4px;">📌 과제 세트 {idx}</h3>' if len(items) > 1 else ''
+        set_header = f'<h3 style="margin-top:25px; color:#222; border-bottom:2px solid #333; padding-bottom:5px;">📌 과제 세트 {idx}</h3>' if len(items) > 1 else ''
         
         html_items += f"""
         {set_header}
         {img_tag}
         <div style="margin-bottom: 25px;">
-            <div style="font-weight:bold; margin-bottom:6px; font-size:15px;">[문제 {idx*2 - 1}] 기본 다지기</div>
-            <div style="line-height:1.7; font-size:14px;">{q1_txt}</div>
-            <div style="height: 120px; border-bottom: 1px dashed #bbb; margin-top: 10px;"></div>
+            <div style="font-weight:bold; margin-bottom:8px; font-size:15px; color:#000;">[문제 {idx*2 - 1}] 기본 다지기</div>
+            <div style="line-height:1.8; font-size:14.5px; color:#111;">{q1}</div>
+            <div style="height: 120px; border-bottom: 1px dashed #aaa; margin-top: 15px;"></div>
         </div>
-        <div style="margin-bottom: 30px;">
-            <div style="font-weight:bold; margin-bottom:6px; font-size:15px;">[문제 {idx*2}] 실력 키우기</div>
-            <div style="line-height:1.7; font-size:14px;">{q2_txt}</div>
-            <div style="height: 120px; border-bottom: 1px dashed #bbb; margin-top: 10px;"></div>
+        <div style="margin-bottom: 35px;">
+            <div style="font-weight:bold; margin-bottom:8px; font-size:15px; color:#000;">[문제 {idx*2}] 실력 키우기</div>
+            <div style="line-height:1.8; font-size:14.5px; color:#111;">{q2}</div>
+            <div style="height: 120px; border-bottom: 1px dashed #aaa; margin-top: 15px;"></div>
         </div>
         """
         
         ans_items += f"""
-        <div style="margin-bottom: 14px; font-size:13px; line-height:1.6;">
-            <strong>[문제 {idx*2 - 1}] 정답:</strong> {a1_txt}<br>
-            {f'<strong>풀이:</strong> {s1_txt}<br>' if s1_txt else ''}
-            <strong>[문제 {idx*2}] 정답:</strong> {a2_txt}<br>
-            {f'<strong>풀이:</strong> {s2_txt}' if s2_txt else ''}
+        <div style="margin-bottom: 18px; font-size:13.5px; line-height:1.7; border-bottom: 1px solid #eee; padding-bottom: 10px;">
+            <strong>[문제 {idx*2 - 1}] 정답:</strong> {a1}<br>
+            {f'<strong>풀이:</strong> {s1}<br>' if s1 else ''}
+            <div style="margin-top:6px;"></div>
+            <strong>[문제 {idx*2}] 정답:</strong> {a2}<br>
+            {f'<strong>풀이:</strong> {s2}' if s2 else ''}
         </div>
         """
 
-    full_print_html = f"""<!DOCTYPE html>
-<html>
+    full_html = f"""<!DOCTYPE html>
+<html lang="ko">
 <head>
     <meta charset="utf-8">
     <title>{title}</title>
     <script>
         window.MathJax = {{
-            tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']] }}
+            tex: {{
+                inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']]
+            }},
+            svg: {{ fontCache: 'global' }}
         }};
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
-        @page {{ size: A4 portrait; margin: 15mm; }}
-        body {{ font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; color: #111; background: #fff; margin: 0; padding: 10px; }}
-        .header-box {{ text-align: center; border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 20px; }}
-        .header-title {{ font-size: 20px; font-weight: bold; }}
-        .name-box {{ text-align: right; font-size: 13px; margin-top: 5px; }}
+        @page {{ size: A4 portrait; margin: 18mm 15mm; }}
+        body {{ 
+            font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', '맑은 고딕', sans-serif; 
+            color: #111; 
+            background: #ffffff; 
+            margin: 0; 
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }}
+        .header-box {{ 
+            text-align: center; 
+            border-bottom: 2px solid #000; 
+            padding-bottom: 12px; 
+            margin-bottom: 25px; 
+        }}
+        .header-title {{ font-size: 22px; font-weight: bold; margin-bottom: 8px; }}
+        .name-box {{ text-align: right; font-size: 14px; font-weight: 500; color: #444; }}
         .page-break {{ page-break-before: always; }}
-        @media print {{ body {{ padding: 0; }} }}
+        .print-btn-bar {{
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 12px;
+            background: #f0f4f8;
+            border-radius: 8px;
+        }}
+        .btn {{
+            background: #1976d2;
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            font-size: 15px;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+        }}
+        .btn:hover {{ background: #115293; }}
+        @media print {{
+            .print-btn-bar {{ display: none !important; }}
+            body {{ padding: 0; max-width: 100%; }}
+        }}
     </style>
 </head>
-<body onload="setTimeout(function(){{ window.print(); }}, 800);">
+<body>
+    <div class="print-btn-bar">
+        <button class="btn" onclick="window.print()">🖨️ 이 시험지 지금 바로 인쇄하기 (A4)</button>
+        <div style="font-size:12px; color:#666; margin-top:6px;">※ 수식이 모두 로드된 후 인쇄 버튼을 누르시면 깨끗하게 출력됩니다.</div>
+    </div>
+    
     <div class="header-box">
         <div class="header-title">📐 {title}</div>
         <div class="name-box">학년/반: ______ 이름: ______________</div>
     </div>
+    
     {html_items}
+    
     <div class="page-break"></div>
-    <div class="header-box" style="margin-top:20px;">
-        <div class="header-title" style="font-size:17px;">📋 [정답 및 해설] {title}</div>
+    <div class="header-box" style="margin-top:30px;">
+        <div class="header-title" style="font-size:18px;">📋 [정답 및 해설] {title}</div>
     </div>
     {ans_items}
 </body>
 </html>"""
-
-    encoded_html = urllib.parse.quote(full_print_html)
-    
-    component_code = f"""
-    <style>
-        body {{ margin: 0; background: transparent; display: flex; align-items: center; }}
-        .print-link-btn {{
-            background-color: #2e7d32;
-            color: #ffffff !important;
-            padding: 7px 16px;
-            font-size: 13px;
-            font-weight: bold;
-            font-family: sans-serif;
-            border-radius: 6px;
-            text-decoration: none;
-            display: inline-block;
-            transition: background-color 0.2s;
-        }}
-        .print-link-btn:hover {{
-            background-color: #1b5e20;
-        }}
-    </style>
-    <a class="print-link-btn" href="data:text/html;charset=utf-8,{encoded_html}" target="_blank">
-        {button_label}
-    </a>
-    """
-    components.html(component_code, height=40)
+    return full_html
 
 # ==========================================
 # ★ 모델 설정
@@ -429,9 +444,21 @@ with tab1:
                 selected_items = [group["items"][i] for i in selected_indices if i < len(group["items"])]
                 
                 if selected_items:
+                    print_html_content = make_printable_html(f"[{view_class}] {group['label']} 수학 학습지", selected_items)
+                    
                     col_pr1, col_pr2 = st.columns([1, 1])
                     with col_pr1:
-                        render_print_button(f"🖨️ 선택한 {len(selected_items)}개 세트 A4 인쇄", f"[{view_class}] {group['label']} 수학 과제", selected_items)
+                        # ★ 네이티브 다운로드 버튼: 클릭 즉시 인쇄용 HTML 파일 생성
+                        st.download_button(
+                            label=f"📥 선택한 {len(selected_items)}개 세트 인쇄용 파일 열기",
+                            data=print_html_content,
+                            file_name=f"{view_class}_{group['label']}_수학_학습지.html",
+                            mime="text/html",
+                            key=f"dl_btn_{d_key}",
+                            type="primary"
+                        )
+                        st.caption("💡 다운로드된 파일을 클릭하여 열면 바로 인쇄 창이 뜹니다.")
+                        
                     with col_pr2:
                         with st.expander("📋 선택한 과제 한글(HWP) 복사용"):
                             hwp_bundle = f"[{view_class} - {group['label']} 수학 학습지]\n\n"
@@ -475,6 +502,16 @@ with tab1:
                             st.markdown(f"**정답:** {a2_safe}")
                             if s2_safe:
                                 st.markdown(f"**풀이:**\n\n{s2_safe}")
+                        
+                        # 개별 세트 다운로드/인쇄 버튼
+                        single_html = make_printable_html(f"[{view_class}] {group['label']} (과제 세트 {item_idx})", [p])
+                        st.download_button(
+                            label=f"📥 세트 {item_idx}만 인쇄용 파일 열기",
+                            data=single_html,
+                            file_name=f"{view_class}_{group['label']}_세트{item_idx}.html",
+                            mime="text/html",
+                            key=f"dl_single_{p.get('id')}"
+                        )
                         
                         if current_role == "admin":
                             if st.button("🗑️ 이 과제 시트에서 삭제하기", key=f"del_{p.get('id')}"):
