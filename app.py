@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링, 빈칸 박스, 카드 UI 통합 엔진
+# ★ 수식 렌더링, SVG 다이어그램, 빈칸 박스 통합 엔진
 # ==========================================
 def format_math(text):
     if not text:
@@ -121,26 +121,27 @@ def format_math(text):
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     
-    # 6. $ 기호 없이 노출된 수식 및 함수 자동 감싸기
+    # 6. $ 기호 없이 노출된 수식 및 함수 자동 감싸기 (단, <svg> 태그 내부 제외)
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
         if i % 2 == 0:  # $ 기호 바깥 영역
-            def replacer(match):
-                chunk = match.group(1).rstrip()
-                if not chunk:
-                    return ""
-                return f"${chunk}$"
-            pattern = r'(\\[a-zA-Z]+(?:\{[^{}]*\}|[\w\s+\-*/=<>(),._\^\\{}]*?))(?=[가-힣\n\r]|$)'
-            part = re.sub(pattern, replacer, part)
-            part = re.sub(r'(?<![$\\])\b([fgh]\'?\([a-zA-Z\d+\-*/]*\))(?![$\\])', r'$\1$', part)
+            if '<svg' not in part:
+                def replacer(match):
+                    chunk = match.group(1).rstrip()
+                    if not chunk:
+                        return ""
+                    return f"${chunk}$"
+                pattern = r'(\\[a-zA-Z]+(?:\{[^{}]*\}|[\w\s+\-*/=<>(),._\^\\{}]*?))(?=[가-힣\n\r<]|$)'
+                part = re.sub(pattern, replacer, part)
+                part = re.sub(r'(?<![$\\])\b([fgh]\'?\([a-zA-Z\d+\-*/]*\))(?![$\\])', r'$\1$', part)
         new_parts.append(part)
     
     text = '$'.join(new_parts)
     text = re.sub(r'\$\s*\$', '', text)
     text = re.sub(r'\${3,}', '$$', text)
     
-    # 7. [카드: 1, 2, 3] 태그를 시각적 카드 박스 HTML로 자동 변환
+    # 7. [카드: 1, 2, 3] 태그 자동 변환
     def render_cards(match):
         items = [x.strip() for x in match.group(1).split(',') if x.strip()]
         card_html = '<div style="display:inline-flex; gap:8px; margin:8px 0; align-items:center; vertical-align:middle;">'
@@ -676,14 +677,14 @@ with tab2:
         include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("Gemini가 단원 범위에 맞춰 문제를 출제하고 있습니다..."):
+            with st.spinner("Gemini가 단원 범위와 그림 조건에 맞춰 문제를 출제하고 있습니다..."):
                 try:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ 교육과정 준수, 빈칸 박스, 카드 UI 출제 지침
+                    # ★ SVG 그림 그리기, 빈칸 박스, 카드 UI 출제 지침 강화
                     prompt = f"""
                     너는 대한민국 고등학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -696,18 +697,20 @@ with tab2:
                        - 원본 문제가 미분/도함수 단원이면, 아직 배우지 않은 '적분 기호($\\int$)'나 적분 개념을 절대로 사용하지 마라.
                        - 원본 문제가 극한 단원이면 미분/적분을 쓰지 마라.
                        - 2번(실력 키우기) 문제 역시 다른 후속 단원과 섞지 말고, **현재 원본 문제 단원 내에서만** 조건을 심화하여 출제하라.
-                    2. **빈칸 채우기 및 증명 문제 작성 규칙:**
+                    2. **영역 색칠하기 / 지도 / 도형 다이어그램 (매우 중요):**
+                       - 원본 문제가 '영역 색칠하기', '맞닿아 있는 면', '동심원 영역', '지도 색칠' 문제인 경우, 학생들이 각 영역(A, B, C, D)의 인접 관계를 알 수 있도록 **문제 지문 안에 간단한 인라인 SVG 다이어그램(`<svg width="180" height="120" viewBox="..." ...>...</svg>`)**을 반드시 직접 작성하여 넣어라.
+                       - SVG 스타일 규칙: 배경은 투명 또는 흰색, 테두리는 검정색(`stroke="#222" stroke-width="2"`), 영역 글자 레이블(A, B, C, D)은 굵은 폰트(`font-size="14" font-weight="bold" fill="#111"`)로 각 영역 정중앙에 배치할 것.
+                    3. **빈칸 채우기 및 증명 문제:**
                        - 빈칸은 반드시 `$\\boxed{{\\text{{ (가) }}}}$`, `$\\boxed{{\\text{{ (나) }}}}$`, `$\\boxed{{\\text{{ (다) }}}}$` 형태로 작성할 것.
                        - 증명 과정의 단계별 줄바꿈과 기하 기호($\\triangle, \\angle, \\overline{{AB}}, \\equiv, \\parallel, \\therefore$)를 명확하게 살려서 작성할 것.
-                    3. **도형/그래프 및 카드 문제 서술 규칙:**
-                       - 원본 문제에 도형/그래프가 있는 경우, 필수 성질이나 개형을 문제 본문에 텍스트/수식 조건으로 명확히 서술하여 새 그림 없이도 완벽히 풀 수 있게 하라.
-                       - 숫자/문자 카드가 필요한 문제의 경우 지문에 `[카드: 1, 2, 3, 4, 5]` 형태로 작성하라.
-                    4. **문제 구성:**
+                    4. **카드 / 경우의 수 문제:**
+                       - 숫자/문자 카드가 필요한 경우 지문에 `[카드: 1, 2, 3, 4, 5]` 형태로 작성하라.
+                    5. **문제 구성:**
                        - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
                        - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
 
                     [수식 작성 규칙]
-                    1. 모든 수식, 분수식, 극한식, 기하 기호, 빈칸 박스는 반드시 `$수식$` 기호로 감싸라.
+                    1. 모든 수식, 분수식, 극한식, 기하 기호, 빈칸 박스는 반드시 `$수식$` 기호로 감싸라. (단, `<svg>...</svg>` 태그는 $ 기호 없이 그대로 출력)
                     2. $ 기호 안에는 순수 수식만 넣고 한글은 $ 밖에 둘 것.
                     3. 아래 출력 양식을 정확히 지켜서 출력할 것.
 
