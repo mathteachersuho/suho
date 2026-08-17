@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링 전용 엔진 (도함수/블록 수식/극한 완벽 지원)
+# ★ 수식 렌더링 전용 엔진
 # ==========================================
 def format_math(text):
     if not text:
@@ -93,11 +93,10 @@ def format_math(text):
     # 1. 줄바꿈 기호 변환
     text = text.replace('[br]', '\n\n')
     
-    # 2. Mathpix의 $$...$$ 블록 수식을 표준 $...$로 안전하게 정규화
+    # 2. Mathpix의 $$...$$ 블록 수식을 표준 $...$로 정규화
     text = re.sub(r'\$\$(.*?)\$\$', r'$\1$', text, flags=re.DOTALL)
     
-    # 3. 명령어 앞 중복 백슬래시 정리 (\\lim -> \lim, \\to -> \to, \\{ -> \{)
-    # (cases/array 내부 줄바꿈용 \\는 보존)
+    # 3. 명령어 앞 중복 백슬래시 정리
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
     
@@ -107,22 +106,21 @@ def format_math(text):
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     
-    # 5. lim 기호 표준화 (화살표가 정중앙 밑으로 배치)
+    # 5. lim 기호 표준화
     text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
     text = re.sub(r'\\lim(?![a-zA-Z])(?!\s*\\limits)', r'\\lim\\limits', text)
     text = re.sub(r'(\\lim\\limits\s*)+', r'\\lim\\limits ', text)
     
-    # 6. $ 기호 없이 노출된 과거 데이터 수식 덩어리를 $...$로 자동 감싸기
+    # 6. $ 기호 없이 노출된 수식 덩어리 자동 감싸기
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
-        if i % 2 == 0:  # $ 기호 바깥 영역
+        if i % 2 == 0:
             def replacer(match):
                 chunk = match.group(1).rstrip()
                 if not chunk:
                     return ""
                 return f"${chunk}$"
-            
             pattern = r'(\\[a-zA-Z]+(?:\{[^{}]*\}|[\w\s+\-*/=<>(),._\^\\{}]*?))(?=[가-힣\n\r]|$)'
             part = re.sub(pattern, replacer, part)
         new_parts.append(part)
@@ -402,30 +400,34 @@ with tab2:
         include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("Gemini가 정밀하게 문제를 출제하고 있습니다..."):
+            with st.spinner("Gemini가 단원 범위에 맞춰 문제를 출제하고 있습니다..."):
                 try:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
+                    # ★ 단원 범위 이탈 금지 및 선행 개념(적분 등) 배제 규칙 추가
                     prompt = f"""
-                    너는 대한민국 고등학교 수학 출제 위원이야. 
-                    아래 [원본 문제]를 바탕으로 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
+                    너는 대한민국 고등학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
+                    아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
 
                     [원본 문제]
                     {edited_text}
 
-                    [출제 원칙]
-                    - 1번 문제: 조건과 숫자만 살짝 바꾼 기본 다지기 문제
-                    - 2번 문제: 핵심 개념 기반의 응용 변형 문제
+                    [교육과정 및 출제 원칙 (매우 중요)]
+                    1. **단원 범위 준수(선행 개념 출제 절대 금지):**
+                       - 원본 문제가 '미분/도함수' 단원이면, 아직 배우지 않은 '적분 기호($\\int$)'나 적분 개념을 절대로 사용하지 마라.
+                       - 원본 문제가 '극한' 단원이면 미분/적분을 쓰지 마라.
+                       - 2번(실력 키우기) 문제 역시 다른 후속 단원과 섞지 말고, **현재 원본 문제 단원 내에서만** 조건(계수 비교, 차수 결정, 항등식 등)을 심화하여 출제하라.
+                    2. **문제 구성:**
+                       - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
+                       - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
 
-                    [수식 작성 규칙 (필수)]
-                    1. 극한식은 화살표 조건이 lim 바로 밑에 오도록 반드시 `\\lim\\limits_{{x \\to a}}` 형태로 작성할 것.
-                    2. 조건부 함수(구간별 정의 함수)는 반드시 `$\\begin{{cases}} 식1 & (조건1) \\\\ 식2 & (조건2) \\end{{cases}}$` 형태로 작성할 것.
-                    3. 모든 수식, 분수식, 극한식, 도함수 식은 원본 문제처럼 반드시 `$수식$` 기호로 감싸야 함.
-                    4. $ 기호 안에는 순수 수식만 넣고 한글은 $ 밖에 둘 것.
-                    5. 아래 출력 양식을 정확히 지켜서 출력할 것.
+                    [수식 작성 규칙]
+                    1. 모든 수식, 분수식, 극한식, 도함수 식은 반드시 `$수식$` 기호로 감싸라.
+                    2. $ 기호 안에는 순수 수식만 넣고 한글은 $ 밖에 둘 것.
+                    3. 아래 출력 양식을 정확히 지켜서 출력할 것.
 
                     [출력 양식]
                     [문제 1]
