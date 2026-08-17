@@ -9,26 +9,66 @@ import datetime
 import google.generativeai as genai
 
 # 페이지 기본 설정
-st.set_page_config(page_title="수학 유사 문제 생성기", layout="centered")
+st.set_page_config(page_title="수학 유사 문제 클래스룸", layout="centered")
 
 st.title("📐 AI 수학 온라인 클래스룸")
 
 # ==========================================
-# ★ 로컬 데이터베이스(게시판) 설정
+# ★ 구글 스프레드시트 연동 DB 함수
 # ==========================================
-DB_FILE = "shared_problems.json"
-STATUS_FILE = "app_status.txt"
+sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "")
 
-def load_db():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+def fetch_problems():
+    """구글 시트에서 전체 과제 불러오기"""
+    if not sheet_url:
+        # 시트 URL이 없을 경우 로컬 임시 파일 대체
+        if os.path.exists("shared_problems.json"):
+            with open("shared_problems.json", "r", encoding="utf-8") as f:
+                return json.load(f)
+        return []
+    
+    try:
+        res = requests.get(sheet_url, timeout=10)
+        if res.status_code == 200:
+            return res.json()
+    except Exception as e:
+        st.error(f"데이터베이스 연결 오류: {e}")
     return []
 
-def save_db(data):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def save_problem(problem_data):
+    """구글 시트에 새 과제 추가하기"""
+    if not sheet_url:
+        # 로컬 임시 파일 저장 fallback
+        curr = fetch_problems()
+        curr.insert(0, problem_data)
+        with open("shared_problems.json", "w", encoding="utf-8") as f:
+            json.dump(curr, f, ensure_ascii=False, indent=2)
+        return True
+    
+    try:
+        res = requests.post(sheet_url, json=problem_data, timeout=10)
+        return res.status_code == 200
+    except Exception as e:
+        st.error(f"과제 등록 오류: {e}")
+        return False
 
+def delete_problem(prob_id):
+    """구글 시트에서 특정 과제 삭제하기"""
+    if not sheet_url:
+        curr = fetch_problems()
+        curr = [p for p in curr if str(p.get('id')) != str(prob_id)]
+        with open("shared_problems.json", "w", encoding="utf-8") as f:
+            json.dump(curr, f, ensure_ascii=False, indent=2)
+        return True
+    
+    try:
+        res = requests.post(sheet_url, json={"action": "delete", "id": prob_id}, timeout=10)
+        return res.status_code == 200
+    except Exception as e:
+        st.error(f"과제 삭제 오류: {e}")
+        return False
+
+STATUS_FILE = "app_status.txt"
 def get_app_status():
     if os.path.exists(STATUS_FILE):
         with open(STATUS_FILE, "r") as f:
@@ -45,7 +85,7 @@ def set_app_status(status):
 def format_math(text):
     if not text:
         return ""
-    text = text.replace('[br]', '\n\n')
+    text = str(text).replace('[br]', '\n\n')
     return text
 
 # ==========================================
@@ -133,11 +173,9 @@ st.caption(f"현재 접속 권한: **{'선생님 (모든 반 관리)' if current
 tab1, tab2 = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기"])
 
 # ------------------------------------------
-# [탭 1] 학생 게시판
+# [탭 1] 학생 게시판 (구글 시트 연동 + 날짜별 정렬)
 # ------------------------------------------
 with tab1:
-    problems_db = load_db()
-    
     if current_role == "admin":
         view_class = st.selectbox("👀 조회할 반 게시판을 선택하세요", class_list)
     else:
@@ -145,14 +183,19 @@ with tab1:
         
     st.subheader(f"📋 [{view_class}] 과제 게시판")
     
-    filtered_problems = [p for p in problems_db if p.get("class_id", "1M2") == view_class]
+    with st.spinner("구글 스프레드시트에서 과제 목록을 불러오는 중..."):
+        all_problems = fetch_problems()
     
-    if not filtered_problems:
-        st.info("아직 등록된 과제가 없습니다.")
+    # 해당 반 과제만 필터링 후, 최신 등록일(날짜 역순) 기준으로 정렬
+    filtered = [p for p in all_problems if str(p.get("class_id", "")) == view_class]
+    filtered.reverse() # 최신 날짜가 맨 위로 오도록 정렬
+    
+    if not filtered:
+        st.info(f"아직 [{view_class}]에 등록된 과제가 없습니다.")
     else:
-        for p in filtered_problems:
+        for p in filtered:
             with st.container():
-                st.markdown(f"#### 📝 과제 등록일: {p['date']}")
+                st.markdown(f"### 📅 과제 일시: `{p.get('date', '날짜 미상')}`")
                 
                 if p.get("image_b64"):
                     st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
@@ -165,14 +208,14 @@ with tab1:
                 a2_safe = format_math(p.get("a2", ""))
                 s2_safe = format_math(p.get("s2", ""))
                 
-                st.markdown("### [문제 1] 기본 다지기")
+                st.markdown("#### [문제 1] 기본 다지기")
                 st.markdown(q1_safe)
                 with st.expander("🔍 1번 정답 및 풀이 확인"):
                     st.markdown(f"**정답:** {a1_safe}")
                     if s1_safe:
                         st.markdown(f"**풀이:**\n\n{s1_safe}")
                 
-                st.markdown("### [문제 2] 실력 키우기")
+                st.markdown("#### [문제 2] 실력 키우기")
                 st.markdown(q2_safe)
                 with st.expander("🔍 2번 정답 및 풀이 확인"):
                     st.markdown(f"**정답:** {a2_safe}")
@@ -180,10 +223,11 @@ with tab1:
                         st.markdown(f"**풀이:**\n\n{s2_safe}")
                 
                 if current_role == "admin":
-                    if st.button("🗑️ 이 과제 삭제하기", key=f"del_{p['id']}"):
-                        problems_db = [x for x in problems_db if x['id'] != p['id']]
-                        save_db(problems_db)
-                        st.rerun()
+                    if st.button("🗑️ 이 과제 시트에서 삭제하기", key=f"del_{p.get('id')}"):
+                        if delete_problem(p.get('id')):
+                            st.success("구글 시트에서 삭제되었습니다!")
+                            time.sleep(0.5)
+                            st.rerun()
             st.divider()
 
 # ------------------------------------------
@@ -230,8 +274,8 @@ with tab2:
         st.markdown("**수식 렌더링 미리보기:**")
         st.markdown(format_math(edited_text))
         
-        # ★ [비용 절감 핵심] 해설 모드 선택 체크박스
-        include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
+        # 비용 절감용 간결 해설 옵션
+        include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성하여 비용 절감)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
             with st.spinner("Gemini가 정밀하게 문제를 출제하고 있습니다..."):
@@ -292,12 +336,12 @@ with tab2:
                 with col2:
                     st.write("") 
                     st.write("") 
-                    if st.button(f"📢 [{target_class}] 게시판에 등록하기", type="primary"):
+                    if st.button(f"📢 [{target_class}] 구글 시트에 과제 등록하기", type="primary"):
                         new_prob = {
                             "id": str(int(time.time())),
                             "class_id": target_class, 
                             "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "image_b64": st.session_state.current_image_b64,
+                            "image_b64": st.session_state.current_image_b64 or "",
                             "q1": st.session_state.similar_problems[0]["question"],
                             "a1": st.session_state.similar_problems[0]["answer"],
                             "s1": st.session_state.similar_problems[0].get("solution", ""),
@@ -305,11 +349,10 @@ with tab2:
                             "a2": st.session_state.similar_problems[1]["answer"],
                             "s2": st.session_state.similar_problems[1].get("solution", ""),
                         }
-                        curr_db = load_db()
-                        curr_db.insert(0, new_prob) 
-                        save_db(curr_db)
-                        st.success(f"✅ [{target_class}] 게시판에 성공적으로 등록되었습니다!")
-                    
+                        with st.spinner("구글 스프레드시트에 영구 저장하는 중..."):
+                            if save_problem(new_prob):
+                                st.success(f"✅ [{target_class}] 구글 스프레드시트에 영구 저장 완료!")
+                        
             for idx, item in enumerate(st.session_state.similar_problems, start=1):
                 with st.container():
                     st.markdown(f"### [문제 {idx}] {'기본 다지기' if idx==1 else '실력 키우기'}")
