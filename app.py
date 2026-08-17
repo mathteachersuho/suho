@@ -83,41 +83,21 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 복원 및 렌더링 전용 엔진 (과거 데이터 완벽 호환)
+# ★ 수식 렌더링 전용 엔진 (조건부 함수/분수/극한 완벽 지원)
 # ==========================================
 def format_math(text):
     if not text:
         return ""
     text = str(text)
     
-    # 1. 줄바꿈 처리
+    # 1. 줄바꿈 기호 변환
     text = text.replace('[br]', '\n\n')
     
-    # 2. 이중 백슬래시(\\)를 단일 백슬래시(\)로 통일
-    text = re.sub(r'\\\\', r'\\', text)
-    text = re.sub(r'\\\\', r'\\', text)
-    
-    # 3. 잘못 쪼개진 괄호 및 제어문자 보정
-    text = text.replace(r'\{', '{').replace(r'\}', '}')
+    # 2. 깨진 특수 제어문자 및 오타 복원
     text = text.replace('\x0c', r'\f').replace('♀rac', r'\frac').replace('♀', r'\f')
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     text = re.sub(r'\\lim\s*its', r'\\lim\\limits', text)
-    
-    # 4. 중복된 lim 정리
-    text = re.sub(r'(\\lim(\s*\\limits)?\s*)+', r'\\lim\\limits ', text)
-    
-    # 5. $ 기호 없이 노출된 과거 수식 덩어리를 $...$로 자동 래핑
-    parts = text.split('$')
-    fixed_parts = []
-    for i, part in enumerate(parts):
-        if i % 2 == 0:  # $ 기호 바깥쪽 영역
-            # \lim, \frac, \sqrt 등이 $ 없이 노출된 경우 감싸기
-            part = re.sub(r'(\\(?:lim|frac|sqrt|left|right|to|circ)[^\s가-힣]*(?:\s+[^\s가-힣]+)*)', r'$\1$', part)
-        fixed_parts.append(part)
-    text = '$'.join(fixed_parts)
-    text = re.sub(r'\${3,}', '$$', text)
-    text = text.replace('$$', '$')  # 단일 inline $로 정리
     
     return text
 
@@ -408,11 +388,11 @@ with tab2:
                     - 1번 문제: 조건과 숫자만 살짝 바꾼 기본 다지기 문제
                     - 2번 문제: 핵심 개념 기반의 응용 변형 문제
 
-                    [수식 작성 규칙 (매우 중요)]
-                    1. 모든 수식, 분수식, 극한식은 원본 문제처럼 반드시 `$수식$` 기호로 감싸야 함.
-                       (예: 두 함수 $f(x)=x^2, g(x)=3x-2$ 에 대하여 $\\lim_{{x \\to 1}} \\frac{{(f \\circ g)(x)-(g \\circ f)(x)}}{{(x^2-1)(x^3-1)}}$ 의 값을 구하시오.)
-                    2. $ 기호 안에는 순수 수식만 넣고 한글은 $ 밖에 둘 것.
-                    3. 아래 출력 양식을 정확히 지켜서 출력할 것.
+                    [수식 작성 규칙 (필수)]
+                    1. 조건부 함수(구간별 정의 함수)는 반드시 `$\\begin{{cases}} 식1 & (조건1) \\\\ 식2 & (조건2) \\end{{cases}}$` 형태로 작성할 것.
+                    2. 모든 수식, 분수식, 극한식은 원본 문제처럼 반드시 `$수식$` 기호로 감싸야 함.
+                    3. $ 기호 안에는 순수 수식만 넣고 한글은 $ 밖에 둘 것.
+                    4. 아래 출력 양식을 정확히 지켜서 출력할 것.
 
                     [출력 양식]
                     [문제 1]
