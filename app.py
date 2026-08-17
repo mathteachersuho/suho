@@ -231,7 +231,7 @@ with tab2:
         st.markdown(format_math(edited_text))
         
         # ★ [비용 절감 핵심] 해설 모드 선택 체크박스
-        include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성하여 비용 대폭 절감)", value=False)
+        include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
             with st.spinner("Gemini가 정밀하게 문제를 출제하고 있습니다..."):
