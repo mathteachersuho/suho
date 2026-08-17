@@ -49,7 +49,7 @@ def format_math(text):
     return text
 
 # ==========================================
-# ★ 속도 개선 로직
+# ★ 속도 및 모델 설정
 # ==========================================
 @st.cache_data(show_spinner=False)
 def get_fastest_model_name(api_key):
@@ -170,14 +170,14 @@ with tab1:
                 with st.expander("🔍 1번 정답 및 풀이 확인"):
                     st.markdown(f"**정답:** {a1_safe}")
                     if s1_safe:
-                        st.markdown(f"**풀이 및 해설:**\n\n{s1_safe}")
+                        st.markdown(f"**풀이:**\n\n{s1_safe}")
                 
                 st.markdown("### [문제 2] 실력 키우기")
                 st.markdown(q2_safe)
                 with st.expander("🔍 2번 정답 및 풀이 확인"):
                     st.markdown(f"**정답:** {a2_safe}")
                     if s2_safe:
-                        st.markdown(f"**풀이 및 해설:**\n\n{s2_safe}")
+                        st.markdown(f"**풀이:**\n\n{s2_safe}")
                 
                 if current_role == "admin":
                     if st.button("🗑️ 이 과제 삭제하기", key=f"del_{p['id']}"):
@@ -230,33 +230,35 @@ with tab2:
         st.markdown("**수식 렌더링 미리보기:**")
         st.markdown(format_math(edited_text))
         
+        # ★ [비용 절감 핵심] 해설 모드 선택 체크박스
+        include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성하여 비용 대폭 절감)", value=False)
+        
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("Gemini가 빛의 속도로 문제를 출제하고 있습니다..."):
+            with st.spinner("Gemini가 정밀하게 문제를 출제하고 있습니다..."):
                 try:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
-                    # ★ 프롬프트에 'answer(정답)'와 'solution(상세 해설)' 항목을 명확히 분리하여 지시
+                    solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
+                    
                     prompt = f"""
-                    너는 학생들의 수준별 학습을 돕는 꼼꼼한 수학 교과 출제 위원이야. 
-                    다음 [원본 문제]를 바탕으로 성격이 다른 [유사 문제] 딱 2개를 만들어줘.
+                    너는 수학 교과 출제 위원이야. [원본 문제]를 바탕으로 [유사 문제] 딱 2개를 만들어줘.
                     
                     [원본 문제]
                     {edited_text}
                     
                     [출제 원칙]
-                    1번 문제: 원본 문제와 똑같이 유지하고 '숫자나 조건'만 살짝 바꿔줘.
-                    2번 문제: 핵심 개념은 유지하되 묻는 방식을 다르게 비튼 응용 문제로 만들어줘.
+                    1번 문제: 조건/숫자만 살짝 바꾼 기본 문제
+                    2번 문제: 핵심 개념 기반의 응용 변형 문제
                     
                     [출력 형식]
-                    오직 JSON 형식으로만 반환해줘. 데이터 구조는 {{ "problems": [ {{"problem_num": 1, "question": "문제내용", "answer": "정답", "solution": "학생들이 이해하기 쉽도록 단계별로 작성한 상세한 풀이 및 해설"}}, {{"problem_num": 2, "question": "문제내용", "answer": "정답", "solution": "상세한 풀이 및 해설"}} ] }} 로 작성해.
+                    JSON으로만 반환: {{ "problems": [ {{"problem_num": 1, "question": "문제", "answer": "정답", "solution": "{solution_instruction}"}}, {{"problem_num": 2, "question": "문제", "answer": "정답", "solution": "{solution_instruction}"}} ] }}
                     
-                    ⚠️[매우 중요 1] 수식 기호 안에는 한글을 섞지 말고 순수 수학 기호만 넣어. (예: `$x=2$` 이므로)
-                    ⚠️[매우 중요 2] JSON 파싱 오류를 막기 위해 수식의 백슬래시는 반드시 두 개씩 적어! (❌ `\frac`, `\notin` ➔ ⭕ `\\\\frac`, `\\\\notin`)
-                    ⚠️[매우 중요 3] 줄바꿈이 필요할 때는 절대로 `\\n`을 쓰지 말고 `[br]` 이라고 적어! (예: 첫 번째 줄[br]두 번째 줄)
-                    ⚠️[매우 중요 4] `solution` 항목에는 정답을 도출하는 전 과정(해설)을 반드시 친절하고 상세하게 적어줘.
-                    
-                    ```json 기호 없이 순수한 JSON 텍스트만 출력해.
+                    ⚠️ 규칙:
+                    1. 수식 기호($) 안에 한글 금지 (예: `$x=2$` 이므로)
+                    2. JSON 파싱 오류 방지를 위해 백슬래시는 두 개(\\\\)로 이스케이프
+                    3. 줄바꿈은 \\n 대신 [br] 사용
+                    4. ```json 없이 순수 JSON만 출력
                     """
                     
                     response = model.generate_content(prompt)
@@ -319,5 +321,5 @@ with tab2:
                     with st.expander("🔍 정답 및 풀이 확인"):
                         st.markdown(f"**정답:** {display_a}")
                         if display_s:
-                            st.markdown(f"**풀이 및 해설:**\n\n{display_s}")
+                            st.markdown(f"**풀이:**\n\n{display_s}")
                     st.write("")
