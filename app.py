@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링, 표(Table), 그래프/도형 SVG 통합 엔진
+# ★ 수식 렌더링, 표(Table), 수직선/그래프/도형 SVG 통합 엔진
 # ==========================================
 def _clean_cell(col):
     """표 내부 셀의 불필요한 달러 기호($) 제거"""
@@ -124,7 +124,7 @@ def format_math(text):
     # 1. 줄바꿈 기호 변환
     text = text.replace('[br]', '\n\n')
     
-    # 2. 지문 속 단순 알파벳/단어에 붙은 불필요한 $ 기호 자동 정제 (예: $A$ 모둠 -> A 모둠)
+    # 2. 지문 속 단순 알파벳/단어에 붙은 불필요한 $ 기호 자동 정제
     text = re.sub(r'\$([a-zA-Z0-9])\$\s*(모둠|반|팀|그룹|등|점|명|개|권|초|분|시간|원|cm|m)', r'\1 \2', text)
     text = re.sub(r'\$([a-zA-Z])\$', r'\1', text)
     
@@ -228,10 +228,10 @@ def format_math(text):
         return card_html
     text = re.sub(r'\[카드\s*:\s*([^\]]+)\]', render_cards, text)
     
-    # 11. 그래프/토너먼트/도형 SVG 다이어그램 흰색 카드 박스 감싸기
+    # 11. 수직선/그래프/도형 SVG 다이어그램 흰색 카드 박스 감싸기
     def wrap_svg_card(match):
         svg_content = match.group(0)
-        return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 12px 18px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
+        return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 10px 14px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
     text = re.sub(r'(<svg[\s\S]*?<\/svg>)', wrap_svg_card, text)
     
     return text
@@ -760,14 +760,14 @@ with tab2:
         include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("Gemini가 단원 범위, 표, 그래프 조건에 맞춰 문제를 출제하고 있습니다..."):
+            with st.spinner("Gemini가 단원 범위, 표, 수직선/그래프 조건에 맞춰 문제를 출제하고 있습니다..."):
                 try:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ 세로축 눈금 숫자 필수 + 불필요한 $ 방지 + 경량 SVG 최적화 프롬프트
+                    # ★ 수직선 등분 눈금 + 세로축 눈금 + 경량 SVG 최적화 프롬프트
                     prompt = f"""
                     너는 대한민국 고등학교 및 중학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -778,25 +778,26 @@ with tab2:
                     [출제 원칙 및 교육과정 준수]
                     1. **단원 범위 준수 (선행 개념 절대 금지):**
                        - 원본 문제 단원 범위를 절대 벗어나지 마라.
-                    2. **그래프 / 다이어그램 필수 구성 (세로축 눈금 필수 & 가벼운 SVG):**
-                       - 꺾은선그래프, 막대그래프인 경우 **반드시 세로축(y축)에 도수 눈금 숫자(예: 0, 2, 4, 6, 8 또는 1, 2, 3, 4, 5)와 단위((명), (권) 등)를 `<text>` 태그로 표시**하여 그래프만 보고도 값을 읽을 수 있게 하라.
-                       - 가로축(x축)에도 각 계급 점수(예: 60, 70, 80, 90, 100)와 단위((점))를 표시하라.
-                       - 빠른 생성을 위해 복잡한 배경 모눈 격자는 생략하고, 기준 축 2개(`<line>`), 축 눈금 숫자(`<text>`), 데이터 라인(`<polyline points="..." fill="none" stroke="#1976d2" stroke-width="2"/>`)으로 가볍고 깔끔한 인라인 SVG(`<svg width="250" height="130" viewBox="0 0 250 130">...</svg>`)로 작성하라.
-                       - 모든 텍스트 레이블(숫자, 축 이름)은 반드시 `fill="#000000"` (검정색)으로 지정할 것.
-                    3. **토너먼트 / 대진표 문제:**
-                       - 대진표인 경우 심플한 SVG 트리로 작성할 것 (글자 색상 `fill="#000000"`).
-                    4. **표(Table) 문제 작성 규칙:**
+                    2. **수직선 문제 작성 규칙 (등분 눈금선 필수):**
+                       - 수직선 위의 점이 분수/소수(예: -2.5, -2/3, 3/2 등) 위치에 있는 경우, 학생들이 정확히 읽을 수 있도록 **해당 정수 구간 사이에 작은 등분 눈금선(`<line x1="x" y1="53" x2="x" y2="67" stroke="#777" stroke-width="1"/>`)**을 넣어 2등분, 3등분, 4등분임을 명확히 표시하라.
+                       - 수직선은 가로 화살표 축(`<line>`), 정수 큰 눈금선(`<line>`), 정수 숫자(`<text>`), 알파벳 점(`<circle fill="#e53935">` 및 `<text font-weight="bold">`)으로 가볍고 깔끔한 SVG(`<svg width="260" height="85" viewBox="0 0 260 85">...</svg>`)로 작성하라.
+                    3. **꺾은선그래프 / 막대그래프 규칙:**
+                       - 세로축(y축)에 도수 눈금 숫자(0, 2, 4... 또는 1, 2, 3...)와 단위를 `<text>`로 표시하고, 데이터 라인(`<polyline>`) 또는 막대(`<rect>`)로 가볍게 작성하라.
+                    4. **토너먼트 / 대진표 문제:**
+                       - 대진표인 경우 심플한 SVG 트리로 작성할 것.
+                    5. **표(Table) 문제 작성 규칙:**
                        - 표가 필요한 경우 **마크다운 표 형식(`| 항목1 | 항목2 | ... |`)**으로 작성하고 셀 내부에 불필요한 $를 쓰지 마라.
-                    5. **빈칸 채우기 및 증명 문제:**
+                    6. **빈칸 채우기 및 증명 문제:**
                        - 빈칸은 반드시 `$\\boxed{{\\text{{ (가) }}}}$`, `$\\boxed{{\\text{{ (나) }}}}$` 형태로 작성할 것.
-                    6. **문제 구성:**
+                    7. **문제 구성:**
                        - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
                        - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
 
                     [수식 및 텍스트 작성 규칙]
                     1. 분수식, 극한식, 복잡한 계산식만 `$수식$`으로 감싸라.
-                    2. **단순 문자(A 모둠, B 모둠, 보기 ㄱ, ㄴ, ㄷ, 일반 숫자 등)에는 절대로 $ 기호를 붙이지 말고 순수 텍스트로 작성하라.**
-                    3. 아래 출력 양식을 정확히 지켜서 출력할 것.
+                    2. **단순 문자(A, B, C, D 점 이름, A 모둠, 보기 ㄱ, ㄴ, ㄷ, 일반 숫자 등)에는 절대로 $ 기호를 붙이지 말고 순수 텍스트로 작성하라.**
+                    3. 모든 SVG 글자 색상은 반드시 `fill="#000000"`으로 지정하라.
+                    4. 아래 출력 양식을 정확히 지켜서 출력할 것.
 
                     [출력 양식]
                     [문제 1]
