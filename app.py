@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링, SVG 다이어그램, 빈칸 박스 통합 엔진
+# ★ 수식 렌더링 & 다크모드 고대비 SVG 렌더링 엔진
 # ==========================================
 def format_math(text):
     if not text:
@@ -96,7 +96,7 @@ def format_math(text):
     # 2. Mathpix의 $$...$$ 블록 수식을 표준 $...$로 정규화
     text = re.sub(r'\$\$(.*?)\$\$', r'$\1$', text, flags=re.DOTALL)
     
-    # 3. 빈칸 문자 및 기호 박스화 자동 변환 (가~라, square 등)
+    # 3. 빈칸 문자 및 기호 박스화 자동 변환
     text = re.sub(r'[□■]\s*\(([가-힣a-zA-Z0-9]+)\)', r'$\\boxed{\\text{ (\1) }}$', text)
     text = re.sub(r'\[\s*\(([가-힣a-zA-Z0-9]+)\)\s*\]', r'$\\boxed{\\text{ (\1) }}$', text)
     
@@ -121,11 +121,11 @@ def format_math(text):
     text = re.sub(r'(\b[a-zA-Z]\b)\s+o\s+(\d+|[a-zA-Z])', r'\1 \\to \2', text)
     text = re.sub(r'\bight\b', r'\\right', text)
     
-    # 6. $ 기호 없이 노출된 수식 및 함수 자동 감싸기 (단, <svg> 태그 내부 제외)
+    # 6. $ 기호 없이 노출된 수식 및 함수 자동 감싸기 (SVG 태그 보호)
     parts = text.split('$')
     new_parts = []
     for i, part in enumerate(parts):
-        if i % 2 == 0:  # $ 기호 바깥 영역
+        if i % 2 == 0:
             if '<svg' not in part:
                 def replacer(match):
                     chunk = match.group(1).rstrip()
@@ -138,10 +138,10 @@ def format_math(text):
         new_parts.append(part)
     
     text = '$'.join(new_parts)
-    text = re.sub(r'\$\s*\$', '', text)
+    text = re.sub(r'\$\s*\$', '', result := text)
     text = re.sub(r'\${3,}', '$$', text)
     
-    # 7. [카드: 1, 2, 3] 태그 자동 변환
+    # 7. 카드 UI 변환
     def render_cards(match):
         items = [x.strip() for x in match.group(1).split(',') if x.strip()]
         card_html = '<div style="display:inline-flex; gap:8px; margin:8px 0; align-items:center; vertical-align:middle;">'
@@ -151,6 +151,14 @@ def format_math(text):
         return card_html
         
     text = re.sub(r'\[카드\s*:\s*([^\]]+)\]', render_cards, text)
+    
+    # ★ 8. SVG 다이어그램을 다크모드에서도 선명하게 보이도록 흰색 삽화 박스로 감싸기
+    def wrap_svg_card(match):
+        svg_content = match.group(0)
+        return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 12px 18px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
+    
+    text = re.sub(r'(<svg[\s\S]*?<\/svg>)', wrap_svg_card, text)
+    
     return text
 
 def parse_date_group(date_str):
@@ -684,7 +692,7 @@ with tab2:
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ SVG 그림 그리기, 빈칸 박스, 카드 UI 출제 지침 강화
+                    # ★ SVG 다이어그램, 빈칸 박스, 카드 UI 출제 지침
                     prompt = f"""
                     너는 대한민국 고등학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -699,7 +707,10 @@ with tab2:
                        - 2번(실력 키우기) 문제 역시 다른 후속 단원과 섞지 말고, **현재 원본 문제 단원 내에서만** 조건을 심화하여 출제하라.
                     2. **영역 색칠하기 / 지도 / 도형 다이어그램 (매우 중요):**
                        - 원본 문제가 '영역 색칠하기', '맞닿아 있는 면', '동심원 영역', '지도 색칠' 문제인 경우, 학생들이 각 영역(A, B, C, D)의 인접 관계를 알 수 있도록 **문제 지문 안에 간단한 인라인 SVG 다이어그램(`<svg width="180" height="120" viewBox="..." ...>...</svg>`)**을 반드시 직접 작성하여 넣어라.
-                       - SVG 스타일 규칙: 배경은 투명 또는 흰색, 테두리는 검정색(`stroke="#222" stroke-width="2"`), 영역 글자 레이블(A, B, C, D)은 굵은 폰트(`font-size="14" font-weight="bold" fill="#111"`)로 각 영역 정중앙에 배치할 것.
+                       - SVG 스타일 규칙:
+                         * 도형 테두리 선: `stroke="#111111"` `stroke-width="2"`
+                         * 영역 내부 채우기: `fill="#f8f9fa"` (면 구분용)
+                         * 영역 글자(A, B, C, D): `fill="#000000"` `font-size="16"` `font-weight="bold"` `font-family="sans-serif"` `text-anchor="middle"` `dominant-baseline="central"` 로 각 영역 정중앙에 선명하게 배치할 것.
                     3. **빈칸 채우기 및 증명 문제:**
                        - 빈칸은 반드시 `$\\boxed{{\\text{{ (가) }}}}$`, `$\\boxed{{\\text{{ (나) }}}}$`, `$\\boxed{{\\text{{ (다) }}}}$` 형태로 작성할 것.
                        - 증명 과정의 단계별 줄바꿈과 기하 기호($\\triangle, \\angle, \\overline{{AB}}, \\equiv, \\parallel, \\therefore$)를 명확하게 살려서 작성할 것.
