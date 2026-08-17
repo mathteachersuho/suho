@@ -109,7 +109,7 @@ def _md_table_to_html(lines):
     has_empty = any(_clean_cell(c) == '' for row in rows for c in row)
     
     if has_empty:
-        # ★ 전개도 스타일: 빈칸은 테두리/배경 완전히 제거, 글자 있는 면만 정사각형 굵은 테두리 적용
+        # 전개도 스타일
         html = '<div style="margin: 12px 0; overflow-x: auto;"><table style="border-collapse: collapse; margin: 0 auto; text-align: center; font-size: 15px;">'
         for row in rows:
             html += '<tr>'
@@ -123,7 +123,7 @@ def _md_table_to_html(lines):
         html += '</table></div>'
         return html
     else:
-        # 일반 데이터 표 스타일 (도수분포표, 집계표 등)
+        # 일반 데이터 표 스타일
         html = '<div style="margin: 10px 0; overflow-x: auto;"><table style="border-collapse: collapse; margin: 0 auto; text-align: center; font-size: 13.5px; border: 1px solid #777;">'
         for i, row in enumerate(rows):
             html += '<tr>'
@@ -170,7 +170,7 @@ def format_math(text):
     pattern_tab = r'\\begin\{tabular\}(?:\[[^\]]*\])?(?:\{[^\}]*\})([\s\S]*?)\\end\{tabular\}'
     text = re.sub(pattern_tab, replace_tabular, text)
     
-    # 4. 마크다운 표(|...|)를 HTML 표로 변환 (전개도 자동 분기)
+    # 4. 마크다운 표(|...|)를 HTML 표로 변환
     lines = text.split('\n')
     new_lines = []
     table_lines = []
@@ -780,13 +780,14 @@ with tab2:
         include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("Gemini가 단원 범위, 표, 전개도 조건에 맞춰 문제를 출제하고 있습니다..."):
+            with st.spinner("Gemini가 단원 범위, 수직선/도형 회전 조건에 맞춰 문제를 출제하고 있습니다..."):
                 try:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
+                    # ★ 수직선 위 정사각형/도형 회전 초경량 SVG + 전개도 표 규칙 추가
                     prompt = f"""
                     너는 대한민국 고등학교 및 중학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -797,23 +798,30 @@ with tab2:
                     [출제 원칙 및 교육과정 준수]
                     1. **단원 범위 준수 (선행 개념 절대 금지):**
                        - 원본 문제 단원 범위를 절대 벗어나지 마라.
-                    2. **전개도 문제 작성 규칙 (초고속 격자 표 블록):**
-                       - 원본 문제가 정육면체/직육면체 전개도 문제인 경우, 무거운 SVG 대신 **3x4 또는 4x3 마크다운 격자 표 블록(빈칸은 공백, 면에는 문자/숫자)**으로 작성하라:
+                    2. **수직선 위 정사각형/도형 회전 문제 작성 규칙 (★ 초경량 다이아몬드 SVG ★):**
+                       - 원본 문제가 수직선 위에 놓인 정사각형(ABCD) 회전 문제인 경우, **반드시 문제 지문 안에 가로 수직선과 마름모꼴 정사각형이 결합된 5~6줄짜리 초경량 SVG(`<svg width="240" height="120" viewBox="0 0 240 120">...</svg>`)를 작성하여 넣어라.**
+                       - 구성 요소:
+                         * 가로 수직선: `<line x1="20" y1="80" x2="220" y2="80" stroke="#111" stroke-width="1.5"/>`
+                         * 정사각형(기울어진 마름모 형태): `<polygon points="120,80 155,45 120,10 85,45" fill="#f8f9fa" stroke="#111" stroke-width="1.5"/>`
+                         * 꼭짓점 레이블: A(120, 72), B(163, 45), C(120, 5), D(77, 45)
+                         * 수직선 기준점/문자: 점 A 아래 수치, 좌우 회전 도착점 a(x=55), b(x=185) 및 눈금
+                    3. **전개도 문제 작성 규칙 (초고속 격자 표 블록):**
+                       - 원본 문제가 정육면체/직육면체 전개도 문제인 경우, 무거운 SVG 대신 3x4 또는 4x3 마크다운 격자 표 블록(빈칸은 공백, 면에는 문자/숫자)으로 작성하라:
                          |   | x |   |   |
                          |---|---|---|---|
                          | y | 3 | z | -3 |
                          |   | -4|   |   |
-                    3. **수직선 문제 작성 규칙:**
-                       - 수직선 위의 점이 분수/소수 위치에 있는 경우, 작은 등분 눈금선(`<line x1="x" y1="53" x2="x" y2="67" stroke="#777" stroke-width="1"/>`)을 넣어 2등분/3등분임을 표시하는 간단한 SVG로 작성하라.
-                    4. **꺾은선그래프 / 막대그래프 규칙:**
+                    4. **일반 수직선 문제 작성 규칙:**
+                       - 수직선 위의 점이 분수/소수 위치에 있는 경우, 작은 등분 눈금선을 넣어 2등분/3등분임을 표시하는 간단한 SVG로 작성하라.
+                    5. **꺾은선그래프 / 막대그래프 규칙:**
                        - 세로축(y축)에 도수 눈금 숫자와 단위를 `<text>`로 표시하고 데이터 라인/막대로 가볍게 작성하라.
-                    5. **토너먼트 / 대진표 문제:**
+                    6. **토너먼트 / 대진표 문제:**
                        - 대진표인 경우 심플한 SVG 트리로 작성할 것.
-                    6. **표(Table) 문제 작성 규칙:**
+                    7. **표(Table) 문제 작성 규칙:**
                        - 일반 표(도수분포표 등)가 필요한 경우 마크다운 표 형식으로 작성하고 셀 내부에 불필요한 $를 쓰지 마라.
-                    7. **빈칸 채우기 및 증명 문제:**
+                    8. **빈칸 채우기 및 증명 문제:**
                        - 빈칸은 반드시 `$\\boxed{{\\text{{ (가) }}}}$`, `$\\boxed{{\\text{{ (나) }}}}$` 형태로 작성할 것.
-                    8. **문제 구성:**
+                    9. **문제 구성:**
                        - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
                        - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
 
