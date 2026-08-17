@@ -83,7 +83,7 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링, 표(Table), SVG, 빈칸 박스 통합 엔진
+# ★ 수식 렌더링, 표(Table), 토너먼트/도형 SVG 통합 엔진
 # ==========================================
 def _clean_cell(col):
     """표 내부 셀의 불필요한 달러 기호($) 제거"""
@@ -224,7 +224,7 @@ def format_math(text):
         return card_html
     text = re.sub(r'\[카드\s*:\s*([^\]]+)\]', render_cards, text)
     
-    # 10. SVG 다이어그램 흰색 카드 박스 감싸기
+    # 10. 토너먼트/도형 SVG 다이어그램 흰색 카드 박스 감싸기
     def wrap_svg_card(match):
         svg_content = match.group(0)
         return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 12px 18px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
@@ -756,14 +756,14 @@ with tab2:
         include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("Gemini가 단원 범위, 표, 그림 조건에 맞춰 문제를 출제하고 있습니다..."):
+            with st.spinner("Gemini가 단원 범위, 표, 대진표 그래픽 조건에 맞춰 문제를 출제하고 있습니다..."):
                 try:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ 표(Markdown Table), SVG 다이어그램, 빈칸 박스, 카드 UI 출제 지침
+                    # ★ 토너먼트 대진표 SVG, 표(Markdown Table), 영역 SVG, 빈칸 박스, 카드 UI 출제 지침
                     prompt = f"""
                     너는 대한민국 고등학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -776,18 +776,21 @@ with tab2:
                        - 원본 문제가 미분/도함수 단원이면, 아직 배우지 않은 '적분 기호($\\int$)'나 적분 개념을 절대로 사용하지 마라.
                        - 원본 문제가 극한 단원이면 미분/적분을 쓰지 마라.
                        - 2번(실력 키우기) 문제 역시 다른 후속 단원과 섞지 말고, **현재 원본 문제 단원 내에서만** 조건을 심화하여 출제하라.
-                    2. **표(Table) 문제 작성 규칙 (매우 중요):**
+                    2. **토너먼트 / 대진표 문제 작성 규칙 (최우선 필수):**
+                       - 원본 문제가 '대진표', '토너먼트', '우승 확률', '리그전/토너먼트 경우의 수' 문제인 경우, **말로 길게 설명하지 말고 반드시 문제 지문 안에 실제 시험지와 똑같은 토너먼트 대진표 SVG(`<svg width="240" height="120" viewBox="0 0 240 120">...</svg>`)를 직접 그려서 넣어라.**
+                       - 대진표 하단에는 참가 팀 레이블(`<text x="..." y="105" font-size="12" font-weight="bold" text-anchor="middle" fill="#000">1반</text>`)을 배치하고, 위로 올라가는 대진 연결선(`<line x1="..." y1="..." x2="..." y2="..." stroke="#111" stroke-width="1.5"/>`)을 명확하게 연결하여 부전승 및 대진 트리를 시각적으로 완성할 것.
+                    3. **표(Table) 문제 작성 규칙:**
                        - 원본 문제에 표(도수분포표, 확률분포표, 집계표 등)가 포함된 경우, 문제 본문에 반드시 **마크다운 표 형식(`| 항목1 | 항목2 | ... |`)**으로 표를 작성하여 넣어라.
                        - 표 내부의 일반 숫자나 글자(예: 7, 5, A형, 학생 수 등)에는 $ 기호를 붙이지 말고 순수 텍스트/숫자로 작성할 것.
-                    3. **영역 색칠하기 / 지도 / 도형 다이어그램:**
+                    4. **영역 색칠하기 / 지도 / 도형 다이어그램:**
                        - 원본 문제가 '영역 색칠하기', '맞닿아 있는 면', '동심원 영역' 문제인 경우, 문제 본문 안에 인라인 SVG 다이어그램(`<svg width="180" height="120" viewBox="..." ...>...</svg>`)을 직접 작성하여 넣어라.
                        - SVG 스타일: 테두리는 `stroke="#111111" stroke-width="2"`, 영역 글자(A, B, C, D)는 `fill="#000000" font-size="16" font-weight="bold" text-anchor="middle" dominant-baseline="central"`.
-                    4. **빈칸 채우기 및 증명 문제:**
+                    5. **빈칸 채우기 및 증명 문제:**
                        - 빈칸은 반드시 `$\\boxed{{\\text{{ (가) }}}}$`, `$\\boxed{{\\text{{ (나) }}}}$`, `$\\boxed{{\\text{{ (다) }}}}$` 형태로 작성할 것.
                        - 증명 과정의 단계별 줄바꿈과 기하 기호($\\triangle, \\angle, \\overline{{AB}}, \\equiv, \\parallel, \\therefore$)를 명확하게 살려서 작성할 것.
-                    5. **카드 / 경우의 수 문제:**
+                    6. **카드 / 경우의 수 문제:**
                        - 숫자/문자 카드가 필요한 경우 지문에 `[카드: 1, 2, 3, 4, 5]` 형태로 작성하라.
-                    6. **문제 구성:**
+                    7. **문제 구성:**
                        - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
                        - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
 
