@@ -83,19 +83,20 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링 및 빨간 글씨 에러 복원 함수
+# ★ 수식 렌더링 및 제어문자 복원 함수
 # ==========================================
 def format_math(text):
     if not text:
         return ""
     text = str(text).replace('[br]', '\n\n')
     
-    # 1. 불필요하게 겹쳐진 백슬래시(\\\\)를 단일 백슬래시(\)로 완벽 복원 (빨간 글씨 에러 해결)
-    text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
-    text = re.sub(r'\\\\([a-zA-Z{}])', r'\\\1', text)
+    # JSON에서 변질된 제어문자(\f, \r 등) 강제 복구
+    text = text.replace('\x0c', r'\f')
     
-    # 2. 극한 기호 화살표가 lim 바로 밑에 위치하도록 \limits 자동 보정
-    text = re.sub(r'\\lim(?!\s*\\limits)', r'\\lim\\limits', text)
+    # 중복 \lim 보정
+    text = re.sub(r'(\\lim\s*)+', r'\\lim ', text)
+    text = re.sub(r'\\lim\s*\\limits', r'\\lim\\limits', text)
+    
     return text
 
 def parse_date_group(date_str):
@@ -358,30 +359,26 @@ with tab2:
                     2번 문제: 핵심 개념 기반의 응용 변형 문제
                     
                     [출력 형식]
-                    JSON으로만 반환: {{ "problems": [ {{"problem_num": 1, "question": "문제", "answer": "정답", "solution": "{solution_instruction}"}}, {{"problem_num": 2, "question": "문제", "answer": "정답", "solution": "{solution_instruction}"}} ] }}
+                    오직 JSON으로만 반환: {{ "problems": [ {{"problem_num": 1, "question": "문제", "answer": "정답", "solution": "{solution_instruction}"}}, {{"problem_num": 2, "question": "문제", "answer": "정답", "solution": "{solution_instruction}"}} ] }}
                     
-                    ⚠️ [수식 및 레이아웃 규칙]
-                    1. 모든 수식은 반드시 $ 기호로 감싸고, $ 기호 안에는 순수 수식 기호만 넣어 (한글 절대 포함 금지).
-                       (⭕ `$\\lim\\limits_{{x \\to a}} f(x)$ 의 값이`, ❌ `$\\lim f(x)의 값이$`)
-                    2. 극한 기호는 화살표가 lim 바로 밑에 오도록 반드시 `\\lim\\limits_{{x \\to a}}` 로 작성해.
-                    3. [보기]의 각 항목(ㄱ, ㄴ, ㄷ)은 문장 중간에 끊지 말고 한 줄로 깔끔하게 이어서 작성해.
-                       (예: [보기][br]ㄱ. $\\lim\\limits_{{x \\to a}} f(x)$와 $\\lim\\limits_{{x \\to a}} g(x)$의 값이 모두 존재하면 ...[br]ㄴ. ...)
-                    4. 줄바꿈은 \\n 대신 [br] 사용.
-                    5. ```json 없이 순수 JSON만 출력.
+                    ⚠️ [수식 작성 절대 규칙]
+                    1. 모든 수학 식은 예외 없이 `$수식$` 기호로 감싸라. (예: `$\\lim_{{x \\to 1}} \\frac{{f(x)}}{{g(x)}}$ 의 값`)
+                    2. $ 기호 안에는 순수 수식 기호만 들어가야 하며 한글은 절대 넣지 마라.
+                    3. 줄바꿈은 \\n 대신 [br] 사용.
+                    4. ```json 마크다운 태그 없이 순수 JSON만 출력.
                     """
                     
                     response = model.generate_content(prompt)
                     res_text = response.text.strip()
                     if res_text.startswith("```json"): res_text = res_text[7:-3].strip()
                     elif res_text.startswith("```"): res_text = res_text[3:-3].strip()
-                        
-                    try:
-                        parsed = json.loads(res_text)
-                    except json.JSONDecodeError:
-                        safe_text = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', res_text)
-                        parsed = json.loads(safe_text)
-                        
+                    
+                    # ★ [핵심 해결 필터] JSON 제어문자로 오인되는 단일 백슬래시를 이중 백슬래시로 보호
+                    clean_json = re.sub(r'\\(?!["]|\\)', r'\\\\', res_text)
+                    
+                    parsed = json.loads(clean_json)
                     problems = parsed.get("problems", [])
+                    
                     if problems:
                         st.session_state.similar_problems = problems
                         st.success(f"⚡ 생성 완료! (사용된 모델: {fast_model_name})")
