@@ -83,14 +83,25 @@ def set_app_status(status):
         f.write(status)
 
 # ==========================================
-# ★ 수식 렌더링, 전개도 맞춤 표, 그래프/도형 SVG 통합 엔진
+# ★ 수식 렌더링, 전개도 맞춤 표, 겨냥도/SVG 통합 엔진
 # ==========================================
+def convert_frac_to_html(text):
+    """분수(\\frac{a}{b})를 HTML 세로 분수로 변환하여 표/셀 내부 깨짐 방지"""
+    def repl(m):
+        sign = m.group(1) or ""
+        num = m.group(2).strip()
+        den = m.group(3).strip()
+        return f'{sign}<span style="display:inline-flex; flex-direction:column; vertical-align:middle; text-align:center; font-size:12px; line-height:1.1; margin:0 2px;"><span style="border-bottom:1.5px solid #111; padding:0 1px;">{num}</span><span>{den}</span></span>'
+    pattern = r'([+-]?)\s*\\frac\{([^{}]+)\}\{([^{}]+)\}'
+    return re.sub(pattern, repl, text)
+
 def _clean_cell(col):
-    """표 내부 셀의 불필요한 달러 기호($) 제거"""
+    """표 내부 셀의 불필요한 달러 기호($) 제거 및 분수 HTML 렌더링 지원"""
     col = col.strip()
-    col = re.sub(r'\$([0-9a-zA-Z가-힣\s,.~%+-]+)\$', r'\1', col)
-    if col.startswith('$') and col.endswith('$') and '\\' not in col:
+    if col.startswith('$') and col.endswith('$'):
         col = col[1:-1].strip()
+    col = convert_frac_to_html(col)
+    col = col.replace('$', '')
     return col
 
 def _md_table_to_html(lines):
@@ -109,8 +120,8 @@ def _md_table_to_html(lines):
     has_empty = any(_clean_cell(c) == '' for row in rows for c in row)
     
     if has_empty:
-        # 전개도 스타일
-        html = '<div style="margin: 12px 0; overflow-x: auto;"><table style="border-collapse: collapse; margin: 0 auto; text-align: center; font-size: 15px;">'
+        # ★ 전개도 스타일: 빈칸은 투명, 면은 정사각형 굵은 테두리
+        html = '<div style="margin: 12px 0; overflow-x: auto;"><table style="border-collapse: collapse; margin: 0 auto; text-align: center; font-size: 14.5px;">'
         for row in rows:
             html += '<tr>'
             for col in row:
@@ -170,7 +181,7 @@ def format_math(text):
     pattern_tab = r'\\begin\{tabular\}(?:\[[^\]]*\])?(?:\{[^\}]*\})([\s\S]*?)\\end\{tabular\}'
     text = re.sub(pattern_tab, replace_tabular, text)
     
-    # 4. 마크다운 표(|...|)를 HTML 표로 변환
+    # 4. 마크다운 표(|...|)를 HTML 표로 변환 (전개도 자동 분기)
     lines = text.split('\n')
     new_lines = []
     table_lines = []
@@ -248,7 +259,7 @@ def format_math(text):
         return card_html
     text = re.sub(r'\[카드\s*:\s*([^\]]+)\]', render_cards, text)
     
-    # 11. 수직선/그래프/도형 SVG 다이어그램 흰색 카드 박스 감싸기
+    # 11. 수직선/겨냥도/그래프/도형 SVG 다이어그램 흰색 카드 박스 감싸기
     def wrap_svg_card(match):
         svg_content = match.group(0)
         return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 10px 14px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
@@ -780,14 +791,14 @@ with tab2:
         include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
         if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("Gemini가 단원 범위, 수직선/도형 회전 조건에 맞춰 문제를 출제하고 있습니다..."):
+            with st.spinner("Gemini가 단원 범위, 겨냥도/전개도 조건에 맞춰 문제를 출제하고 있습니다..."):
                 try:
                     fast_model_name = get_fastest_model_name(gemini_api_key)
                     model = genai.GenerativeModel(fast_model_name)
                     
                     solution_instruction = "학생들이 이해하기 쉽게 단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                     
-                    # ★ 수직선 위 정사각형/도형 회전 초경량 SVG + 전개도 표 규칙 추가
+                    # ★ 3D 겨냥도 SVG + 전개도 표 규칙 강화 프롬프트
                     prompt = f"""
                     너는 대한민국 고등학교 및 중학교 수학 교육과정에 엄격히 맞추는 출제 위원이야.
                     아래 [원본 문제]의 **'단원 범위와 출제 개념'**을 절대 벗어나지 말고 [유사 문제 1]과 [유사 문제 2]를 제작해줘.
@@ -798,30 +809,30 @@ with tab2:
                     [출제 원칙 및 교육과정 준수]
                     1. **단원 범위 준수 (선행 개념 절대 금지):**
                        - 원본 문제 단원 범위를 절대 벗어나지 마라.
-                    2. **수직선 위 정사각형/도형 회전 문제 작성 규칙 (★ 초경량 다이아몬드 SVG ★):**
-                       - 원본 문제가 수직선 위에 놓인 정사각형(ABCD) 회전 문제인 경우, **반드시 문제 지문 안에 가로 수직선과 마름모꼴 정사각형이 결합된 5~6줄짜리 초경량 SVG(`<svg width="240" height="120" viewBox="0 0 240 120">...</svg>`)를 작성하여 넣어라.**
-                       - 구성 요소:
-                         * 가로 수직선: `<line x1="20" y1="80" x2="220" y2="80" stroke="#111" stroke-width="1.5"/>`
-                         * 정사각형(기울어진 마름모 형태): `<polygon points="120,80 155,45 120,10 85,45" fill="#f8f9fa" stroke="#111" stroke-width="1.5"/>`
-                         * 꼭짓점 레이블: A(120, 72), B(163, 45), C(120, 5), D(77, 45)
-                         * 수직선 기준점/문자: 점 A 아래 수치, 좌우 회전 도착점 a(x=55), b(x=185) 및 눈금
-                    3. **전개도 문제 작성 규칙 (초고속 격자 표 블록):**
-                       - 원본 문제가 정육면체/직육면체 전개도 문제인 경우, 무거운 SVG 대신 3x4 또는 4x3 마크다운 격자 표 블록(빈칸은 공백, 면에는 문자/숫자)으로 작성하라:
-                         |   | x |   |   |
+                    2. **정육면체 겨냥도 문제 작성 규칙 (★ 3면이 보이는 3D 큐브 SVG ★):**
+                       - 원본 문제가 3면이 보이는 정육면체 입체도형(겨냥도) 문제인 경우, **억지로 전개도로 바꾸지 말고 아래와 같이 1초 만에 렌더링되는 10줄짜리 3D 큐브 인라인 SVG(`<svg width="150" height="120" viewBox="0 0 150 120">...</svg>`)로 작성하라:**
+                         * 윗면: `<polygon points="75,15 120,35 75,55 30,35" fill="#f8f9fa" stroke="#111" stroke-width="1.5"/>` 및 글자/숫자 `<text x="75" y="38" font-size="12" font-weight="bold" fill="#000" text-anchor="middle">윗면값</text>`
+                         * 왼쪽면: `<polygon points="30,35 75,55 75,105 30,85" fill="#ffffff" stroke="#111" stroke-width="1.5"/>` 및 글자/숫자 `<text x="52" y="75" font-size="12" font-weight="bold" fill="#000" text-anchor="middle">왼쪽값</text>`
+                         * 오른쪽면: `<polygon points="75,55 120,35 120,85 75,105" fill="#f1f3f5" stroke="#111" stroke-width="1.5"/>` 및 글자/숫자 `<text x="98" y="75" font-size="12" font-weight="bold" fill="#000" text-anchor="middle">오른쪽값</text>`
+                    3. **정육면체 전개도 문제 작성 규칙 (초고속 격자 표 블록):**
+                       - 원본 문제가 펼쳐진 전개도 문제인 경우, 3x4 또는 4x3 마크다운 격자 표 블록(빈칸은 공백, 면에는 문자/숫자)으로 작성하라:
+                         |   | 0.25 |   |   |
                          |---|---|---|---|
-                         | y | 3 | z | -3 |
-                         |   | -4|   |   |
-                    4. **일반 수직선 문제 작성 규칙:**
-                       - 수직선 위의 점이 분수/소수 위치에 있는 경우, 작은 등분 눈금선을 넣어 2등분/3등분임을 표시하는 간단한 SVG로 작성하라.
-                    5. **꺾은선그래프 / 막대그래프 규칙:**
+                         | a | $-\\frac{{5}}{{2}}$ | b | -0.8 |
+                         |   | c |   |   |
+                    4. **수직선 위 정사각형 회전 문제:**
+                       - 수직선 위에 놓인 정사각형(ABCD) 회전 문제인 경우, 수직선과 마름모꼴 사각형이 결합된 가벼운 SVG(`<svg width="240" height="120">...</svg>`)로 작성하라.
+                    5. **수직선 문제 작성 규칙:**
+                       - 수직선 위의 점이 분수/소수 위치에 있는 경우 작은 등분 눈금선을 넣어 2등분/3등분임을 표시하는 간단한 SVG로 작성하라.
+                    6. **꺾은선그래프 / 막대그래프 규칙:**
                        - 세로축(y축)에 도수 눈금 숫자와 단위를 `<text>`로 표시하고 데이터 라인/막대로 가볍게 작성하라.
-                    6. **토너먼트 / 대진표 문제:**
+                    7. **토너먼트 / 대진표 문제:**
                        - 대진표인 경우 심플한 SVG 트리로 작성할 것.
-                    7. **표(Table) 문제 작성 규칙:**
+                    8. **표(Table) 문제 작성 규칙:**
                        - 일반 표(도수분포표 등)가 필요한 경우 마크다운 표 형식으로 작성하고 셀 내부에 불필요한 $를 쓰지 마라.
-                    8. **빈칸 채우기 및 증명 문제:**
+                    9. **빈칸 채우기 및 증명 문제:**
                        - 빈칸은 반드시 `$\\boxed{{\\text{{ (가) }}}}$`, `$\\boxed{{\\text{{ (나) }}}}$` 형태로 작성할 것.
-                    9. **문제 구성:**
+                    10. **문제 구성:**
                        - 1번 문제: 조건과 숫자만 바꾼 기본 다지기 문제
                        - 2번 문제: 같은 단원 개념 내에서 묻는 방식을 변형한 실력 키우기 문제
 
