@@ -6,6 +6,8 @@ import re
 import os
 import time
 import datetime
+import io
+from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
 
@@ -25,20 +27,34 @@ sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "").strip()
 # 토큰이 설정돼 있지 않으면 경고만 띄우고, 기존처럼 인증 없이 동작합니다(하위 호환).
 sheet_api_token = st.secrets.get("SHEET_API_TOKEN", "").strip()
 
-def fetch_problems():
-    """구글 시트에서 전체 과제 불러오기 (캐시 방지 적용)"""
+def fetch_problems(class_id=None, since_date=None):
+    """구글 시트에서 과제 불러오기 (캐시 방지 적용)
+    class_id, since_date를 지정하면 Apps Script가 서버에서 미리 걸러서
+    보내주기 때문에, 데이터가 아무리 쌓여도 매번 받는 양이 일정하게 유지됩니다.
+    class_id: 특정 반만 (예: "1M2")
+    since_date: 이 날짜(YYYY-MM-DD) 이후 과제만
+    """
     if not sheet_url:
         if os.path.exists("shared_problems.json"):
             with open("shared_problems.json", "r", encoding="utf-8") as f:
-                return json.load(f)
-        return []
+                all_local = json.load(f)
+        else:
+            all_local = []
+        # 로컬 모드에서는 데이터량이 적으므로 파이썬에서 간단히 필터링
+        if class_id:
+            all_local = [p for p in all_local if str(p.get("class_id", "")).strip() == class_id.strip()]
+        if since_date:
+            all_local = [p for p in all_local if str(p.get("date", "")) >= since_date]
+        return all_local
     
     try:
         fetch_url = f"{sheet_url}?t={int(time.time() * 1000)}"
         if sheet_api_token:
             fetch_url += f"&token={sheet_api_token}"
-        # ★ 수정: 사진(base64) 포함된 문제가 많이 쌓이면 응답이 커져서
-        # 10초로는 부족할 수 있어 30초로 늘림
+        if class_id:
+            fetch_url += f"&class_id={class_id}"
+        if since_date:
+            fetch_url += f"&since={since_date}"
         res = requests.get(fetch_url, timeout=30)
         if res.status_code == 200:
             data = res.json()
@@ -57,6 +73,44 @@ def fetch_problems():
     except Exception as e:
         st.error(f"데이터베이스 연결 오류: {e}")
     return []
+
+def compress_image_for_storage(image_b64, max_dimension=700, max_chars=40000):
+    """구글 시트 셀 용량 제한(50,000자)에 안전하게 걸리도록 사진을 압축.
+    화질/크기를 단계적으로 낮춰가며 base64 길이가 max_chars 이하가 될 때까지 시도한다.
+    (OCR용 원본과는 별개로, 저장/미리보기용 사본만 이렇게 줄인다)
+    """
+    if not image_b64:
+        return ""
+    try:
+        raw = base64.b64decode(image_b64)
+        img = Image.open(io.BytesIO(raw))
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+
+        w, h = img.size
+        scale = min(1.0, max_dimension / max(w, h))
+        if scale < 1.0:
+            img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+
+        quality = 60
+        encoded = ""
+        while quality >= 20:
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality)
+            encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+            if len(encoded) <= max_chars:
+                return encoded
+            quality -= 10
+
+        # 화질을 최소치까지 낮춰도 넘으면, 크기 자체를 한 번 더 줄여서 최종 시도
+        img = img.resize((max(1, int(img.width * 0.6)), max(1, int(img.height * 0.6))))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=40)
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+    except Exception:
+        # 압축 자체가 실패해도 과제 등록 전체가 막히면 안 되므로, 사진 없이 진행
+        return ""
+
 
 def save_problem(problem_data):
     """구글 시트에 새 과제 추가하기"""
@@ -741,12 +795,30 @@ with tab1:
         st.write("")
         if st.button("🔄 최신 과제 새로고침"):
             st.rerun()
-        
+
+    # ★ 수정: 데이터가 계속 쌓여도 매번 받는 양이 일정하게 유지되도록,
+    # 기본은 "최근 30일"치만 서버에서 걸러받는다. 반이 바뀌면 기간 설정도 초기화.
+    if "board_range_days" not in st.session_state or st.session_state.get("board_range_class") != view_class:
+        st.session_state.board_range_days = 30
+        st.session_state.board_range_class = view_class
+
     st.subheader(f"📋 [{view_class}] 과제 게시판")
-    
+
+    show_all = st.session_state.board_range_days is None
+    since_date = None
+    if not show_all:
+        since_date = (datetime.date.today() - datetime.timedelta(days=st.session_state.board_range_days)).strftime("%Y-%m-%d")
+
     with st.spinner("과제 목록을 불러오는 중..."):
-        all_problems = fetch_problems()
-    
+        all_problems = fetch_problems(class_id=view_class, since_date=since_date)
+
+    if not show_all:
+        st.caption(f"📅 최근 {st.session_state.board_range_days}일치만 표시 중")
+        if st.button("📜 이전 과제 더 보기 (전체 기간 보기)", key="load_more_btn"):
+            st.session_state.board_range_days = None
+            st.rerun()
+
+    # 서버에서 이미 반 기준으로 걸러받았지만, 혹시 모를 값 불일치에 대비해 한 번 더 확인
     filtered = [p for p in all_problems if str(p.get("class_id", "")).strip() == view_class.strip()]
     
     if not filtered:
@@ -932,11 +1004,14 @@ with tab2:
                     st.write("")
                     st.write("")
                     if st.button(f"🚀 [{target_class}] 과제 바로 등록하기", type="primary"):
+                        # ★ 수정: 시트 셀 용량 제한(50,000자)에 안전하게 걸리도록
+                        # 저장용 사진만 별도로 압축 (OCR에는 영향 없음 - 이미 인식 끝난 뒤라서)
+                        compressed_b64 = compress_image_for_storage(st.session_state.current_image_b64)
                         new_prob = {
                             "id": str(int(time.time())),
                             "class_id": target_class, 
                             "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "image_b64": st.session_state.current_image_b64 or "",
+                            "image_b64": compressed_b64,
                             "q1": p1["question"],
                             "a1": p1["answer"],
                             "s1": p1.get("solution", ""),
@@ -948,6 +1023,10 @@ with tab2:
                             if save_problem(new_prob):
                                 st.success(f"✅ [{target_class}] 과제 등록 완료!")
                                 time.sleep(0.5)
+                            else:
+                                # ★ 수정: 예전에는 실패해도 아무 표시가 없어서
+                                # "분명 등록했는데 게시판에 안 보인다"는 원인 파악이 어려웠음
+                                st.error("❌ 과제 등록에 실패했습니다. 잠시 후 다시 시도해 주세요.")
                 
                 # 빠른 단어·숫자 1초 교체 도구
                 with st.expander("⚡ [빠른 단어·숫자 바꾸기] 화면을 보면서 오타/숫자만 1초 교체", expanded=False):
