@@ -295,16 +295,39 @@ def delete_personal_problem(student_id, prob_id):
     return result.get("status") == "deleted"
 
 
-STATUS_FILE = "app_status.txt"
+STATUS_FILE = "app_status.txt"  # 로컬(구글시트 미연동) 개발 모드에서만 쓰이는 대체 저장소
+
 def get_app_status():
-    if os.path.exists(STATUS_FILE):
-        with open(STATUS_FILE, "r") as f:
-            return f.read().strip()
+    """앱 전체 ON/OFF 상태 조회.
+    ★ 수정: 예전에는 서버 로컬 디스크에 파일로 저장했는데, Streamlit Cloud처럼
+    디스크가 휘발성인 환경에서는 서버가 재시작(재배포, 절전 후 재가동 등)될
+    때마다 값이 사라져서 수업 도중 갑자기 OFF로 리셋되는 문제가 있었음.
+    이제는 Apps Script의 스크립트 속성(구글 쪽)에 저장해서, 서버가 몇 번을
+    재시작해도 값이 유지되도록 함.
+    """
+    if not sheet_url:
+        if os.path.exists(STATUS_FILE):
+            with open(STATUS_FILE, "r") as f:
+                return f.read().strip()
+        return "OFF"
+    try:
+        url = f"{sheet_url}?action=get_status&t={int(time.time() * 1000)}"
+        if sheet_api_token:
+            url += f"&token={sheet_api_token}"
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            return data.get("status", "OFF")
+    except Exception:
+        pass
     return "OFF"
 
 def set_app_status(status):
-    with open(STATUS_FILE, "w") as f:
-        f.write(status)
+    if not sheet_url:
+        with open(STATUS_FILE, "w") as f:
+            f.write(status)
+        return
+    _post_action({"action": "set_status", "status": status})
 
 # ==========================================
 # ★ 보안 수정: HTML 살균(sanitize) 엔진
