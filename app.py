@@ -398,6 +398,20 @@ def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instructi
     2. **도형/그래프/수직선 SVG 초경량 작성:**
        - 도형이 필요한 경우 6~8줄 이내의 초간단 인라인 SVG(`<svg width="220" height="130" viewBox="0 0 220 130">...</svg>`)로 작성하라.
        - 모든 SVG 텍스트는 `fill="#000000"`으로 작성하라.
+    2-1. **좌표평면(점의 좌표, 그래프 위 점 찍기 등) 문제 전용 규칙:**
+       - 반드시 아래 예시처럼 `<pattern>`으로 연한 회색 격자를 배경 전체에 채우고, 그 위에 x축/y축(화살표 포함)과 점들을 검은색으로 찍어라. 격자 눈금 간격은 20으로 고정한다:
+         <svg width="200" height="200" viewBox="0 0 200 200">
+           <defs><pattern id="g" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#dddddd" stroke-width="1"/></pattern></defs>
+           <rect width="200" height="200" fill="url(#g)"/>
+           <line x1="0" y1="100" x2="200" y2="100" stroke="#000000" stroke-width="1.5"/>
+           <line x1="100" y1="0" x2="100" y2="200" stroke="#000000" stroke-width="1.5"/>
+           <polygon points="200,100 193,96 193,104" fill="#000000"/>
+           <polygon points="100,0 96,7 104,7" fill="#000000"/>
+           <text x="205" y="104" font-size="12" fill="#000000">x</text>
+           <text x="104" y="10" font-size="12" fill="#000000">y</text>
+           <circle cx="120" cy="80" r="3" fill="#000000"/><text x="124" y="76" font-size="12" fill="#000000">A</text>
+         </svg>
+       - 점의 좌표는 격자 눈금(20 간격) 위에만 찍어라. 점과 라벨(A, B, C...) 외의 불필요한 장식은 넣지 마라.
     3. **정육면체 겨냥도/전개도:**
        - 3D 겨냥도는 3면 큐브 SVG로, 펼쳐진 전개도는 3x4 마크다운 격자 표로 작성하라.
     4. **수식 표기:** 지문 본문에서 단순 문자(A, B, C, 보기 ㄱ, ㄴ, ㄷ 등)에는 $를 쓰지 말고, 분수식/계산식만 `$수식$`으로 작성하라.
