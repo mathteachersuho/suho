@@ -209,6 +209,26 @@ def admin_assign_class(student_id, class_id):
     return bool(result.get("ok"))
 
 
+def student_withdraw(student_id, password):
+    """학생 본인 탈퇴 - 비밀번호 재확인 필요. 계정+개인보관함이 함께 삭제됨."""
+    return _post_action({
+        "action": "withdraw",
+        "student_id": student_id,
+        "password_hash": hash_password(password),
+        "by_admin": False,
+    })
+
+
+def admin_withdraw_student(student_id):
+    """관리자가 특정 학생을 강제 탈퇴 - 비밀번호 확인 없이 즉시 처리. 계정+개인보관함이 함께 삭제됨."""
+    result = _post_action({
+        "action": "withdraw",
+        "student_id": student_id,
+        "by_admin": True,
+    })
+    return bool(result.get("ok"))
+
+
 def admin_list_students():
     """관리자용 - 전체 학생 아이디와 배정된 반 목록 (비밀번호 해시는 절대 포함 안 됨)."""
     if not sheet_url:
@@ -952,6 +972,28 @@ with st.sidebar:
             st.session_state.auth_role = None
             st.session_state.auth_student_id = None
             st.rerun()
+
+        # ★ 수정: 학생 본인 탈퇴 기능 (비밀번호 재확인 + 확인 체크박스 필요)
+        if st.session_state.auth_role != "admin":
+            with st.expander("⚠️ 회원 탈퇴"):
+                st.caption("탈퇴하면 계정과 내 보관함에 저장한 모든 문제가 삭제되며, 되돌릴 수 없습니다.")
+                wd_pw = st.text_input("본인 확인을 위해 비밀번호를 입력하세요", type="password", key="withdraw_pw")
+                wd_confirm = st.checkbox("탈퇴 시 모든 데이터가 삭제된다는 것을 이해했습니다", key="withdraw_confirm")
+                if st.button("탈퇴하기", key="withdraw_btn"):
+                    if not wd_pw:
+                        st.warning("비밀번호를 입력해주세요.")
+                    elif not wd_confirm:
+                        st.warning("탈퇴 확인 체크박스를 선택해주세요.")
+                    else:
+                        with st.spinner("탈퇴 처리 중..."):
+                            result = student_withdraw(st.session_state.auth_student_id, wd_pw)
+                        if result.get("ok"):
+                            st.session_state.auth_role = None
+                            st.session_state.auth_student_id = None
+                            st.success("탈퇴 처리되었습니다.")
+                            st.rerun()
+                        else:
+                            st.error(result.get("error", "탈퇴에 실패했습니다."))
     else:
         login_mode = st.radio("로그인 유형", ["학생", "선생님"], horizontal=True)
 
@@ -1032,6 +1074,29 @@ with st.sidebar:
                     st.rerun()
                 else:
                     st.error("배정에 실패했습니다.")
+        else:
+            st.caption("아직 가입한 학생이 없습니다.")
+
+        st.divider()
+        st.header("🚫 학생 탈퇴 처리")
+        # ★ 수정: 관리자가 특정 학생을 강제 탈퇴시키는 기능. 위에서 이미 불러온
+        # student_list를 재사용해서 목록을 다시 조회하지 않음.
+        if student_list:
+            wd_sid_options = [s.get("student_id", "") for s in student_list]
+            wd_pick_sid = st.selectbox("탈퇴시킬 학생 아이디", wd_sid_options, key="admin_withdraw_pick_sid")
+            st.caption("⚠️ 탈퇴 처리하면 해당 학생의 계정과 개인 보관함 데이터가 모두 삭제되며, 되돌릴 수 없습니다.")
+            wd_admin_confirm = st.checkbox(f"'{wd_pick_sid}' 학생을 정말 탈퇴시키겠습니까?", key="admin_withdraw_confirm")
+            if st.button("탈퇴 처리하기", key="admin_withdraw_btn"):
+                if not wd_admin_confirm:
+                    st.warning("확인 체크박스를 선택해주세요.")
+                else:
+                    with st.spinner("탈퇴 처리 중..."):
+                        ok = admin_withdraw_student(wd_pick_sid)
+                    if ok:
+                        st.success(f"'{wd_pick_sid}' 학생을 탈퇴 처리했습니다.")
+                        st.rerun()
+                    else:
+                        st.error("탈퇴 처리에 실패했습니다.")
         else:
             st.caption("아직 가입한 학생이 없습니다.")
 
