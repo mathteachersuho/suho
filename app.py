@@ -19,6 +19,12 @@ st.title("📐 AI 수학 온라인 클래스룸")
 # ==========================================
 sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "").strip()
 
+# ★ 보안 수정: Apps Script와 서로 확인하는 '비밀 토큰'.
+# 이 값은 st.secrets(Streamlit Cloud의 Settings > Secrets)에만 저장하고,
+# 같은 값을 Apps Script 쪽 스크립트 속성(SECRET_TOKEN)에도 넣어야 서로 짝이 맞습니다.
+# 토큰이 설정돼 있지 않으면 경고만 띄우고, 기존처럼 인증 없이 동작합니다(하위 호환).
+sheet_api_token = st.secrets.get("SHEET_API_TOKEN", "").strip()
+
 def fetch_problems():
     """구글 시트에서 전체 과제 불러오기 (캐시 방지 적용)"""
     if not sheet_url:
@@ -29,13 +35,25 @@ def fetch_problems():
     
     try:
         fetch_url = f"{sheet_url}?t={int(time.time() * 1000)}"
-        res = requests.get(fetch_url, timeout=10)
+        if sheet_api_token:
+            fetch_url += f"&token={sheet_api_token}"
+        # ★ 수정: 사진(base64) 포함된 문제가 많이 쌓이면 응답이 커져서
+        # 10초로는 부족할 수 있어 30초로 늘림
+        res = requests.get(fetch_url, timeout=30)
         if res.status_code == 200:
             data = res.json()
             if isinstance(data, list):
                 return data
             elif isinstance(data, str):
                 return json.loads(data)
+            elif isinstance(data, dict) and data.get("error"):
+                # ★ 보안 수정: 토큰 불일치 등으로 거부된 경우 화면에 바로 표시
+                # (예전에는 이 경우 그냥 빈 목록으로 처리되어 원인을 알기 어려웠음)
+                st.error(
+                    f"⚠️ 구글 시트 인증 실패: '{data.get('error')}'. "
+                    "SHEET_API_TOKEN과 Apps Script의 SECRET_TOKEN 값이 일치하는지, "
+                    "Apps Script가 새 버전으로 재배포됐는지 확인해 주세요."
+                )
     except Exception as e:
         st.error(f"데이터베이스 연결 오류: {e}")
     return []
@@ -50,7 +68,11 @@ def save_problem(problem_data):
         return True
     
     try:
-        res = requests.post(sheet_url, json=problem_data, timeout=10)
+        # ★ 보안 수정: 실제 문제 데이터에 비밀 토큰을 함께 담아 전송.
+        # Apps Script가 이 토큰을 확인해서 일치할 때만 저장을 허용합니다.
+        payload = dict(problem_data)
+        payload["_token"] = sheet_api_token
+        res = requests.post(sheet_url, json=payload, timeout=10)
         return res.status_code == 200
     except Exception as e:
         st.error(f"과제 등록 오류: {e}")
@@ -66,7 +88,12 @@ def delete_problem(prob_id):
         return True
     
     try:
-        res = requests.post(sheet_url, json={"action": "delete", "id": str(prob_id)}, timeout=10)
+        # ★ 보안 수정: 삭제 요청에도 비밀 토큰을 함께 전송.
+        res = requests.post(
+            sheet_url,
+            json={"action": "delete", "id": str(prob_id), "_token": sheet_api_token},
+            timeout=10,
+        )
         return res.status_code == 200
     except Exception as e:
         st.error(f"과제 삭제 오류: {e}")
@@ -673,6 +700,13 @@ if not (mathpix_app_id and mathpix_app_key and gemini_api_key):
     st.stop()
 
 st.caption(f"현재 접속 권한: **{'선생님 (모든 반 관리)' if current_role == 'admin' else current_role}**")
+
+if current_role == "admin" and sheet_url and not sheet_api_token:
+    st.warning(
+        "⚠️ 보안 경고: SHEET_API_TOKEN이 설정되어 있지 않습니다. "
+        "지금은 구글 시트 주소만 알면 앱을 거치지 않고도 누구나 과제를 추가/삭제할 수 있는 상태입니다. "
+        "Secrets에 SHEET_API_TOKEN을 추가하고, Apps Script 쪽 스크립트 속성에도 같은 값을 넣어주세요."
+    )
 
 # ==========================================
 # 메인 화면: 두 개의 탭
