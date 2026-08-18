@@ -7,6 +7,7 @@ import os
 import time
 import datetime
 import io
+import hashlib
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
@@ -152,6 +153,127 @@ def delete_problem(prob_id):
     except Exception as e:
         st.error(f"과제 삭제 오류: {e}")
         return False
+
+# ==========================================
+# ★ 학생 개인 계정 + 개인 보관함
+# ==========================================
+password_salt = st.secrets.get("PASSWORD_SALT", "").strip()
+
+def hash_password(raw_password):
+    """비밀번호를 평문으로 저장/전송하지 않기 위한 해시 처리.
+    Streamlit(파이썬) 쪽에서만 해시를 계산하고, Apps Script는 해시값만
+    저장·비교한다 (평문 비밀번호가 서버 쪽 코드에 전혀 남지 않음)."""
+    return hashlib.sha256((password_salt + raw_password).encode("utf-8")).hexdigest()
+
+
+def _post_action(payload):
+    """Apps Script에 action 기반 POST 요청을 보내는 공통 헬퍼 (계정/보관함용)."""
+    if not sheet_url:
+        return {"ok": False, "error": "로컬 모드에서는 계정 기능을 사용할 수 없습니다."}
+    try:
+        payload = dict(payload)
+        payload["_token"] = sheet_api_token
+        res = requests.post(sheet_url, json=payload, timeout=15)
+        if res.status_code == 200:
+            return res.json()
+        return {"ok": False, "error": f"서버 오류 (status {res.status_code})"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def student_signup(student_id, password):
+    """학생 회원가입. 반은 아직 배정되지 않은 상태(class_id="")로 생성됨."""
+    return _post_action({
+        "action": "signup",
+        "student_id": student_id.strip(),
+        "password_hash": hash_password(password),
+    })
+
+
+def student_login(student_id, password):
+    """학생 로그인. 성공하면 {'ok': True, 'class_id': ...} 반환."""
+    return _post_action({
+        "action": "login",
+        "student_id": student_id.strip(),
+        "password_hash": hash_password(password),
+    })
+
+
+def admin_assign_class(student_id, class_id):
+    """관리자가 특정 학생에게 반을 배정."""
+    result = _post_action({
+        "action": "assign_class",
+        "student_id": student_id,
+        "class_id": class_id,
+    })
+    return bool(result.get("ok"))
+
+
+def admin_list_students():
+    """관리자용 - 전체 학생 아이디와 배정된 반 목록 (비밀번호 해시는 절대 포함 안 됨)."""
+    if not sheet_url:
+        return []
+    try:
+        url = f"{sheet_url}?action=list_students&t={int(time.time() * 1000)}"
+        if sheet_api_token:
+            url += f"&token={sheet_api_token}"
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+            if isinstance(data, list):
+                return data
+    except Exception as e:
+        st.error(f"학생 목록 조회 오류: {e}")
+    return []
+
+
+def fetch_personal_problems(student_id, source=None):
+    """특정 학생의 개인 보관함 조회. source='self'(스스로 만든 것) 또는 'board'(게시판에서 저장한 것)."""
+    if not sheet_url:
+        return []
+    try:
+        url = f"{sheet_url}?sheet=personal_problems&student_id={student_id}&t={int(time.time() * 1000)}"
+        if source:
+            url += f"&source={source}"
+        if sheet_api_token:
+            url += f"&token={sheet_api_token}"
+        res = requests.get(url, timeout=15)
+        if res.status_code == 200:
+            data = res.json()
+            if isinstance(data, list):
+                return data
+    except Exception as e:
+        st.error(f"보관함 조회 오류: {e}")
+    return []
+
+
+def build_personal_payload(student_id, class_id, source, origin_id, q1, a1, s1, q2, a2, s2, image_b64=""):
+    return {
+        "id": f"{int(time.time() * 1000)}_{student_id}",
+        "student_id": student_id,
+        "class_id": class_id or "",
+        "source": source,  # "self"(스스로 생성) 또는 "board"(게시판에서 저장)
+        "origin_id": origin_id or "",
+        "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "image_b64": image_b64 or "",
+        "q1": q1, "a1": a1, "s1": s1,
+        "q2": q2, "a2": a2, "s2": s2,
+    }
+
+
+def save_personal_problem(data):
+    result = _post_action(dict(data, action="save_personal"))
+    return result.get("status") == "success"
+
+
+def delete_personal_problem(student_id, prob_id):
+    result = _post_action({
+        "action": "delete_personal",
+        "student_id": student_id,
+        "id": prob_id,
+    })
+    return result.get("status") == "deleted"
+
 
 STATUS_FILE = "app_status.txt"
 def get_app_status():
@@ -743,6 +865,45 @@ def make_printable_html(title, items):
 </html>"""
     return full_html
 
+def render_personal_item(p, student_id):
+    """개인 보관함(내 보관함) 화면에서 문제 하나를 카드 형태로 표시."""
+    with st.container():
+        label = "🖊️ 내가 만든 문제" if p.get("source") == "self" else "🔖 게시판에서 저장한 문제"
+        st.markdown(f"##### {label} · 📅 {p.get('date', '')}")
+
+        if p.get("image_b64"):
+            st.image(f"data:image/jpeg;base64,{p['image_b64']}", use_container_width=True)
+
+        q1_safe = format_math(p.get("q1", ""))
+        a1_safe = format_math(p.get("a1", ""))
+        s1_safe = format_math(p.get("s1", ""))
+        q2_safe = format_math(p.get("q2", ""))
+        a2_safe = format_math(p.get("a2", ""))
+        s2_safe = format_math(p.get("s2", ""))
+
+        st.markdown("#### [문제 1] 기본 다지기")
+        st.markdown(q1_safe, unsafe_allow_html=True)
+        with st.expander("🔍 1번 정답 및 풀이 확인"):
+            st.markdown(f"**정답:** {a1_safe}", unsafe_allow_html=True)
+            if s1_safe:
+                st.markdown(f"**풀이:**\n\n{s1_safe}", unsafe_allow_html=True)
+
+        st.markdown("#### [문제 2] 실력 키우기")
+        st.markdown(q2_safe, unsafe_allow_html=True)
+        with st.expander("🔍 2번 정답 및 풀이 확인"):
+            st.markdown(f"**정답:** {a2_safe}", unsafe_allow_html=True)
+            if s2_safe:
+                st.markdown(f"**풀이:**\n\n{s2_safe}", unsafe_allow_html=True)
+
+        if st.button("🗑️ 보관함에서 삭제", key=f"del_personal_{p.get('id')}"):
+            if delete_personal_problem(student_id, p.get("id")):
+                st.success("삭제했습니다!")
+                time.sleep(0.3)
+                st.rerun()
+            else:
+                st.error("삭제에 실패했습니다.")
+    st.divider()
+
 # ==========================================
 # ★ 모델 설정
 # ==========================================
@@ -764,36 +925,85 @@ def get_fastest_model_name(api_key):
 # ==========================================
 admin_pw = st.secrets.get("ADMIN_PASSWORD", "1234")
 class_list = ["1M2", "1M3", "2M1", "2M3", "3M1", "3M3"]
-class_pws = {
-    "1M2": st.secrets.get("PW_CLASS1", "0102"),
-    "1M3": st.secrets.get("PW_CLASS2", "0103"),
-    "2M1": st.secrets.get("PW_CLASS3", "0201"),
-    "2M3": st.secrets.get("PW_CLASS4", "0203"),
-    "3M1": st.secrets.get("PW_CLASS5", "0301"),
-    "3M3": st.secrets.get("PW_CLASS6", "0303"),
-}
 
 mathpix_app_id = st.secrets.get("MATHPIX_APP_ID", "")
 mathpix_app_key = st.secrets.get("MATHPIX_APP_KEY", "")
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
 
+# ★ 수정: 반 공용 비밀번호 대신 학생 개인 계정(아이디+비밀번호) 시스템으로 전환.
+# 로그인 상태는 세션에 저장해서, 매번 다시 입력하지 않아도 유지됩니다.
+if "auth_role" not in st.session_state:
+    st.session_state.auth_role = None       # "admin" / "미배정" / 실제 반 이름(예: "1M2")
+if "auth_student_id" not in st.session_state:
+    st.session_state.auth_student_id = None  # 학생일 때만 값이 있음 (관리자는 None)
+
 with st.sidebar:
     st.header("🔑 클래스룸 입장하기")
-    entered_pw = st.text_input("선생님이 안내해주신 접속 코드를 입력하세요", type="password")
-    
-    current_role = None
-    if entered_pw:
-        if entered_pw == admin_pw:
-            current_role = "admin"
-            st.success("👨‍🏫 선생님 인증 완료!")
+
+    if st.session_state.auth_role:
+        # 이미 로그인된 상태
+        if st.session_state.auth_role == "admin":
+            st.success("👨‍🏫 선생님으로 로그인됨")
+        elif st.session_state.auth_role == "미배정":
+            st.warning(f"🎓 학생 ({st.session_state.auth_student_id}) - 아직 반 배정 전")
         else:
-            for cls_name, cls_pw in class_pws.items():
-                if entered_pw == cls_pw:
-                    current_role = cls_name
-                    st.success(f"🎓 {cls_name} 학생 인증 완료!")
-                    break
-            if not current_role:
-                st.error("접속 코드가 틀렸습니다.")
+            st.success(f"🎓 학생 ({st.session_state.auth_student_id}) - {st.session_state.auth_role}반")
+        if st.button("로그아웃"):
+            st.session_state.auth_role = None
+            st.session_state.auth_student_id = None
+            st.rerun()
+    else:
+        login_mode = st.radio("로그인 유형", ["학생", "선생님"], horizontal=True)
+
+        if login_mode == "선생님":
+            entered_pw = st.text_input("선생님 비밀번호", type="password", key="admin_pw_input")
+            if st.button("로그인", key="admin_login_btn"):
+                if entered_pw == admin_pw:
+                    st.session_state.auth_role = "admin"
+                    st.rerun()
+                else:
+                    st.error("비밀번호가 틀렸습니다.")
+        else:
+            st.subheader("학생 로그인")
+            sid = st.text_input("아이디", key="login_sid")
+            spw = st.text_input("비밀번호", type="password", key="login_spw")
+            if st.button("로그인", key="student_login_btn"):
+                if sid and spw:
+                    with st.spinner("확인하는 중..."):
+                        result = student_login(sid, spw)
+                    if result.get("ok"):
+                        st.session_state.auth_role = result.get("class_id") or "미배정"
+                        st.session_state.auth_student_id = sid.strip()
+                        st.rerun()
+                    else:
+                        st.error(result.get("error", "로그인에 실패했습니다."))
+                else:
+                    st.warning("아이디와 비밀번호를 입력해주세요.")
+
+            with st.expander("🆕 계정이 없으신가요? 회원가입"):
+                new_sid = st.text_input("사용할 아이디", key="signup_sid")
+                new_pw = st.text_input("비밀번호", type="password", key="signup_pw")
+                new_pw2 = st.text_input("비밀번호 확인", type="password", key="signup_pw2")
+                if st.button("가입하기", key="signup_btn"):
+                    if not new_sid or not new_pw:
+                        st.warning("아이디와 비밀번호를 입력해주세요.")
+                    elif new_pw != new_pw2:
+                        st.error("비밀번호가 서로 다릅니다.")
+                    elif len(new_pw) < 4:
+                        st.error("비밀번호는 4자 이상으로 해주세요.")
+                    else:
+                        with st.spinner("가입하는 중..."):
+                            result = student_signup(new_sid, new_pw)
+                        if result.get("ok"):
+                            st.session_state.auth_role = "미배정"
+                            st.session_state.auth_student_id = new_sid.strip()
+                            st.success("가입 완료! 선생님이 반을 배정해주시면 게시판을 볼 수 있어요.")
+                            st.rerun()
+                        else:
+                            st.error(result.get("error", "가입에 실패했습니다."))
+
+    current_role = st.session_state.auth_role
+    current_student_id = st.session_state.auth_student_id
 
     if current_role == "admin":
         st.divider()
@@ -805,11 +1015,31 @@ with st.sidebar:
         elif "OFF" in new_status and current_status == "ON":
             set_app_status("OFF"); st.rerun()
 
+        st.divider()
+        st.header("👥 학생 반 배정 관리")
+        with st.spinner("학생 목록 불러오는 중..."):
+            student_list = admin_list_students()
+        if student_list:
+            sid_options = [s.get("student_id", "") for s in student_list]
+            pick_sid = st.selectbox("학생 아이디", sid_options, key="assign_pick_sid")
+            picked = next((s for s in student_list if s.get("student_id") == pick_sid), None)
+            current_assigned = picked.get("class_id", "") if picked else ""
+            st.caption(f"현재 배정: {current_assigned or '(미배정)'}")
+            pick_class = st.selectbox("배정할 반", class_list, key="assign_pick_class")
+            if st.button("배정하기", key="assign_btn"):
+                if admin_assign_class(pick_sid, pick_class):
+                    st.success(f"{pick_sid} → {pick_class} 배정 완료!")
+                    st.rerun()
+                else:
+                    st.error("배정에 실패했습니다.")
+        else:
+            st.caption("아직 가입한 학생이 없습니다.")
+
 # ==========================================
 # 화면 차단 로직
 # ==========================================
 if not current_role:
-    st.info("👈 왼쪽 메뉴에 접속 코드를 입력해야 클래스룸에 입장할 수 있습니다.")
+    st.info("👈 왼쪽 메뉴에서 로그인해야 클래스룸에 입장할 수 있습니다.")
     st.stop()
 
 if current_role != "admin" and get_app_status() == "OFF":
@@ -820,7 +1050,12 @@ if not (mathpix_app_id and mathpix_app_key and gemini_api_key):
     st.error("⚠️ 선생님의 API 키가 Secrets에 설정되지 않아 앱을 실행할 수 없습니다.")
     st.stop()
 
-st.caption(f"현재 접속 권한: **{'선생님 (모든 반 관리)' if current_role == 'admin' else current_role}**")
+if current_role == "admin":
+    st.caption("현재 접속 권한: **선생님 (모든 반 관리)**")
+elif current_role == "미배정":
+    st.caption(f"현재 접속 권한: **학생 ({current_student_id}) - 반 배정 대기중**")
+else:
+    st.caption(f"현재 접속 권한: **학생 ({current_student_id}) - {current_role}반**")
 
 if current_role == "admin" and sheet_url and not sheet_api_token:
     st.warning(
@@ -830,25 +1065,21 @@ if current_role == "admin" and sheet_url and not sheet_api_token:
     )
 
 # ==========================================
-# 메인 화면: 두 개의 탭
+# 메인 화면: 탭 구성 (학생으로 로그인 시에만 '내 보관함' 탭 추가)
 # ==========================================
-tab1, tab2 = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기"])
+if current_student_id:
+    _tabs = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기", "📂 내 보관함"])
+    tab1, tab2, tab3 = _tabs[0], _tabs[1], _tabs[2]
+else:
+    _tabs = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기"])
+    tab1, tab2 = _tabs[0], _tabs[1]
+    tab3 = None
 
 # ------------------------------------------
 # [탭 1] 학생 게시판 (인쇄 메뉴 기본 숨김 접이식 적용)
 # ------------------------------------------
-with tab1:
-    col_view, col_ref = st.columns([3, 1])
-    with col_view:
-        if current_role == "admin":
-            view_class = st.selectbox("👀 조회할 반 게시판을 선택하세요", class_list)
-        else:
-            view_class = current_role
-    with col_ref:
-        st.write("")
-        if st.button("🔄 최신 과제 새로고침"):
-            st.rerun()
-
+def render_class_board(view_class, current_role, current_student_id):
+    """게시판(tab1) 본문 렌더링 - 반이 배정된 사용자에 대해서만 호출됨."""
     # ★ 수정: 데이터가 계속 쌓여도 매번 받는 양이 일정하게 유지되도록,
     # 기본은 "최근 30일"치만 서버에서 걸러받는다. 반이 바뀌면 기간 설정도 초기화.
     if "board_range_days" not in st.session_state or st.session_state.get("board_range_class") != view_class:
@@ -873,7 +1104,7 @@ with tab1:
 
     # 서버에서 이미 반 기준으로 걸러받았지만, 혹시 모를 값 불일치에 대비해 한 번 더 확인
     filtered = [p for p in all_problems if str(p.get("class_id", "")).strip() == view_class.strip()]
-    
+
     if not filtered:
         st.info(f"아직 [{view_class}]에 등록된 과제가 없습니다.")
     else:
@@ -972,7 +1203,43 @@ with tab1:
                                     st.success("구글 시트에서 삭제되었습니다!")
                                     time.sleep(0.5)
                                     st.rerun()
+                        elif current_student_id:
+                            if st.button("💾 내 보관함에 저장", key=f"save_personal_{p.get('id')}"):
+                                payload = build_personal_payload(
+                                    student_id=current_student_id,
+                                    class_id=view_class,
+                                    source="board",
+                                    origin_id=str(p.get("id", "")),
+                                    q1=p.get("q1", ""), a1=p.get("a1", ""), s1=p.get("s1", ""),
+                                    q2=p.get("q2", ""), a2=p.get("a2", ""), s2=p.get("s2", ""),
+                                    image_b64=p.get("image_b64", ""),
+                                )
+                                with st.spinner("저장하는 중..."):
+                                    if save_personal_problem(payload):
+                                        st.success("✅ 내 보관함에 저장했어요!")
+                                    else:
+                                        st.error("❌ 저장에 실패했습니다.")
                     st.divider()
+
+
+with tab1:
+    col_view, col_ref = st.columns([3, 1])
+    with col_view:
+        if current_role == "admin":
+            view_class = st.selectbox("👀 조회할 반 게시판을 선택하세요", class_list)
+        else:
+            view_class = current_role
+    with col_ref:
+        st.write("")
+        if st.button("🔄 최신 과제 새로고침"):
+            st.rerun()
+
+    # ★ 수정: 아직 선생님이 반을 배정하지 않은 학생은 볼 게시판이 없으므로 안내만 표시
+    if view_class == "미배정":
+        st.info("🎓 아직 선생님이 반을 배정하지 않았어요. 배정되면 이곳에 게시판이 나타납니다.")
+    else:
+        render_class_board(view_class, current_role, current_student_id)
+
 
 # ------------------------------------------
 # [탭 2] 개인용 문제 생성기 & 화면 직관적 수정 에디터
@@ -1107,6 +1374,25 @@ with tab2:
                                 st.success(f"'{find_str}' ➔ '{replace_str}' 교체 완료!")
                                 st.rerun()
 
+            # ★ 수정: 학생으로 로그인한 경우, 게시판 등록 대신 개인 보관함에 저장하는 버튼 제공
+            elif current_student_id:
+                if st.button("💾 내 보관함에 저장", type="primary"):
+                    compressed_b64 = compress_image_for_storage(st.session_state.current_image_b64)
+                    payload = build_personal_payload(
+                        student_id=current_student_id,
+                        class_id=current_role if current_role != "미배정" else "",
+                        source="self",
+                        origin_id="",
+                        q1=p1["question"], a1=p1["answer"], s1=p1.get("solution", ""),
+                        q2=p2["question"], a2=p2["answer"], s2=p2.get("solution", ""),
+                        image_b64=compressed_b64,
+                    )
+                    with st.spinner("내 보관함에 저장하는 중..."):
+                        if save_personal_problem(payload):
+                            st.success("✅ 내 보관함에 저장했어요! '내 보관함' 탭에서 다시 볼 수 있어요.")
+                        else:
+                            st.error("❌ 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.")
+
             # 1번 문제 카드
             with st.container():
                 st.markdown("### [문제 1] 기본 다지기")
@@ -1154,3 +1440,33 @@ with tab2:
                         p2["answer"] = p2_a_new
                         p2["solution"] = p2_s_new
             st.write("")
+
+# ------------------------------------------
+# [탭 3] 내 보관함 (학생으로 로그인한 경우에만 존재)
+# ------------------------------------------
+if tab3:
+    with tab3:
+        st.subheader("📂 내 보관함")
+        st.caption("스스로 만들어서 저장한 문제와, 게시판에서 저장해온 문제를 여기서 다시 볼 수 있어요.")
+
+        sub_self, sub_board = st.tabs(["🖊️ 내가 만든 문제", "🔖 게시판에서 저장한 문제"])
+
+        with sub_self:
+            with st.spinner("불러오는 중..."):
+                my_self_items = fetch_personal_problems(current_student_id, source="self")
+            if not my_self_items:
+                st.info("아직 스스로 만들어서 저장한 문제가 없어요. '스스로 문제 만들기' 탭에서 만들고 저장해보세요!")
+            else:
+                my_self_items = sorted(my_self_items, key=lambda x: x.get("date", ""), reverse=True)
+                for p in my_self_items:
+                    render_personal_item(p, current_student_id)
+
+        with sub_board:
+            with st.spinner("불러오는 중..."):
+                my_board_items = fetch_personal_problems(current_student_id, source="board")
+            if not my_board_items:
+                st.info("아직 게시판에서 저장한 문제가 없어요. '우리 반 게시판' 탭에서 문제 옆의 저장 버튼을 눌러보세요!")
+            else:
+                my_board_items = sorted(my_board_items, key=lambda x: x.get("date", ""), reverse=True)
+                for p in my_board_items:
+                    render_personal_item(p, current_student_id)
