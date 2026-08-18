@@ -7,8 +7,6 @@ import os
 import time
 import datetime
 import io
-import html
-from html.parser import HTMLParser
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
@@ -170,128 +168,51 @@ def set_app_status(status):
 # ★ 보안 수정: HTML 살균(sanitize) 엔진
 # 구글 시트에서 온 데이터를 그대로 unsafe_allow_html=True로 렌더링하면
 # 악성 스크립트가 저장되어 있을 경우 그대로 실행되는 위험(저장형 XSS)이 있음.
-# 이 앱이 실제로 만들어내는 태그(표, div, span, svg 도형)만 화이트리스트로
-# 허용하고, 그 외(<script>, onclick 같은 이벤트 핸들러, <iframe> 등)는
-# 전부 걸러낸다. format_math() 마지막 단계에서 항상 거치도록 연결되어 있어서
-# 이 함수를 거치는 모든 화면(게시판, 생성 결과, 인쇄용 파일)이 한 번에 보호된다.
+# <script>, onclick 같은 이벤트 핸들러, <iframe>, javascript: 링크처럼
+# 명백히 위험한 패턴만 정확히 찾아서 제거하고, 그 외 텍스트(수식의 <, >, &
+# 등)는 전혀 건드리지 않는다. format_math() 마지막 단계에서 항상 거치도록
+# 연결되어 있어서 이 함수를 거치는 모든 화면(게시판, 생성 결과, 인쇄용
+# 파일)이 한 번에 보호된다.
 # ==========================================
-_ALLOWED_TAGS = {
-    'div', 'span', 'br', 'strong', 'b', 'em', 'i', 'p',
-    'table', 'tr', 'td', 'th', 'thead', 'tbody',
-    'svg', 'rect', 'text', 'tspan', 'path', 'polygon', 'polyline',
-    'circle', 'line', 'ellipse', 'defs', 'pattern', 'g',
-}
-
-# 태그 이름 → 허용 속성. '*'는 모든 허용 태그에 공통 적용.
-# href/src/xlink:href 및 on으로 시작하는 이벤트 핸들러는 어떤 태그에도 절대 허용하지 않음.
-_ALLOWED_ATTRS = {
-    '*': {'style', 'class', 'fill', 'stroke', 'stroke-width', 'transform', 'font-size', 'font-weight', 'text-anchor'},
-    'svg': {'width', 'height', 'viewbox', 'xmlns'},
-    'rect': {'x', 'y', 'width', 'height', 'rx', 'ry'},
-    'text': {'x', 'y'},
-    'tspan': {'x', 'y'},
-    'path': {'d'},
-    'polygon': {'points'},
-    'polyline': {'points'},
-    'circle': {'cx', 'cy', 'r'},
-    'line': {'x1', 'y1', 'x2', 'y2'},
-    'ellipse': {'cx', 'cy', 'rx', 'ry'},
-    'pattern': {'id', 'width', 'height', 'patternunits'},
-    'td': {'colspan', 'rowspan'},
-    'th': {'colspan', 'rowspan'},
-}
-
-# 태그 자체와 그 안의 내용까지 통째로 제거해야 하는 위험 태그
-_DROP_WITH_CONTENT = {'script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'form', 'input', 'button', 'textarea', 'select'}
-
-# style 속성 값 안에 이런 패턴이 있으면 통째로 제거 (CSS를 통한 스크립트 실행 시도 차단)
-_DANGEROUS_STYLE = re.compile(r'expression\s*\(|javascript\s*:|url\s*\(\s*[\'"]?\s*(javascript|data)\s*:', re.IGNORECASE)
-
-
-def _escape_attr(value):
-    return (value or '').replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
-
-
-class _WhitelistSanitizer(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=False)
-        self.out = []
-        self.skip_depth = 0
-        self.skip_tag = None
-
-    def _open(self, tag, attrs, self_closing):
-        tag_l = tag.lower()
-        if self.skip_depth > 0:
-            if tag_l == self.skip_tag:
-                self.skip_depth += 1
-            return
-        if tag_l in _DROP_WITH_CONTENT:
-            self.skip_tag = tag_l
-            self.skip_depth = 1
-            return
-        if tag_l not in _ALLOWED_TAGS:
-            return  # 모르는 태그는 무시(내용은 텍스트로 남기고 태그만 제거)
-
-        allowed = _ALLOWED_ATTRS.get('*', set()) | _ALLOWED_ATTRS.get(tag_l, set())
-        safe_attrs = []
-        for name, value in attrs:
-            name_l = (name or '').lower()
-            if name_l.startswith('on') or name_l in ('href', 'src', 'xlink:href', 'formaction', 'action'):
-                continue
-            if name_l not in allowed:
-                continue
-            value = value or ''
-            if name_l == 'style' and _DANGEROUS_STYLE.search(value):
-                continue
-            safe_attrs.append(f'{name_l}="{_escape_attr(value)}"')
-        attr_str = (' ' + ' '.join(safe_attrs)) if safe_attrs else ''
-        self.out.append(f'<{tag_l}{attr_str}{" /" if self_closing else ""}>')
-
-    def handle_starttag(self, tag, attrs):
-        self._open(tag, attrs, self_closing=False)
-
-    def handle_startendtag(self, tag, attrs):
-        self._open(tag, attrs, self_closing=True)
-
-    def handle_endtag(self, tag):
-        tag_l = tag.lower()
-        if self.skip_depth > 0:
-            if tag_l == self.skip_tag:
-                self.skip_depth -= 1
-            return
-        if tag_l in _ALLOWED_TAGS:
-            self.out.append(f'</{tag_l}>')
-
-    def handle_data(self, data):
-        if self.skip_depth > 0:
-            return
-        self.out.append(html.escape(data, quote=False))
-
-    def handle_entityref(self, name):
-        if self.skip_depth == 0:
-            self.out.append(f'&{name};')
-
-    def handle_charref(self, name):
-        if self.skip_depth == 0:
-            self.out.append(f'&#{name};')
-
-    def get_html(self):
-        return ''.join(self.out)
+# 위험한 블록형 태그(내용까지 통째로 제거): script, style, iframe 등
+_DANGEROUS_BLOCK = re.compile(
+    r'<\s*(script|style|iframe|object|embed|link|meta|form)\b[^>]*>.*?<\s*/\s*\1\s*>',
+    re.IGNORECASE | re.DOTALL
+)
+# 위 태그들의 자기닫힘/짝없는 형태 + img, input 등 나머지 위험 태그
+_DANGEROUS_SELFCLOSING = re.compile(
+    r'<\s*/?\s*(script|style|iframe|object|embed|link|meta|form|input|button|textarea|select|base|img)\b[^>]*/?\s*>',
+    re.IGNORECASE
+)
+# onclick, onerror, onload 등 이벤트 핸들러 속성 (어떤 태그에 붙어있든 전부 제거)
+_EVENT_HANDLER = re.compile(r'\s+on[a-zA-Z]+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)', re.IGNORECASE)
+# href/src 계열 속성 (이 앱의 정상 출력물은 이 속성들이 전혀 필요 없으므로 통째로 제거)
+_HREF_SRC = re.compile(r'\s+(?:href|src|xlink:href|formaction|action)\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)', re.IGNORECASE)
+_JS_IN_STYLE_DQ = re.compile(r'style\s*=\s*"([^"]*)"', re.IGNORECASE)
+_JS_IN_STYLE_SQ = re.compile(r"style\s*=\s*'([^']*)'", re.IGNORECASE)
+_JS_PATTERN = re.compile(r'expression\s*\(|javascript\s*:', re.IGNORECASE)
 
 
 def sanitize_html(text):
-    """허용 목록에 없는 태그/속성/이벤트 핸들러를 모두 제거한 안전한 HTML 반환."""
+    """<script>, <iframe>, 이벤트 핸들러(onclick 등), javascript: 링크처럼
+    명확히 위험한 패턴만 제거하고 나머지(수식 기호 <, >, & 포함)는 그대로 둔다.
+    (전체를 화이트리스트 태그 파서로 걸렀더니 'x<y'처럼 부등호 뒤에 글자가
+    바로 오는 정상 수식까지 태그로 오인해서 텍스트가 통째로 사라지는 문제가
+    있어, 위험 패턴만 콕 집어 제거하는 방식으로 변경함)
+    """
     if not text:
         return text
-    parser = _WhitelistSanitizer()
-    try:
-        parser.feed(text)
-        parser.close()
-        return parser.get_html()
-    except Exception:
-        # 파싱 자체가 실패하면, 화면이 깨지더라도 스크립트 실행 위험은 없도록
-        # 태그 없는 순수 텍스트로 안전하게 변환해서 반환
-        return html.escape(text)
+    prev = None
+    # <scr<script>ipt> 같은 중첩 우회 시도까지 방어하기 위해 변화 없을 때까지 반복 적용
+    while prev != text:
+        prev = text
+        text = _DANGEROUS_BLOCK.sub('', text)
+        text = _DANGEROUS_SELFCLOSING.sub('', text)
+    text = _EVENT_HANDLER.sub('', text)
+    text = _HREF_SRC.sub('', text)
+    text = _JS_IN_STYLE_DQ.sub(lambda m: '' if _JS_PATTERN.search(m.group(1)) else m.group(0), text)
+    text = _JS_IN_STYLE_SQ.sub(lambda m: '' if _JS_PATTERN.search(m.group(1)) else m.group(0), text)
+    return text
 
 
 # ==========================================
