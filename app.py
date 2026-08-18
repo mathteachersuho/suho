@@ -7,6 +7,8 @@ import os
 import time
 import datetime
 import io
+import html
+from html.parser import HTMLParser
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
@@ -163,6 +165,134 @@ def get_app_status():
 def set_app_status(status):
     with open(STATUS_FILE, "w") as f:
         f.write(status)
+
+# ==========================================
+# ★ 보안 수정: HTML 살균(sanitize) 엔진
+# 구글 시트에서 온 데이터를 그대로 unsafe_allow_html=True로 렌더링하면
+# 악성 스크립트가 저장되어 있을 경우 그대로 실행되는 위험(저장형 XSS)이 있음.
+# 이 앱이 실제로 만들어내는 태그(표, div, span, svg 도형)만 화이트리스트로
+# 허용하고, 그 외(<script>, onclick 같은 이벤트 핸들러, <iframe> 등)는
+# 전부 걸러낸다. format_math() 마지막 단계에서 항상 거치도록 연결되어 있어서
+# 이 함수를 거치는 모든 화면(게시판, 생성 결과, 인쇄용 파일)이 한 번에 보호된다.
+# ==========================================
+_ALLOWED_TAGS = {
+    'div', 'span', 'br', 'strong', 'b', 'em', 'i', 'p',
+    'table', 'tr', 'td', 'th', 'thead', 'tbody',
+    'svg', 'rect', 'text', 'tspan', 'path', 'polygon', 'polyline',
+    'circle', 'line', 'ellipse', 'defs', 'pattern', 'g',
+}
+
+# 태그 이름 → 허용 속성. '*'는 모든 허용 태그에 공통 적용.
+# href/src/xlink:href 및 on으로 시작하는 이벤트 핸들러는 어떤 태그에도 절대 허용하지 않음.
+_ALLOWED_ATTRS = {
+    '*': {'style', 'class', 'fill', 'stroke', 'stroke-width', 'transform', 'font-size', 'font-weight', 'text-anchor'},
+    'svg': {'width', 'height', 'viewbox', 'xmlns'},
+    'rect': {'x', 'y', 'width', 'height', 'rx', 'ry'},
+    'text': {'x', 'y'},
+    'tspan': {'x', 'y'},
+    'path': {'d'},
+    'polygon': {'points'},
+    'polyline': {'points'},
+    'circle': {'cx', 'cy', 'r'},
+    'line': {'x1', 'y1', 'x2', 'y2'},
+    'ellipse': {'cx', 'cy', 'rx', 'ry'},
+    'pattern': {'id', 'width', 'height', 'patternunits'},
+    'td': {'colspan', 'rowspan'},
+    'th': {'colspan', 'rowspan'},
+}
+
+# 태그 자체와 그 안의 내용까지 통째로 제거해야 하는 위험 태그
+_DROP_WITH_CONTENT = {'script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'form', 'input', 'button', 'textarea', 'select'}
+
+# style 속성 값 안에 이런 패턴이 있으면 통째로 제거 (CSS를 통한 스크립트 실행 시도 차단)
+_DANGEROUS_STYLE = re.compile(r'expression\s*\(|javascript\s*:|url\s*\(\s*[\'"]?\s*(javascript|data)\s*:', re.IGNORECASE)
+
+
+def _escape_attr(value):
+    return (value or '').replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+class _WhitelistSanitizer(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.out = []
+        self.skip_depth = 0
+        self.skip_tag = None
+
+    def _open(self, tag, attrs, self_closing):
+        tag_l = tag.lower()
+        if self.skip_depth > 0:
+            if tag_l == self.skip_tag:
+                self.skip_depth += 1
+            return
+        if tag_l in _DROP_WITH_CONTENT:
+            self.skip_tag = tag_l
+            self.skip_depth = 1
+            return
+        if tag_l not in _ALLOWED_TAGS:
+            return  # 모르는 태그는 무시(내용은 텍스트로 남기고 태그만 제거)
+
+        allowed = _ALLOWED_ATTRS.get('*', set()) | _ALLOWED_ATTRS.get(tag_l, set())
+        safe_attrs = []
+        for name, value in attrs:
+            name_l = (name or '').lower()
+            if name_l.startswith('on') or name_l in ('href', 'src', 'xlink:href', 'formaction', 'action'):
+                continue
+            if name_l not in allowed:
+                continue
+            value = value or ''
+            if name_l == 'style' and _DANGEROUS_STYLE.search(value):
+                continue
+            safe_attrs.append(f'{name_l}="{_escape_attr(value)}"')
+        attr_str = (' ' + ' '.join(safe_attrs)) if safe_attrs else ''
+        self.out.append(f'<{tag_l}{attr_str}{" /" if self_closing else ""}>')
+
+    def handle_starttag(self, tag, attrs):
+        self._open(tag, attrs, self_closing=False)
+
+    def handle_startendtag(self, tag, attrs):
+        self._open(tag, attrs, self_closing=True)
+
+    def handle_endtag(self, tag):
+        tag_l = tag.lower()
+        if self.skip_depth > 0:
+            if tag_l == self.skip_tag:
+                self.skip_depth -= 1
+            return
+        if tag_l in _ALLOWED_TAGS:
+            self.out.append(f'</{tag_l}>')
+
+    def handle_data(self, data):
+        if self.skip_depth > 0:
+            return
+        self.out.append(html.escape(data, quote=False))
+
+    def handle_entityref(self, name):
+        if self.skip_depth == 0:
+            self.out.append(f'&{name};')
+
+    def handle_charref(self, name):
+        if self.skip_depth == 0:
+            self.out.append(f'&#{name};')
+
+    def get_html(self):
+        return ''.join(self.out)
+
+
+def sanitize_html(text):
+    """허용 목록에 없는 태그/속성/이벤트 핸들러를 모두 제거한 안전한 HTML 반환."""
+    if not text:
+        return text
+    parser = _WhitelistSanitizer()
+    try:
+        parser.feed(text)
+        parser.close()
+        return parser.get_html()
+    except Exception:
+        # 파싱 자체가 실패하면, 화면이 깨지더라도 스크립트 실행 위험은 없도록
+        # 태그 없는 순수 텍스트로 안전하게 변환해서 반환
+        return html.escape(text)
+
 
 # ==========================================
 # ★ 수식 렌더링, 전개도 맞춤 표, SVG 통합 엔진
@@ -353,7 +483,9 @@ def format_math(text):
         return f'<div style="text-align: center; margin: 12px 0;"><div style="display: inline-block; background-color: #ffffff; padding: 10px 14px; border-radius: 8px; border: 1px solid #d0d0d0; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">{svg_content}</div></div>'
     text = re.sub(r'(<svg[\s\S]*?<\/svg>)', wrap_svg_card, text)
     
-    return text
+    # ★ 보안 수정: 최종 출력 직전에 항상 화이트리스트 살균을 거친다.
+    # 이 함수를 거치는 모든 화면(게시판, 생성 결과, 인쇄용 파일)이 한 번에 보호됨.
+    return sanitize_html(text)
 
 def parse_date_group(date_str):
     if not date_str:
