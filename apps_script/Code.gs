@@ -153,7 +153,8 @@ function routeGet_(e) {
   if (action === 'taxonomy') return handleTaxonomy_();
   if (action === 'star_list') return handleStarList_(e);
   if (action === 'star_items') return handleStarItems_(e);
-  if (action === 'version') return jsonResponse_({ version: 7 });  // 3 = 숙제·채점·시험 점수, 4 = 학교 시험지 분석, 5 = 문제 구분, 6 = 학생별 구분·단원 학기, 7 = 은행 저장+학생 배정 한 번에
+  if (action === 'backup_info') return handleBackupInfo_();
+  if (action === 'version') return jsonResponse_({ version: 8 });  // 3 = 숙제·채점·시험 점수, 4 = 학교 시험지 분석, 5 = 문제 구분, 6 = 학생별 구분·단원 학기, 7 = 은행 저장+학생 배정 한 번에, 8 = 백업
   if (action === 'hw_list') return handleHwList_(e);
   if (action === 'hw_results') return handleHwResults_(e);
   if (action === 'exam_list') return handleExamList_(e);
@@ -199,6 +200,7 @@ function routePost_(body) {
   if (action === 'unit_semester_set') return handleUnitSemesterSet_(body);
   if (action === 'bank_save') return handleBankSave_(body);
   if (action === 'save_assign') return handleSaveAssign_(body);
+  if (action === 'backup_now') return handleBackupNow_();
   if (action === 'bank_update') return handleBankUpdate_(body);
   if (action === 'bank_delete') return handleBankDelete_(body);
   if (action === 'taxonomy_upsert') return handleTaxonomyUpsert_(body);
@@ -1646,6 +1648,119 @@ function handleHwTag_(body) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// ==========================================
+// ★ 백업: 스프레드시트 전체를 드라이브 폴더에 날짜 이름으로 복사해 둔다
+// - 매주 자동(setupWeeklyBackup을 편집기에서 한 번 실행) + 선생님 화면의 '지금 백업' 버튼
+// - 가장 최근 BACKUP_KEEP개만 남기고 오래된 것은 휴지통으로 보낸다
+// - 문제 원본 사진은 드라이브 '수학클래스룸_원본사진' 폴더에 따로 있어서 이 백업에는 들어가지 않는다
+// ==========================================
+var BACKUP_FOLDER_NAME = '수학클래스룸_백업';
+var BACKUP_PREFIX = '백업_';
+var BACKUP_KEEP = 8;
+
+function getBackupFolder_() {
+  var props = PropertiesService.getScriptProperties();
+  var folderId = props.getProperty('BACKUP_FOLDER_ID');
+  if (folderId) {
+    try {
+      return DriveApp.getFolderById(folderId);
+    } catch (err) {
+      // 폴더가 지워졌으면 아래에서 새로 만든다
+    }
+  }
+  var folder = DriveApp.createFolder(BACKUP_FOLDER_NAME);
+  props.setProperty('BACKUP_FOLDER_ID', folder.getId());
+  return folder;
+}
+
+// 백업 폴더에서 BACKUP_KEEP개를 넘는 오래된 백업을 휴지통으로 보낸다. 지운 개수를 돌려준다.
+function pruneBackups_(folder) {
+  var list = [];
+  var it = folder.getFiles();
+  while (it.hasNext()) {
+    var f = it.next();
+    if (f.getName().indexOf(BACKUP_PREFIX) === 0) list.push({ file: f, at: f.getDateCreated().getTime() });
+  }
+  list.sort(function (a, b) { return b.at - a.at; });
+  var removed = 0;
+  for (var i = BACKUP_KEEP; i < list.length; i++) {
+    list[i].file.setTrashed(true);
+    removed++;
+  }
+  return removed;
+}
+
+// 지금 스프레드시트를 복사해 둔다. kind = 'auto' | 'manual'. 잠금 안에서만 부른다.
+function runBackup_(kind) {
+  var props = PropertiesService.getScriptProperties();
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var folder = getBackupFolder_();
+    var stamp = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd_HHmm');
+    var name = BACKUP_PREFIX + ss.getName() + '_' + stamp;
+    DriveApp.getFileById(ss.getId()).makeCopy(name, folder);
+    pruneBackups_(folder);
+    props.setProperty('LAST_BACKUP_AT', new Date().toISOString());
+    props.setProperty('LAST_BACKUP_NAME', name);
+    props.setProperty('LAST_BACKUP_KIND', kind);
+    props.deleteProperty('LAST_BACKUP_ERROR');
+    return { ok: true, name: name, kind: kind };
+  } catch (err) {
+    props.setProperty('LAST_BACKUP_ERROR', new Date().toISOString() + ' ' + String(err));
+    return { ok: false, error: String(err) };
+  }
+}
+
+// 시간 트리거가 부르는 함수 (매주 자동 백업)
+function weeklyBackup() {
+  var lock = LockService.getScriptLock();
+  if (!waitLockOk_(lock, 30000)) {
+    PropertiesService.getScriptProperties().setProperty('LAST_BACKUP_ERROR', new Date().toISOString() + ' 다른 작업 때문에 백업을 하지 못했습니다');
+    return;
+  }
+  try {
+    runBackup_('auto');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ★ 편집기에서 한 번만 실행하면 매주 일요일 새벽 3시(스크립트 시간대)에 자동 백업이 켜진다.
+// 여러 번 실행해도 트리거는 하나만 남는다. (처음 실행할 때 권한 허용 창이 뜬다)
+function setupWeeklyBackup() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'weeklyBackup') ScriptApp.deleteTrigger(triggers[i]);
+  }
+  ScriptApp.newTrigger('weeklyBackup').timeBased().onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(3).create();
+  PropertiesService.getScriptProperties().setProperty('AUTO_BACKUP', 'on');
+}
+
+// 자동 백업을 끄고 싶을 때 편집기에서 실행
+function removeWeeklyBackup() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'weeklyBackup') ScriptApp.deleteTrigger(triggers[i]);
+  }
+  PropertiesService.getScriptProperties().deleteProperty('AUTO_BACKUP');
+}
+
+function handleBackupNow_() {
+  return locked_(function () { return jsonResponse_(runBackup_('manual')); });
+}
+
+function handleBackupInfo_() {
+  var p = PropertiesService.getScriptProperties();
+  return jsonResponse_({
+    last_at: p.getProperty('LAST_BACKUP_AT') || '',
+    last_name: p.getProperty('LAST_BACKUP_NAME') || '',
+    last_kind: p.getProperty('LAST_BACKUP_KIND') || '',
+    last_error: p.getProperty('LAST_BACKUP_ERROR') || '',
+    auto: p.getProperty('AUTO_BACKUP') === 'on',
+    keep: BACKUP_KEEP
+  });
 }
 
 // ==========================================
