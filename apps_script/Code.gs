@@ -97,6 +97,8 @@ function doGet(e) {
   if (action === 'archive_image') return handleArchiveImage_(e);
   if (action === 'bank_search') return handleBankSearch_(e);
   if (action === 'taxonomy') return handleTaxonomy_();
+  if (action === 'star_list') return handleStarList_(e);
+  if (action === 'star_items') return handleStarItems_(e);
   if (sheetParam === 'personal_problems') {
     return handleGetPersonal_(e);
   }
@@ -132,6 +134,7 @@ function doPost(e) {
   if (action === 'taxonomy_upsert') return handleTaxonomyUpsert_(body);
   if (action === 'taxonomy_rename') return handleTaxonomyRename_(body);
   if (action === 'migrate_archive') return handleMigrateArchive_();
+  if (action === 'star_set') return handleStarSet_(body);
   if (action === 'delete') return handleDeleteProblem_(body);
   return handleInsertProblem_(body); // action 없으면 기존 게시판 등록(기본 동작)
 }
@@ -281,6 +284,15 @@ function handleWithdraw_(body) {
   for (var j = pData.length - 1; j >= 1; j--) {
     if (String(pData[j][1]) === studentId) {
       personalSheet.deleteRow(j + 1);
+    }
+  }
+
+  // 중요 문제 표시도 함께 정리
+  var starSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('stars');
+  if (starSheet) {
+    var sData = readCols_(starSheet, 1, 1);
+    for (var k = sData.length - 1; k >= 0; k--) {
+      if (String(sData[k][0]) === studentId) starSheet.deleteRow(k + 2);
     }
   }
 
@@ -543,6 +555,8 @@ function handleArchiveSearch_(e) {
   var keyword = p.keyword ? String(p.keyword).toLowerCase() : '';
   var offset = parseInt(p.offset || '0', 10) || 0;
   var limit = Math.min(parseInt(p.limit || '30', 10) || 30, 200);
+  var idSet = null;
+  if (p.ids) { idSet = {}; String(p.ids).split(',').forEach(function (x) { if (x.trim()) idSet[x.trim()] = true; }); }
 
   // 짧은 열(id~세부 유형)만 먼저 읽어 거르고, 이번 쪽에 보여줄 줄만 전체를 읽는다
   var sheet = getArchiveSheet_();
@@ -552,6 +566,7 @@ function handleArchiveSearch_(e) {
   for (var i = meta.length - 1; i >= 0; i--) {
     var r = meta[i];
     if (!r[ARCHIVE_COL.id]) continue;
+    if (idSet && !idSet[cellStr_(r[ARCHIVE_COL.id])]) continue;
     var d = cellStr_(r[ARCHIVE_COL.date]);
     if (dateFrom && d < dateFrom) continue;
     if (dateTo && d > dateTo) continue;
@@ -1002,4 +1017,71 @@ function handleMigrateArchive_() {
   } finally {
     lock.releaseLock();
   }
+}
+
+// ==========================================
+// ★ 학생 중요 문제함 (stars 탭)
+// 학생이 받은 문제 중 따로 모아 보고 싶은 문제를 체크해 둔다.
+// item_key = "보관함 문제 id|1" (1번 문제) 또는 "보관함 문제 id|2" (2번 문제)
+// ==========================================
+var STAR_HEADERS = ['student_id', 'item_key', 'archive_id', 'created_at'];
+
+function handleStarList_(e) {
+  var student = (e.parameter && e.parameter.student_id) ? String(e.parameter.student_id) : '';
+  if (!student) return jsonResponse_([]);
+  var data = readCols_(getTextSheet_('stars', STAR_HEADERS), 1, 2);
+  var keys = [];
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][0]) === student) keys.push(cellStr_(data[i][1]));
+  }
+  return jsonResponse_(keys);
+}
+
+function handleStarSet_(body) {
+  var student = String(body.student_id || '');
+  var key = String(body.item_key || '');
+  if (!student || !key) return jsonResponse_({ ok: false, error: "student_id와 item_key가 필요합니다." });
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = getTextSheet_('stars', STAR_HEADERS);
+    var data = readCols_(sheet, 1, 2);
+    var found = -1;
+    for (var i = data.length - 1; i >= 0; i--) {
+      if (String(data[i][0]) === student && cellStr_(data[i][1]) === key) { found = i + 2; break; }
+    }
+    if (body.on && found < 0) {
+      appendTextRows_(sheet, [[student, key, key.split('|')[0], new Date().toISOString()]]);
+    } else if (!body.on && found > 0) {
+      sheet.deleteRow(found);
+    }
+    return jsonResponse_({ ok: true });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 학생이 체크한 문제가 들어 있는 보관함 문제들 (그 학생에게 배정된 것만, 최근에 체크한 순서)
+function handleStarItems_(e) {
+  var student = (e.parameter && e.parameter.student_id) ? String(e.parameter.student_id) : '';
+  if (!student) return jsonResponse_({ items: [], keys: [] });
+  var stars = readCols_(getTextSheet_('stars', STAR_HEADERS), 1, 3);
+  var keys = [], order = [], seen = {};
+  for (var i = stars.length - 1; i >= 0; i--) {
+    if (String(stars[i][0]) !== student) continue;
+    keys.push(cellStr_(stars[i][1]));
+    var aid = cellStr_(stars[i][2]);
+    if (!seen[aid]) { seen[aid] = true; order.push(aid); }
+  }
+  if (!order.length) return jsonResponse_({ items: [], keys: [] });
+  var sheet = getArchiveSheet_();
+  var meta = readCols_(sheet, 1, ARCHIVE_COL.student_ids + 1);
+  var rowOf = {};
+  for (var j = 0; j < meta.length; j++) {
+    var id = cellStr_(meta[j][ARCHIVE_COL.id]);
+    if (seen[id] && splitIds_(meta[j][ARCHIVE_COL.student_ids]).indexOf(student) !== -1) rowOf[id] = j + 2;
+  }
+  var rows = order.filter(function (id) { return rowOf[id]; }).slice(0, 300).map(function (id) { return rowOf[id]; });
+  var items = readRowsFull_(sheet, rows, ARCHIVE_HEADERS.length).map(function (r) { return archiveRowToObj_(r, false); });
+  return jsonResponse_({ items: items, keys: keys });
 }
