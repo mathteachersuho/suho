@@ -193,3 +193,9 @@ alter table homework_problems enable row level security;
 alter table hw_results        enable row level security;
 alter table exams             enable row level security;
 alter table app_settings      enable row level security;
+
+-- ---------------------------------------------------------------
+-- 4단계에서 추가: 문제 은행 키워드 검색(문제·메모·문제틀 글자)을 빠르게 하는 색인
+-- ---------------------------------------------------------------
+create index if not exists problems_search_idx
+  on problems using gin ((question || ' ' || memo || ' ' || frame) extensions.gin_trgm_ops);
