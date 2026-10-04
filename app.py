@@ -11,6 +11,7 @@ import datetime
 import io
 import hashlib
 import hmac
+import logging
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 from google import genai
@@ -30,6 +31,24 @@ sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "").strip()
 # 같은 값을 Apps Script 쪽 스크립트 속성(SECRET_TOKEN)에도 넣어야 서로 짝이 맞습니다.
 # 토큰이 설정돼 있지 않으면 경고만 띄우고, 기존처럼 인증 없이 동작합니다(하위 호환).
 sheet_api_token = st.secrets.get("SHEET_API_TOKEN", "").strip()
+
+def _mask_secrets(text):
+    """오류 문장에 섞여 들어올 수 있는 비밀값(주소·토큰·API 키)을 *** 로 가린다."""
+    text = str(text)
+    for key in ("GOOGLE_SHEET_URL", "SHEET_API_TOKEN", "GEMINI_API_KEY", "MATHPIX_APP_KEY", "MATHPIX_APP_ID",
+                "ADMIN_PASSWORD", "PASSWORD_SALT", "LOGIN_SECRET"):
+        v = str(st.secrets.get(key, "") or "").strip()
+        if v:
+            text = text.replace(v, "***")
+    return text
+
+
+def safe_error(prefix, e):
+    """화면에는 일반 문구만 보여 주고, 자세한 내용은 비밀값을 가린 채 서버 로그에만 남긴다.
+    (requests 오류 문장에는 token=... 이 들어간 주소가 그대로 있어서 화면에 찍으면 안 된다)"""
+    logging.error("%s: %s", prefix, _mask_secrets(e))
+    st.error(f"{prefix} 잠시 후 다시 시도해 주세요. 계속되면 선생님께 알려 주세요.")
+
 
 # ★ 읽기 캐시: Streamlit은 버튼을 누를 때마다 모든 탭을 다시 그리므로, 구글 시트에서 읽은 결과를
 # 잠깐(60초) 기억해 두고 다시 쓴다. 저장·삭제·수정 같은 쓰기를 하면 바로 지워서 새 내용이 보이게 한다.
@@ -113,7 +132,7 @@ def fetch_problems(class_id=None, since_date=None):
                 "Apps Script가 새 버전으로 재배포됐는지 확인해 주세요."
             )
     except Exception as e:
-        st.error(f"데이터베이스 연결 오류: {e}")
+        safe_error("데이터베이스 연결 오류가 있어요.", e)
     return []
 
 def compress_image_for_storage(image_b64, max_dimension=700, max_chars=40000):
@@ -172,7 +191,7 @@ def save_problem(problem_data):
         invalidate_reads()
         return res.status_code == 200
     except Exception as e:
-        st.error(f"과제 등록 오류: {e}")
+        safe_error("과제를 등록하지 못했어요.", e)
         return False
 
 def delete_problem(prob_id):
@@ -194,7 +213,7 @@ def delete_problem(prob_id):
         invalidate_reads()
         return res.status_code == 200
     except Exception as e:
-        st.error(f"과제 삭제 오류: {e}")
+        safe_error("과제를 삭제하지 못했어요.", e)
         return False
 
 # ==========================================
@@ -223,7 +242,7 @@ def _post_action(payload):
             return res.json()
         return {"ok": False, "error": f"서버 오류 (status {res.status_code})"}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": _mask_secrets(e)}
 
 
 def student_signup(student_id, password):
@@ -283,7 +302,7 @@ def admin_list_students():
         if isinstance(data, list):
             return data
     except Exception as e:
-        st.error(f"학생 목록 조회 오류: {e}")
+        safe_error("학생 목록을 불러오지 못했어요.", e)
     return []
 
 
@@ -303,7 +322,7 @@ def fetch_personal_problems(student_id, source=None):
             if isinstance(data, list):
                 return data
     except Exception as e:
-        st.error(f"보관함 조회 오류: {e}")
+        safe_error("보관함을 불러오지 못했어요.", e)
     return []
 
 
@@ -376,7 +395,7 @@ def _get_action(params, timeout=30):
     try:
         return _get_json(params, timeout=timeout)
     except Exception as e:
-        st.error(f"보관함 조회 오류: {e}")
+        safe_error("보관함을 불러오지 못했어요.", e)
     return None
 
 
@@ -2079,7 +2098,7 @@ if tab2 is not None:
                     else:
                         st.error("인식에 실패했습니다. 다시 시도해 주세요.")
                 except Exception as e:
-                    st.error(f"오류가 발생했습니다: {e}")
+                    safe_error("오류가 발생했습니다.", e)
 
         if st.session_state.ocr_text:
             if st.session_state.current_image_b64:
@@ -2124,7 +2143,7 @@ if tab2 is not None:
                         st.session_state.edit_ver = st.session_state.get("edit_ver", 0) + 1
                         st.success("⚡ 차별화된 유사 문제 2개 초고속 병렬 생성 완료!")
                     except Exception as e:
-                        st.error(f"오류가 발생했습니다: {e}")
+                        safe_error("오류가 발생했습니다.", e)
 
             # ==========================================
             # ★ 화면에서 직관적으로 수정하는 실시간 인터페이스
@@ -2837,7 +2856,7 @@ if tab_similar is not None:
                         st.session_state.sim_text = mathpix_ocr(_sfile.getvalue())
                         st.session_state.sim_ocr_n = st.session_state.get("sim_ocr_n", 0) + 1
                     except Exception as e:
-                        st.error(f"읽기에 실패했습니다: {e}")
+                        safe_error("읽기에 실패했습니다.", e)
             _stext = st.text_area("문제 내용 (직접 입력하거나 고칠 수 있어요)", value=st.session_state.get("sim_text", ""), key=f"sim_text_area_{st.session_state.get('sim_ocr_n', 0)}", height=120)
             if _stext.strip() and st.button("🤖 AI로 문제틀 찾기", type="primary", key="sim_classify"):
                 if not _stax:
@@ -2848,7 +2867,7 @@ if tab_similar is not None:
                             st.session_state.sim_result = classify_frame(_stext, _stax, gemini_api_key, get_gemini_model_name())
                             st.session_state.sim_ver = st.session_state.get("sim_ver", 0) + 1
                         except Exception as e:
-                            st.error(f"AI 분류에 실패했습니다: {e}")
+                            safe_error("AI 분류에 실패했습니다.", e)
 
             _sres = st.session_state.get("sim_result")
             if _sres:
@@ -3347,7 +3366,7 @@ def analyze_school_exam(exam, images, wrong_text, hist):
     try:
         out = _gemini_json(prompt)
     except Exception as e:
-        return {"error": f"AI 분석을 하지 못했어요: {e}"}
+        return {"error": f"AI 분석을 하지 못했어요: {_mask_secrets(e)}"}
     probs = [p for p in out.get("problems", []) if isinstance(p, dict)]
     if not probs:
         return {"error": "시험지에서 문항을 찾지 못했어요. 사진을 다시 확인해 주세요."}
@@ -3475,7 +3494,7 @@ def report_ai_analysis(rep):
         out = _gemini_json(prompt)
         return {"analysis": str(out.get("analysis", "")).strip(), "comment": str(out.get("comment", "")).strip()}
     except Exception as e:
-        return {"analysis": f"(AI 분석을 만들지 못했어요: {e})", "comment": ""}
+        return {"analysis": f"(AI 분석을 만들지 못했어요: {_mask_secrets(e)})", "comment": ""}
 
 
 def make_report_html(rep, comment, analysis=""):
