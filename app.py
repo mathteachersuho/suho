@@ -49,14 +49,14 @@ def fetch_problems(class_id=None, since_date=None):
         return all_local
     
     try:
-        fetch_url = f"{sheet_url}?t={int(time.time() * 1000)}"
+        params = {"t": int(time.time() * 1000)}
         if sheet_api_token:
-            fetch_url += f"&token={sheet_api_token}"
+            params["token"] = sheet_api_token
         if class_id:
-            fetch_url += f"&class_id={class_id}"
+            params["class_id"] = class_id
         if since_date:
-            fetch_url += f"&since={since_date}"
-        res = requests.get(fetch_url, timeout=30)
+            params["since"] = since_date
+        res = requests.get(sheet_url, params=params, timeout=30)
         if res.status_code == 200:
             data = res.json()
             if isinstance(data, list):
@@ -234,10 +234,10 @@ def admin_list_students():
     if not sheet_url:
         return []
     try:
-        url = f"{sheet_url}?action=list_students&t={int(time.time() * 1000)}"
+        params = {"action": "list_students", "t": int(time.time() * 1000)}
         if sheet_api_token:
-            url += f"&token={sheet_api_token}"
-        res = requests.get(url, timeout=15)
+            params["token"] = sheet_api_token
+        res = requests.get(sheet_url, params=params, timeout=15)
         if res.status_code == 200:
             data = res.json()
             if isinstance(data, list):
@@ -252,12 +252,12 @@ def fetch_personal_problems(student_id, source=None):
     if not sheet_url:
         return []
     try:
-        url = f"{sheet_url}?sheet=personal_problems&student_id={student_id}&t={int(time.time() * 1000)}"
+        params = {"sheet": "personal_problems", "student_id": student_id, "t": int(time.time() * 1000)}
         if source:
-            url += f"&source={source}"
+            params["source"] = source
         if sheet_api_token:
-            url += f"&token={sheet_api_token}"
-        res = requests.get(url, timeout=15)
+            params["token"] = sheet_api_token
+        res = requests.get(sheet_url, params=params, timeout=15)
         if res.status_code == 200:
             data = res.json()
             if isinstance(data, list):
@@ -311,10 +311,10 @@ def get_app_status():
                 return f.read().strip()
         return "OFF"
     try:
-        url = f"{sheet_url}?action=get_status&t={int(time.time() * 1000)}"
+        params = {"action": "get_status", "t": int(time.time() * 1000)}
         if sheet_api_token:
-            url += f"&token={sheet_api_token}"
-        res = requests.get(url, timeout=10)
+            params["token"] = sheet_api_token
+        res = requests.get(sheet_url, params=params, timeout=10)
         if res.status_code == 200:
             data = res.json()
             return data.get("status", "OFF")
@@ -966,7 +966,8 @@ def get_fastest_model_name(api_key):
 # ==========================================
 # ★ 반 이름 설정 (1M2, 1M3, 2M1, 2M3, 3M1, 3M3)
 # ==========================================
-admin_pw = st.secrets.get("ADMIN_PASSWORD", "1234")
+# ★ 수정: Secrets에 ADMIN_PASSWORD가 없으면 기본값(1234)으로 열리지 않도록 빈 값 처리
+admin_pw = st.secrets.get("ADMIN_PASSWORD", "").strip()
 class_list = ["1M2", "1M3", "2M1", "2M3", "3M1", "3M3"]
 
 mathpix_app_id = st.secrets.get("MATHPIX_APP_ID", "")
@@ -1023,7 +1024,9 @@ with st.sidebar:
         if login_mode == "선생님":
             entered_pw = st.text_input("선생님 비밀번호", type="password", key="admin_pw_input")
             if st.button("로그인", key="admin_login_btn"):
-                if entered_pw == admin_pw:
+                if not admin_pw:
+                    st.error("Secrets에 ADMIN_PASSWORD가 설정되지 않아 선생님 로그인을 할 수 없습니다.")
+                elif entered_pw == admin_pw:
                     st.session_state.auth_role = "admin"
                     st.rerun()
                 else:
@@ -1238,17 +1241,19 @@ def render_class_board(view_class, current_role, current_student_id):
                             
                         with col_pr2:
                             with st.expander("📋 선택한 과제 한글(HWP) 복사용"):
+                                # ★ 수정: format_math()는 HTML(<span>, <table> 등)을 만들기 때문에
+                                # 복사용 텍스트에는 원문(LaTeX)을 그대로 넣는다.
                                 hwp_bundle = f"[{view_class} - {group['label']} 수학 학습지]\n\n"
                                 for s_idx, sp in enumerate(selected_items, start=1):
-                                    q1_hwp = format_math(sp.get('q1',''))
-                                    q2_hwp = format_math(sp.get('q2',''))
+                                    q1_hwp = sp.get('q1','')
+                                    q2_hwp = sp.get('q2','')
                                     hwp_bundle += f"■ 과제 세트 {s_idx}\n[문제 1]\n{q1_hwp}\n\n(풀이 공간)\n\n\n[문제 2]\n{q2_hwp}\n\n(풀이 공간)\n\n\n"
                                 hwp_bundle += "--------------------------------------------------\n[정답 및 풀이]\n"
                                 for s_idx, sp in enumerate(selected_items, start=1):
-                                    a1_hwp = format_math(sp.get('a1',''))
-                                    s1_hwp = format_math(sp.get('s1',''))
-                                    a2_hwp = format_math(sp.get('a2',''))
-                                    s2_hwp = format_math(sp.get('s2',''))
+                                    a1_hwp = sp.get('a1','')
+                                    s1_hwp = sp.get('s1','')
+                                    a2_hwp = sp.get('a2','')
+                                    s2_hwp = sp.get('s2','')
                                     hwp_bundle += f"■ 과제 세트 {s_idx}\n1번 정답: {a1_hwp}\n1번 풀이: {s1_hwp}\n2번 정답: {a2_hwp}\n2번 풀이: {s2_hwp}\n\n"
                                 st.text_area("선택 묶음 복사 텍스트", hwp_bundle, height=130, key=f"bundle_hwp_{d_key}")
                     else:
@@ -1351,7 +1356,7 @@ with tab2:
                 headers = {"app_id": mathpix_app_id, "app_key": mathpix_app_key, "Content-type": "application/json"}
                 data = {"src": image_url, "formats": ["text", "latex_styled"]}
                 
-                res = requests.post("https://api.mathpix.com/v3/text", headers=headers, json=data)
+                res = requests.post("https://api.mathpix.com/v3/text", headers=headers, json=data, timeout=60)
                 result_json = res.json()
                 
                 if "text" in result_json:
@@ -1389,6 +1394,7 @@ with tab2:
                         p2_res = future_p2.result()
                     
                     st.session_state.similar_problems = [p1_res, p2_res]
+                    st.session_state.edit_ver = st.session_state.get("edit_ver", 0) + 1
                     st.success("⚡ 차별화된 유사 문제 2개 초고속 병렬 생성 완료!")
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
@@ -1416,7 +1422,7 @@ with tab2:
                         # 저장용 사진만 별도로 압축 (OCR에는 영향 없음 - 이미 인식 끝난 뒤라서)
                         compressed_b64 = compress_image_for_storage(st.session_state.current_image_b64)
                         new_prob = {
-                            "id": str(int(time.time())),
+                            "id": str(int(time.time() * 1000)),
                             "class_id": target_class, 
                             "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                             "image_b64": compressed_b64,
@@ -1459,6 +1465,7 @@ with tab2:
                                     p2["question"] = p2["question"].replace(find_str, replace_str)
                                     p2["answer"] = p2["answer"].replace(find_str, replace_str)
                                     p2["solution"] = p2["solution"].replace(find_str, replace_str)
+                                st.session_state.edit_ver = st.session_state.get("edit_ver", 0) + 1
                                 st.success(f"'{find_str}' ➔ '{replace_str}' 교체 완료!")
                                 st.rerun()
 
@@ -1493,12 +1500,12 @@ with tab2:
                 
                 if current_role == "admin":
                     if st.checkbox("✏️ 1번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p1"):
-                        p1_q_new = st.text_area("1번 지문 내용:", value=p1.get("question", ""), key="inline_p1_q", height=120)
+                        p1_q_new = st.text_area("1번 지문 내용:", value=p1.get("question", ""), key=f"inline_p1_q_{st.session_state.get('edit_ver', 0)}", height=120)
                         col_a1, col_s1 = st.columns([1, 2])
                         with col_a1:
-                            p1_a_new = st.text_input("1번 정답:", value=p1.get("answer", ""), key="inline_p1_a")
+                            p1_a_new = st.text_input("1번 정답:", value=p1.get("answer", ""), key=f"inline_p1_a_{st.session_state.get('edit_ver', 0)}")
                         with col_s1:
-                            p1_s_new = st.text_input("1번 풀이:", value=p1.get("solution", ""), key="inline_p1_s")
+                            p1_s_new = st.text_area("1번 풀이:", value=p1.get("solution", ""), key=f"inline_p1_s_{st.session_state.get('edit_ver', 0)}", height=120)
                         
                         p1["question"] = p1_q_new
                         p1["answer"] = p1_a_new
@@ -1517,12 +1524,12 @@ with tab2:
                 
                 if current_role == "admin":
                     if st.checkbox("✏️ 2번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p2"):
-                        p2_q_new = st.text_area("2번 지문 내용:", value=p2.get("question", ""), key="inline_p2_q", height=120)
+                        p2_q_new = st.text_area("2번 지문 내용:", value=p2.get("question", ""), key=f"inline_p2_q_{st.session_state.get('edit_ver', 0)}", height=120)
                         col_a2, col_s2 = st.columns([1, 2])
                         with col_a2:
-                            p2_a_new = st.text_input("2번 정답:", value=p2.get("answer", ""), key="inline_p2_a")
+                            p2_a_new = st.text_input("2번 정답:", value=p2.get("answer", ""), key=f"inline_p2_a_{st.session_state.get('edit_ver', 0)}")
                         with col_s2:
-                            p2_s_new = st.text_input("2번 풀이:", value=p2.get("solution", ""), key="inline_p2_s")
+                            p2_s_new = st.text_area("2번 풀이:", value=p2.get("solution", ""), key=f"inline_p2_s_{st.session_state.get('edit_ver', 0)}", height=120)
                         
                         p2["question"] = p2_q_new
                         p2["answer"] = p2_a_new
