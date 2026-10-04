@@ -27,7 +27,8 @@ var STUDENTS_HEADERS = ['student_id', 'password_hash', 'class_id', 'created_at']
 var PERSONAL_HEADERS = ['id', 'student_id', 'class_id', 'source', 'origin_id', 'date', 'image_b64', 'q1', 'a1', 's1', 'q2', 'a2', 's2'];
 // student_ids: 쉼표로 구분한 학생 아이디 목록 (예: "kim01,lee02")
 // tags = 원본 문제의 구분, tags1/tags2 = 유사문제 1번/2번의 구분 (중요,틀림,어려워함 을 쉼표로, 여러 개 가능)
-var ARCHIVE_HEADERS = ['id', 'date', 'student_ids', 'class_id', 'grade', 'unit', 'subtype', 'source_text', 'image_file_id', 'q1', 'a1', 's1', 'q2', 'a2', 's2', 'memo', 'created_at', 'tags', 'tags1', 'tags2'];
+var ARCHIVE_HEADERS = ['id', 'date', 'student_ids', 'class_id', 'grade', 'unit', 'subtype', 'source_text', 'image_file_id', 'q1', 'a1', 's1', 'q2', 'a2', 's2', 'memo', 'created_at', 'tags', 'tags1', 'tags2', 'student_tags'];
+// student_tags = 학생별 구분 JSON {"학생id": ["원본 구분", "1번 구분", "2번 구분"]}. 있으면 tags/tags1/tags2보다 먼저 쓴다.
 var ARCHIVE_COL = {};
 for (var _c = 0; _c < ARCHIVE_HEADERS.length; _c++) ARCHIVE_COL[ARCHIVE_HEADERS[_c]] = _c;
 
@@ -100,10 +101,11 @@ function doGet(e) {
   if (action === 'taxonomy') return handleTaxonomy_();
   if (action === 'star_list') return handleStarList_(e);
   if (action === 'star_items') return handleStarItems_(e);
-  if (action === 'version') return jsonResponse_({ version: 5 });  // 3 = 숙제·채점·시험 점수, 4 = 학교 시험지 분석 저장, 5 = 문제 구분(중요·틀림·어려워함)
+  if (action === 'version') return jsonResponse_({ version: 6 });  // 3 = 숙제·채점·시험 점수, 4 = 학교 시험지 분석, 5 = 문제 구분, 6 = 학생별 구분·단원 학기
   if (action === 'hw_list') return handleHwList_(e);
   if (action === 'hw_results') return handleHwResults_(e);
   if (action === 'exam_list') return handleExamList_(e);
+  if (action === 'unit_semesters') return handleUnitSemesters_();
   if (sheetParam === 'personal_problems') {
     return handleGetPersonal_(e);
   }
@@ -135,6 +137,7 @@ function doPost(e) {
   if (action === 'archive_update_students') return handleArchiveUpdateStudents_(body);
   if (action === 'archive_update_tags') return handleArchiveUpdateTags_(body);
   if (action === 'hw_tag') return handleHwTag_(body);
+  if (action === 'unit_semester_set') return handleUnitSemesterSet_(body);
   if (action === 'bank_save') return handleBankSave_(body);
   if (action === 'bank_update') return handleBankUpdate_(body);
   if (action === 'bank_delete') return handleBankDelete_(body);
@@ -421,6 +424,22 @@ function ensureHeaders_(sheet, headers) {
 
 // 구분 글자 정리: 정해진 세 가지만, 중복 없이, 정해진 순서로
 var TAG_NAMES = ['중요', '틀림', '어려워함'];
+
+// 학생별 구분 정리: {학생id: [원본, 1번, 2번]} 를 JSON 글자로. 잘못된 값은 버린다.
+function cleanStudentTags_(v) {
+  var obj = v;
+  if (typeof v === 'string') {
+    try { obj = v ? JSON.parse(v) : {}; } catch (err) { obj = {}; }
+  }
+  if (!obj || typeof obj !== 'object') return '';
+  var out = {}, any = false;
+  for (var sid in obj) {
+    var arr = Array.isArray(obj[sid]) ? obj[sid] : [];
+    var t = [cleanTags_(arr[0]), cleanTags_(arr[1]), cleanTags_(arr[2])];
+    if (t[0] || t[1] || t[2]) { out[String(sid)] = t; any = true; }
+  }
+  return any ? JSON.stringify(out) : '';
+}
 function cleanTags_(v) {
   var parts = (Array.isArray(v) ? v : String(v || '').split(',')).map(function (x) { return String(x).trim(); });
   return TAG_NAMES.filter(function (t) { return parts.indexOf(t) !== -1; }).join(',');
@@ -530,7 +549,8 @@ function handleArchiveSave_(body) {
     var row = [
       body.id, body.date, studentIds, body.class_id, body.grade, body.unit, body.subtype,
       body.source_text, fileId, body.q1, body.a1, body.s1, body.q2, body.a2, body.s2,
-      body.memo, new Date().toISOString(), cleanTags_(body.tags), cleanTags_(body.tags1), cleanTags_(body.tags2)
+      body.memo, new Date().toISOString(), cleanTags_(body.tags), cleanTags_(body.tags1), cleanTags_(body.tags2),
+      cleanStudentTags_(body.student_tags)
     ].map(safeCell_);
     // appendRow 대신 서식을 먼저 "일반 텍스트"로 지정한 뒤 값을 넣는다 (1000행을 넘어가도 날짜/아이디가 변형되지 않게)
     var sheet = getArchiveSheet_();
@@ -585,9 +605,13 @@ function handleArchiveUpdateTags_(body) {
     var sheet = getArchiveSheet_();
     var row = findRowById_(sheet, ARCHIVE_COL.id, body.id);
     if (row < 0) return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
-    var rg = sheet.getRange(row, ARCHIVE_COL.tags + 1, 1, 3);
-    rg.setNumberFormat('@');
-    rg.setValues([[cleanTags_(body.tags), cleanTags_(body.tags1), cleanTags_(body.tags2)]]);
+    if (body.student_tags !== undefined) {
+      sheet.getRange(row, ARCHIVE_COL.student_tags + 1).setNumberFormat('@').setValue(cleanStudentTags_(body.student_tags));
+    } else {
+      var rg = sheet.getRange(row, ARCHIVE_COL.tags + 1, 1, 3);
+      rg.setNumberFormat('@');
+      rg.setValues([[cleanTags_(body.tags), cleanTags_(body.tags1), cleanTags_(body.tags2)]]);
+    }
     return jsonResponse_({ ok: true });
   } finally {
     lock.releaseLock();
@@ -1378,6 +1402,39 @@ function handleHwTag_(body) {
   try {
     var items = (body.tags || []).map(function (t) { return { problem_id: t.problem_id, tags: t.tags || '' }; });
     upsertResults_(String(body.hw_id || ''), String(body.student_id || ''), items, 'teacher');
+    return jsonResponse_({ ok: true });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ==========================================
+// ★ 단원별 학기 (units 탭): 학년 · 단원 → 1학기 / 2학기
+// ==========================================
+var UNIT_HEADERS = ['grade', 'unit', 'semester', 'updated_at'];
+
+function handleUnitSemesters_() {
+  var rows = readCols_(getTextSheet_('units', UNIT_HEADERS), 1, UNIT_HEADERS.length);
+  return jsonResponse_(rows.filter(function (r) { return r[1]; }).map(function (r) { return rowsToObjs_([r], UNIT_HEADERS)[0]; }));
+}
+
+function handleUnitSemesterSet_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var grade = String(body.grade || ''), unit = String(body.unit || ''), sem = String(body.semester || '');
+    if (!unit) return jsonResponse_({ ok: false, error: "단원이 필요합니다." });
+    var sheet = getTextSheet_('units', UNIT_HEADERS);
+    var rows = readCols_(sheet, 1, 2);
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i][0]) === grade && String(rows[i][1]) === unit) {
+        var rg = sheet.getRange(i + 2, 3, 1, 2);
+        rg.setNumberFormat('@');
+        rg.setValues([[sem, new Date().toISOString()]]);
+        return jsonResponse_({ ok: true });
+      }
+    }
+    appendTextRows_(sheet, [[grade, unit, sem, new Date().toISOString()]]);
     return jsonResponse_({ ok: true });
   } finally {
     lock.releaseLock();
