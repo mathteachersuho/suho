@@ -383,7 +383,10 @@ def archive_search(student="", class_id="", grade="", unit="", subtype="",
 def archive_types():
     """지금까지 보관함에 쓰인 (학년, 단원, 세부 유형) 목록과 개수."""
     data = _get_action({"action": "archive_types"})
-    return data if isinstance(data, list) else []
+    if not isinstance(data, list):
+        return []
+    # 예전 Apps Script는 이 요청에 게시판 목록을 돌려주므로, 유형 칸이 있는 항목만 쓴다
+    return [t for t in data if isinstance(t, dict) and "subtype" in t]
 
 
 def archive_stats(date_from="", date_to="", class_id=""):
@@ -395,7 +398,26 @@ def archive_stats(date_from="", date_to="", class_id=""):
     if class_id:
         params["class_id"] = class_id
     data = _get_action(params, timeout=60)
-    return data if isinstance(data, list) else []
+    if not isinstance(data, list):
+        return []
+    return [r for r in data if isinstance(r, dict) and "student_id" in r and "subtype" in r]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def archive_backend_ready():
+    """Apps Script가 보관함 기능이 있는 새 버전인지 확인.
+    예전 버전은 보관함 요청을 알아보지 못하고 게시판 목록을 돌려주거나(조회),
+    게시판 시트에 엉뚱한 줄을 추가하므로(저장), 새 버전일 때만 보관함을 쓰게 한다."""
+    if not sheet_url:
+        return False
+    data = _get_action({"action": "archive_search", "limit": 1})
+    return isinstance(data, dict) and isinstance(data.get("items"), list)
+
+
+ARCHIVE_SETUP_MSG = (
+    "⚠️ 구글 Apps Script가 아직 예전 버전이라 문제 보관함을 쓸 수 없습니다. "
+    "저장소의 apps_script/Code.gs 내용으로 Apps Script를 바꾸고 '새 버전'으로 재배포한 뒤, 1분쯤 지나 새로고침해 주세요."
+)
 
 
 @st.cache_data(ttl=3600, show_spinner=False, max_entries=200)
@@ -1694,7 +1716,10 @@ if tab2 is not None:
                 _picked_students = st.multiselect("대상 학생 (여러 명 선택 가능, 비워두면 학생 미지정)", _student_options, key=f"arch_students_{_ver}")
                 _memo = st.text_input("메모 (선택)", key=f"arch_memo_{_ver}", placeholder="예: 3단계 이항에서 부호 실수")
 
-                if st.button("🗄️ 보관함에 저장하기", type="primary", key=f"arch_save_btn_{_ver}"):
+                _backend_ok = archive_backend_ready()
+                if not _backend_ok:
+                    st.warning(ARCHIVE_SETUP_MSG)
+                if st.button("🗄️ 보관함에 저장하기", type="primary", key=f"arch_save_btn_{_ver}", disabled=not _backend_ok):
                     _grade = st.session_state.get(f"arch_grade_{_ver}", "").strip()
                     _unit = st.session_state.get(f"arch_unit_{_ver}", "").strip()
                     _subtype = st.session_state.get(f"arch_subtype_{_ver}", "").strip()
@@ -1812,94 +1837,97 @@ def _type_filter_widgets(types, key_prefix):
 if tab_archive is not None:
     with tab_archive:
         st.subheader("🗄️ 문제 보관함")
-        _types_all = archive_types()
-        _students_all = admin_list_students()
-
-        col_d, col_c, col_st = st.columns([1.4, 1, 1.2])
-        with col_d:
-            _range = st.date_input(
-                "기간",
-                value=(datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()),
-                key="ab_range",
-            )
-        with col_c:
-            _ab_class = st.selectbox("반", ["전체"] + class_list, key="ab_class")
-        with col_st:
-            _ab_student_opts = [s.get("student_id", "") for s in _students_all
-                                if _ab_class == "전체" or s.get("class_id", "") == _ab_class]
-            _ab_student = st.selectbox("학생", ["전체"] + _ab_student_opts, key="ab_student")
-        _ab_grade, _ab_unit, _ab_subtype = _type_filter_widgets(_types_all, "ab")
-        _ab_keyword = st.text_input("🔎 문제 내용·메모 검색어", key="ab_keyword")
-
-        if isinstance(_range, (tuple, list)) and len(_range) == 2:
-            _ab_from, _ab_to = _range[0].strftime("%Y-%m-%d"), _range[1].strftime("%Y-%m-%d")
-        elif isinstance(_range, (tuple, list)) and len(_range) == 1:
-            _ab_from = _ab_to = _range[0].strftime("%Y-%m-%d")
+        if not archive_backend_ready():
+            st.warning(ARCHIVE_SETUP_MSG)
         else:
-            _ab_from = _ab_to = ""
+            _types_all = archive_types()
+            _students_all = admin_list_students()
 
-        _filters = dict(
-            student="" if _ab_student == "전체" else _ab_student,
-            class_id="" if _ab_class == "전체" else _ab_class,
-            grade=_ab_grade, unit=_ab_unit, subtype=_ab_subtype,
-            date_from=_ab_from, date_to=_ab_to, keyword=_ab_keyword.strip(),
-        )
-        # 조건이 바뀌면 '더 보기' 개수를 처음으로 되돌린다
-        _sig = json.dumps(_filters, sort_keys=True, ensure_ascii=False)
-        if st.session_state.get("ab_sig") != _sig:
-            st.session_state.ab_sig = _sig
-            st.session_state.ab_limit = 20
+            col_d, col_c, col_st = st.columns([1.4, 1, 1.2])
+            with col_d:
+                _range = st.date_input(
+                    "기간",
+                    value=(datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()),
+                    key="ab_range",
+                )
+            with col_c:
+                _ab_class = st.selectbox("반", ["전체"] + class_list, key="ab_class")
+            with col_st:
+                _ab_student_opts = [s.get("student_id", "") for s in _students_all
+                                    if _ab_class == "전체" or s.get("class_id", "") == _ab_class]
+                _ab_student = st.selectbox("학생", ["전체"] + _ab_student_opts, key="ab_student")
+            _ab_grade, _ab_unit, _ab_subtype = _type_filter_widgets(_types_all, "ab")
+            _ab_keyword = st.text_input("🔎 문제 내용·메모 검색어", key="ab_keyword")
 
-        with st.spinner("보관함을 검색하는 중..."):
-            _res = archive_search(**_filters, limit=st.session_state.ab_limit)
-        _items = _res["items"]
-        st.caption(f"검색 결과 {_res['total']}개 중 {len(_items)}개 표시")
+            if isinstance(_range, (tuple, list)) and len(_range) == 2:
+                _ab_from, _ab_to = _range[0].strftime("%Y-%m-%d"), _range[1].strftime("%Y-%m-%d")
+            elif isinstance(_range, (tuple, list)) and len(_range) == 1:
+                _ab_from = _ab_to = _range[0].strftime("%Y-%m-%d")
+            else:
+                _ab_from = _ab_to = ""
 
-        if _items:
-            with st.expander("🖨️ 검색 결과 시험지로 인쇄하기", expanded=False):
-                _labels = {f"{p.get('date', '')[:10]} · {p.get('student_ids') or '학생 미지정'} · {type_label(p)}  [{p.get('id')}]": p for p in _items}
-                _sel = st.multiselect("인쇄할 문제", list(_labels.keys()), default=list(_labels.keys()), key="ab_print_sel")
-                _sel_items = [_labels[k] for k in _sel]
-                if _sel_items:
-                    _title = st.text_input("시험지 제목", value=f"수학 유사문제 ({_ab_from} ~ {_ab_to})", key="ab_print_title")
-                    st.download_button(
-                        f"📥 선택한 {len(_sel_items)}개 인쇄용 파일 받기",
-                        data=make_printable_html(_title, _sel_items),
-                        file_name="보관함_시험지.html", mime="text/html", key="ab_print_dl", type="primary",
-                    )
+            _filters = dict(
+                student="" if _ab_student == "전체" else _ab_student,
+                class_id="" if _ab_class == "전체" else _ab_class,
+                grade=_ab_grade, unit=_ab_unit, subtype=_ab_subtype,
+                date_from=_ab_from, date_to=_ab_to, keyword=_ab_keyword.strip(),
+            )
+            # 조건이 바뀌면 '더 보기' 개수를 처음으로 되돌린다
+            _sig = json.dumps(_filters, sort_keys=True, ensure_ascii=False)
+            if st.session_state.get("ab_sig") != _sig:
+                st.session_state.ab_sig = _sig
+                st.session_state.ab_limit = 20
 
-        for p in _items:
-            _head = f"📅 {p.get('date', '')} · 👤 {p.get('student_ids') or '학생 미지정'} · 🏷️ {type_label(p)}"
-            with st.expander(_head):
-                if p.get("memo"):
-                    st.info(f"📝 {p['memo']}")
-                render_archive_problem_body(p, "ab")
-                st.markdown("---")
-                col_e1, col_e2 = st.columns([3, 1])
-                with col_e1:
-                    _cur = [x for x in (p.get("student_ids") or "").split(",") if x]
-                    _opts = sorted(set([s.get("student_id", "") for s in _students_all] + _cur))
-                    _new = st.multiselect("대상 학생 바꾸기", _opts, default=_cur, key=f"ab_stu_{p.get('id')}")
-                    if st.button("저장", key=f"ab_stu_save_{p.get('id')}"):
-                        if archive_update_students(p.get("id"), _new):
-                            st.success("대상 학생을 바꿨습니다.")
-                            st.rerun()
-                        else:
-                            st.error("변경에 실패했습니다.")
-                with col_e2:
-                    _confirm = st.checkbox("삭제 확인", key=f"ab_del_chk_{p.get('id')}")
-                    if st.button("🗑️ 삭제", key=f"ab_del_{p.get('id')}", disabled=not _confirm):
-                        if archive_delete(p.get("id")):
-                            archive_types.clear()
-                            st.success("삭제했습니다.")
-                            st.rerun()
-                        else:
-                            st.error("삭제에 실패했습니다.")
+            with st.spinner("보관함을 검색하는 중..."):
+                _res = archive_search(**_filters, limit=st.session_state.ab_limit)
+            _items = _res["items"]
+            st.caption(f"검색 결과 {_res['total']}개 중 {len(_items)}개 표시")
 
-        if len(_items) < _res["total"]:
-            if st.button("⬇️ 더 보기", key="ab_more"):
-                st.session_state.ab_limit += 20
-                st.rerun()
+            if _items:
+                with st.expander("🖨️ 검색 결과 시험지로 인쇄하기", expanded=False):
+                    _labels = {f"{p.get('date', '')[:10]} · {p.get('student_ids') or '학생 미지정'} · {type_label(p)}  [{p.get('id')}]": p for p in _items}
+                    _sel = st.multiselect("인쇄할 문제", list(_labels.keys()), default=list(_labels.keys()), key="ab_print_sel")
+                    _sel_items = [_labels[k] for k in _sel]
+                    if _sel_items:
+                        _title = st.text_input("시험지 제목", value=f"수학 유사문제 ({_ab_from} ~ {_ab_to})", key="ab_print_title")
+                        st.download_button(
+                            f"📥 선택한 {len(_sel_items)}개 인쇄용 파일 받기",
+                            data=make_printable_html(_title, _sel_items),
+                            file_name="보관함_시험지.html", mime="text/html", key="ab_print_dl", type="primary",
+                        )
+
+            for p in _items:
+                _head = f"📅 {p.get('date', '')} · 👤 {p.get('student_ids') or '학생 미지정'} · 🏷️ {type_label(p)}"
+                with st.expander(_head):
+                    if p.get("memo"):
+                        st.info(f"📝 {p['memo']}")
+                    render_archive_problem_body(p, "ab")
+                    st.markdown("---")
+                    col_e1, col_e2 = st.columns([3, 1])
+                    with col_e1:
+                        _cur = [x for x in (p.get("student_ids") or "").split(",") if x]
+                        _opts = sorted(set([s.get("student_id", "") for s in _students_all] + _cur))
+                        _new = st.multiselect("대상 학생 바꾸기", _opts, default=_cur, key=f"ab_stu_{p.get('id')}")
+                        if st.button("저장", key=f"ab_stu_save_{p.get('id')}"):
+                            if archive_update_students(p.get("id"), _new):
+                                st.success("대상 학생을 바꿨습니다.")
+                                st.rerun()
+                            else:
+                                st.error("변경에 실패했습니다.")
+                    with col_e2:
+                        _confirm = st.checkbox("삭제 확인", key=f"ab_del_chk_{p.get('id')}")
+                        if st.button("🗑️ 삭제", key=f"ab_del_{p.get('id')}", disabled=not _confirm):
+                            if archive_delete(p.get("id")):
+                                archive_types.clear()
+                                st.success("삭제했습니다.")
+                                st.rerun()
+                            else:
+                                st.error("삭제에 실패했습니다.")
+
+            if len(_items) < _res["total"]:
+                if st.button("⬇️ 더 보기", key="ab_more"):
+                    st.session_state.ab_limit += 20
+                    st.rerun()
 
 
 # ------------------------------------------
@@ -1909,52 +1937,55 @@ if tab_stats is not None:
     with tab_stats:
         import pandas as pd
         st.subheader("📊 학생별 유형 현황")
-        st.caption("기간 안에 학생마다 어떤 유형의 문제를 몇 세트 받았는지 보여줍니다.")
-        col_sd, col_sc = st.columns([1.4, 1])
-        with col_sd:
-            _srange = st.date_input(
-                "기간",
-                value=(datetime.date.today() - datetime.timedelta(days=90), datetime.date.today()),
-                key="st_range",
-            )
-        with col_sc:
-            _st_class = st.selectbox("반", ["전체"] + class_list, key="st_class")
-        if isinstance(_srange, (tuple, list)) and len(_srange) == 2:
-            _st_from, _st_to = _srange[0].strftime("%Y-%m-%d"), _srange[1].strftime("%Y-%m-%d")
+        if not archive_backend_ready():
+            st.warning(ARCHIVE_SETUP_MSG)
         else:
-            _st_from = _st_to = ""
+            st.caption("기간 안에 학생마다 어떤 유형의 문제를 몇 세트 받았는지 보여줍니다.")
+            col_sd, col_sc = st.columns([1.4, 1])
+            with col_sd:
+                _srange = st.date_input(
+                    "기간",
+                    value=(datetime.date.today() - datetime.timedelta(days=90), datetime.date.today()),
+                    key="st_range",
+                )
+            with col_sc:
+                _st_class = st.selectbox("반", ["전체"] + class_list, key="st_class")
+            if isinstance(_srange, (tuple, list)) and len(_srange) == 2:
+                _st_from, _st_to = _srange[0].strftime("%Y-%m-%d"), _srange[1].strftime("%Y-%m-%d")
+            else:
+                _st_from = _st_to = ""
 
-        with st.spinner("집계하는 중..."):
-            _rows = archive_stats(_st_from, _st_to, "" if _st_class == "전체" else _st_class)
+            with st.spinner("집계하는 중..."):
+                _rows = archive_stats(_st_from, _st_to, "" if _st_class == "전체" else _st_class)
 
-        if not _rows:
-            st.info("이 기간에 보관된 문제가 없습니다.")
-        else:
-            _df = pd.DataFrame(_rows)
-            _df["유형"] = _df.apply(lambda r: " › ".join(x for x in [r["unit"], r["subtype"]] if x) or "(유형 미지정)", axis=1)
-            _level = st.radio("묶는 단위", ["세부 유형", "단원"], horizontal=True, key="st_level")
-            _col = "유형" if _level == "세부 유형" else "unit"
-            _pivot = _df.pivot_table(index="student_id", columns=_col, values="count", aggfunc="sum", fill_value=0)
-            _pivot["합계"] = _pivot.sum(axis=1)
-            _pivot = _pivot.sort_values("합계", ascending=False)
-            _pivot.index.name = "학생"
-            st.dataframe(_pivot, use_container_width=True)
+            if not _rows:
+                st.info("이 기간에 보관된 문제가 없습니다.")
+            else:
+                _df = pd.DataFrame(_rows)
+                _df["유형"] = _df.apply(lambda r: " › ".join(x for x in [r["unit"], r["subtype"]] if x) or "(유형 미지정)", axis=1)
+                _level = st.radio("묶는 단위", ["세부 유형", "단원"], horizontal=True, key="st_level")
+                _col = "유형" if _level == "세부 유형" else "unit"
+                _pivot = _df.pivot_table(index="student_id", columns=_col, values="count", aggfunc="sum", fill_value=0)
+                _pivot["합계"] = _pivot.sum(axis=1)
+                _pivot = _pivot.sort_values("합계", ascending=False)
+                _pivot.index.name = "학생"
+                st.dataframe(_pivot, use_container_width=True)
 
-            st.markdown("##### 👤 학생 한 명 자세히 보기")
-            _one = st.selectbox("학생", sorted(_df["student_id"].unique()), key="st_one")
-            _detail = (_df[_df["student_id"] == _one]
-                       [["grade", "unit", "subtype", "count", "last_date"]]
-                       .rename(columns={"grade": "학년", "unit": "단원", "subtype": "세부 유형",
-                                        "count": "세트 수", "last_date": "마지막 날짜"})
-                       .sort_values("세트 수", ascending=False))
-            st.dataframe(_detail, use_container_width=True, hide_index=True)
-            st.download_button(
-                "📥 현황표 CSV로 받기",
-                data=_pivot.to_csv().encode("utf-8-sig"),
-                file_name=f"학생별_유형현황_{_st_from}_{_st_to}.csv",
-                mime="text/csv",
-                key="st_csv",
-            )
+                st.markdown("##### 👤 학생 한 명 자세히 보기")
+                _one = st.selectbox("학생", sorted(_df["student_id"].unique()), key="st_one")
+                _detail = (_df[_df["student_id"] == _one]
+                           [["grade", "unit", "subtype", "count", "last_date"]]
+                           .rename(columns={"grade": "학년", "unit": "단원", "subtype": "세부 유형",
+                                            "count": "세트 수", "last_date": "마지막 날짜"})
+                           .sort_values("세트 수", ascending=False))
+                st.dataframe(_detail, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "📥 현황표 CSV로 받기",
+                    data=_pivot.to_csv().encode("utf-8-sig"),
+                    file_name=f"학생별_유형현황_{_st_from}_{_st_to}.csv",
+                    mime="text/csv",
+                    key="st_csv",
+                )
 
 
 # ------------------------------------------
@@ -1963,26 +1994,29 @@ if tab_stats is not None:
 if tab_mine is not None:
     with tab_mine:
         st.subheader("📚 선생님이 준 문제")
-        if "mine_limit" not in st.session_state:
-            st.session_state.mine_limit = 30
-        with st.spinner("불러오는 중..."):
-            _mres = archive_search(student=current_student_id, limit=st.session_state.mine_limit)
-        _mitems = _mres["items"]
-        if not _mitems:
-            st.info("아직 선생님이 저장해 준 문제가 없어요.")
+        if not archive_backend_ready():
+            st.info("선생님이 아직 문제를 저장해 주지 않았어요.")
         else:
-            _my_types = sorted({type_label(p) for p in _mitems})
-            _pick = st.selectbox("유형으로 보기", ["전체"] + _my_types, key="mine_type")
-            _shown = [p for p in _mitems if _pick == "전체" or type_label(p) == _pick]
-            _by_date = {}
-            for p in _shown:
-                _by_date.setdefault(p.get("date", "")[:10], []).append(p)
-            for _d, _plist in _by_date.items():
-                st.markdown(f"#### 📅 {_d}")
-                for p in _plist:
-                    with st.expander(f"🏷️ {type_label(p)}"):
-                        render_archive_problem_body(p, "mine")
-            if len(_mitems) < _mres["total"]:
-                if st.button("⬇️ 이전 문제 더 보기", key="mine_more"):
-                    st.session_state.mine_limit += 30
-                    st.rerun()
+            if "mine_limit" not in st.session_state:
+                st.session_state.mine_limit = 30
+            with st.spinner("불러오는 중..."):
+                _mres = archive_search(student=current_student_id, limit=st.session_state.mine_limit)
+            _mitems = _mres["items"]
+            if not _mitems:
+                st.info("아직 선생님이 저장해 준 문제가 없어요.")
+            else:
+                _my_types = sorted({type_label(p) for p in _mitems})
+                _pick = st.selectbox("유형으로 보기", ["전체"] + _my_types, key="mine_type")
+                _shown = [p for p in _mitems if _pick == "전체" or type_label(p) == _pick]
+                _by_date = {}
+                for p in _shown:
+                    _by_date.setdefault(p.get("date", "")[:10], []).append(p)
+                for _d, _plist in _by_date.items():
+                    st.markdown(f"#### 📅 {_d}")
+                    for p in _plist:
+                        with st.expander(f"🏷️ {type_label(p)}"):
+                            render_archive_problem_body(p, "mine")
+                if len(_mitems) < _mres["total"]:
+                    if st.button("⬇️ 이전 문제 더 보기", key="mine_more"):
+                        st.session_state.mine_limit += 30
+                        st.rerun()
