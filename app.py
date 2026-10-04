@@ -461,6 +461,38 @@ def archive_image(file_id):
 
 
 # ==========================================
+# ★ 학생 중요 문제함 (Apps Script 'stars' 탭)
+# 학생이 받은 문제 중 다시 보고 싶은 문제를 체크해 둔다. key = "보관함 문제 id|1" 또는 "|2"
+# ==========================================
+@st.cache_data(ttl=60, show_spinner=False)
+def stars_backend_ready():
+    """Apps Script가 중요 문제함 기능이 있는 버전인지 확인 (예전 버전에 저장 요청을 보내면 게시판에 엉뚱한 줄이 생김)."""
+    if not sheet_url:
+        return False
+    data = _get_action({"action": "star_items", "student_id": "_check_"})
+    return isinstance(data, dict) and isinstance(data.get("items"), list)
+
+
+def star_keys(student_id):
+    data = _get_action({"action": "star_list", "student_id": student_id})
+    if not isinstance(data, list):
+        return set()
+    return {k for k in data if isinstance(k, str)}
+
+
+def star_set(student_id, item_key, on):
+    result = _post_action({"action": "star_set", "student_id": student_id, "item_key": item_key, "on": bool(on)})
+    return bool(result.get("ok"))
+
+
+def star_items(student_id):
+    data = _get_action({"action": "star_items", "student_id": student_id}, timeout=60)
+    if isinstance(data, dict) and isinstance(data.get("items"), list):
+        return data["items"]
+    return []
+
+
+# ==========================================
 # ★ 문제 은행 (Apps Script 'bank' 탭 + 'taxonomy' 탭)
 # 문제를 학생과 상관없이 한 문제씩 저장한다.
 # 분류: 학년 › 단원 › 유형 › 문제틀(숫자·난이도만 다른 문제들의 묶음) + 난이도(하/중/상) + 검수 표시
@@ -1752,12 +1784,13 @@ if current_role == "admin" and sheet_url and not sheet_api_token:
 # 메인 화면: 탭 구성 (학생으로 로그인 시에만 '내 보관함' 탭 추가)
 # ==========================================
 # ★ 수정: 문제는 선생님만 만든다. 학생은 선생님이 저장해 준 문제를 보기만 한다.
-tab2 = tab3 = tab_archive = tab_stats = tab_mine = tab_bank = tab_similar = None
+tab2 = tab3 = tab_archive = tab_stats = tab_mine = tab_star = tab_bank = tab_similar = None
 if current_role == "admin":
     tab1, tab2, tab_bank, tab_similar, tab_archive, tab_stats = st.tabs(
         ["📋 반 게시판", "📸 문제 만들기", "🏦 문제 은행", "🔍 비슷한 문제 찾기", "🗄️ 학생 보관함", "📊 학생별 유형 현황"])
 else:
-    tab1, tab_mine, tab3 = st.tabs(["📋 우리 반 게시판", "📚 선생님이 준 문제", "📂 예전 보관함"])
+    # 학생: 선생님이 배정해 준 문제(날짜별·단원별) → 중요 문제함 → 반 게시판 → 예전 보관함
+    tab_mine, tab_star, tab1, tab3 = st.tabs(["📚 내 문제", "⭐ 중요 문제함", "📋 우리 반 게시판", "📂 예전 보관함"])
 
 # ------------------------------------------
 # [탭 1] 학생 게시판 (인쇄 메뉴 기본 숨김 접이식 적용)
@@ -2517,35 +2550,137 @@ if tab_stats is not None:
 # ------------------------------------------
 # [학생] 선생님이 나에게 준 문제
 # ------------------------------------------
+def unit_label(p):
+    """학생 화면용: 세부 유형은 빼고 학년 › 단원까지만."""
+    return " › ".join(x for x in (p.get("grade", ""), p.get("unit", "")) if x) or "(단원 미지정)"
+
+
+_STAR_PREFIXES = ("sd", "su", "ss")
+
+
+def _on_star_toggle(item_key, widget_key):
+    on = bool(st.session_state.get(widget_key))
+    if not star_set(current_student_id, item_key, on):
+        st.session_state["star_error"] = True
+    # 다른 탭에 그려진 같은 문제의 체크 상태도 새 값으로 다시 그려지게 한다
+    for pfx in _STAR_PREFIXES:
+        k = f"{pfx}_star_{item_key}"
+        if k != widget_key:
+            st.session_state.pop(k, None)
+
+
+def render_student_item(p, prefix, keys, only_starred=False):
+    """학생에게 배정된 보관 문제 1세트. 문제마다 ⭐ 중요 체크를 할 수 있다."""
+    pid = p.get("id", "")
+    if p.get("image_file_id") and not only_starred:
+        if st.checkbox("🖼️ 원본 사진 보기", key=f"{prefix}_img_{pid}"):
+            img = archive_image(p["image_file_id"])
+            if img:
+                st.image(f"data:image/jpeg;base64,{img}", use_container_width=True)
+            else:
+                st.caption("사진을 불러오지 못했습니다.")
+    for n, title in ((1, "[문제 1] 기본 다지기"), (2, "[문제 2] 실력 키우기")):
+        if not p.get(f"q{n}"):
+            continue
+        item_key = f"{pid}|{n}"
+        if only_starred and item_key not in keys:
+            continue
+        c_title, c_star = st.columns([3, 1])
+        with c_title:
+            st.markdown(f"**{title}**")
+        with c_star:
+            wkey = f"{prefix}_star_{item_key}"
+            st.checkbox("⭐ 중요", value=item_key in keys, key=wkey,
+                        on_change=_on_star_toggle, args=(item_key, wkey))
+        st.markdown(format_math(p.get(f"q{n}", "")), unsafe_allow_html=True)
+        with st.expander(f"🔍 {n}번 정답 및 풀이"):
+            st.markdown(f"**정답:** {format_math(p.get(f'a{n}', ''))}", unsafe_allow_html=True)
+            if p.get(f"s{n}"):
+                st.markdown(f"**풀이:**\n\n{format_math(p.get(f's{n}', ''))}", unsafe_allow_html=True)
+
+
 if tab_mine is not None:
     with tab_mine:
-        st.subheader("📚 선생님이 준 문제")
+        st.subheader("📚 내 문제")
+        st.caption("선생님이 나에게 배정해 준 문제예요. 다시 보고 싶은 문제는 ⭐ 중요를 체크하면 '중요 문제함'에 모여요.")
+        if st.session_state.pop("star_error", False):
+            st.error("중요 표시를 저장하지 못했어요. 잠시 후 다시 해 주세요.")
         if not archive_backend_ready():
-            st.info("선생님이 아직 문제를 저장해 주지 않았어요.")
+            st.info("선생님이 아직 문제를 배정해 주지 않았어요.")
         else:
-            if "mine_limit" not in st.session_state:
-                st.session_state.mine_limit = 30
-            with st.spinner("불러오는 중..."):
-                _mres = archive_search(student=current_student_id, limit=st.session_state.mine_limit)
-            _mitems = _mres["items"]
-            if not _mitems:
-                st.info("아직 선생님이 저장해 준 문제가 없어요.")
-            else:
-                _my_types = sorted({type_label(p) for p in _mitems})
-                _pick = st.selectbox("유형으로 보기", ["전체"] + _my_types, key="mine_type")
-                _shown = [p for p in _mitems if _pick == "전체" or type_label(p) == _pick]
+            _keys = star_keys(current_student_id) if stars_backend_ready() else set()
+            _how = st.radio("보기", ["📅 날짜별", "📘 단원별"], horizontal=True, key="mine_view",
+                            label_visibility="collapsed")
+            if _how == "📅 날짜별":
+                if "mine_limit" not in st.session_state:
+                    st.session_state.mine_limit = 30
+                with st.spinner("불러오는 중..."):
+                    _mres = archive_search(student=current_student_id, limit=st.session_state.mine_limit)
+                _mitems = _mres["items"]
+                if not _mitems:
+                    st.info("아직 선생님이 배정해 준 문제가 없어요.")
                 _by_date = {}
-                for p in _shown:
+                for p in _mitems:
                     _by_date.setdefault(p.get("date", "")[:10], []).append(p)
-                for _d, _plist in _by_date.items():
+                for _d in sorted(_by_date, reverse=True):
                     st.markdown(f"#### 📅 {_d}")
-                    for p in _plist:
-                        with st.expander(f"🏷️ {type_label(p)}"):
-                            render_archive_problem_body(p, "mine")
+                    for p in _by_date[_d]:
+                        with st.expander(f"📘 {unit_label(p)}"):
+                            render_student_item(p, "sd", _keys)
                 if len(_mitems) < _mres["total"]:
                     if st.button("⬇️ 이전 문제 더 보기", key="mine_more"):
                         st.session_state.mine_limit += 30
                         st.rerun()
+            else:
+                _units = {}
+                for r in archive_stats():
+                    if r.get("student_id") == current_student_id:
+                        _k = (r.get("grade", ""), r.get("unit", ""))
+                        _units[_k] = _units.get(_k, 0) + int(r.get("count", 0) or 0)
+                if not _units:
+                    st.info("아직 선생님이 배정해 준 문제가 없어요.")
+                else:
+                    _ulist = sorted(_units)
+                    _upick = st.selectbox(
+                        "단원", _ulist, key="mine_unit",
+                        format_func=lambda k: f"{unit_label({'grade': k[0], 'unit': k[1]})} ({_units[k]}세트)")
+                    if st.session_state.get("mine_unit_prev") != _upick:
+                        st.session_state.mine_unit_prev = _upick
+                        st.session_state.mine_unit_limit = 30
+                    with st.spinner("불러오는 중..."):
+                        _ures = archive_search(student=current_student_id, grade=_upick[0], unit=_upick[1],
+                                               limit=st.session_state.mine_unit_limit)
+                    for p in sorted(_ures["items"], key=lambda x: x.get("date", ""), reverse=True):
+                        with st.expander(f"📅 {p.get('date', '')[:10]}"):
+                            render_student_item(p, "su", _keys)
+                    if len(_ures["items"]) < _ures["total"]:
+                        if st.button("⬇️ 이전 문제 더 보기", key="mine_unit_more"):
+                            st.session_state.mine_unit_limit += 30
+                            st.rerun()
+
+if tab_star is not None:
+    with tab_star:
+        st.subheader("⭐ 중요 문제함")
+        st.caption("'내 문제'에서 ⭐ 중요를 체크한 문제만 단원별로 모았어요. 체크를 풀면 여기서 빠져요.")
+        if not (archive_backend_ready() and stars_backend_ready()):
+            st.info("선생님이 앱을 새 버전으로 바꾸면 중요 문제함을 쓸 수 있어요.")
+        else:
+            _keys = star_keys(current_student_id)
+            with st.spinner("불러오는 중..."):
+                _sitems = star_items(current_student_id)
+            if not _sitems:
+                st.info("아직 중요 표시한 문제가 없어요. '내 문제' 탭에서 ⭐ 중요를 체크해 보세요.")
+            else:
+                _groups = {}
+                for p in _sitems:
+                    _groups.setdefault(unit_label(p), []).append(p)
+                st.caption(f"중요 문제 {sum(1 for k in _keys if k.split('|')[0] in {p.get('id') for p in _sitems})}개")
+                for _u in sorted(_groups):
+                    st.markdown(f"#### 📘 {_u}")
+                    for p in _groups[_u]:
+                        with st.container(border=True):
+                            st.caption(f"📅 {p.get('date', '')[:10]}")
+                            render_student_item(p, "ss", _keys, only_starred=True)
 
 
 # ------------------------------------------
