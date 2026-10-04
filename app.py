@@ -3,6 +3,8 @@ import requests
 import json
 import base64
 import re
+import html
+from fractions import Fraction
 import os
 import time
 import datetime
@@ -493,6 +495,143 @@ def star_items(student_id):
 
 
 # ==========================================
+# ★ 숙제 · 채점 · 시험 점수 (Apps Script 'homework' / 'hw_results' / 'exams' 탭)
+# 숙제는 문제 은행의 문제 id 목록만 저장한다. 채점 결과는 학생·숙제·문제 id·낸 답·O/X만 남긴다.
+# ==========================================
+@st.cache_data(ttl=60, show_spinner=False)
+def hw_backend_ready():
+    """Apps Script가 숙제·채점 기능이 있는 버전(3 이상)인지 확인."""
+    if not sheet_url:
+        return False
+    data = _get_action({"action": "version"})
+    try:
+        return isinstance(data, dict) and int(data.get("version", 0)) >= 3
+    except (TypeError, ValueError):
+        return False
+
+
+HW_SETUP_MSG = (
+    "⚠️ 구글 Apps Script가 아직 숙제·채점 기능이 없는 버전입니다. "
+    "저장소의 apps_script/Code.gs 내용으로 바꾸고, [배포 관리]에서 기존 배포를 '새 버전'으로 수정해 주세요."
+)
+
+
+def hw_list(student_id="", class_id="", limit=200):
+    params = {"action": "hw_list", "limit": limit}
+    if student_id:
+        params["student_id"] = student_id
+    if class_id:
+        params["class_id"] = class_id
+    data = _get_action(params)
+    return [h for h in data if isinstance(h, dict) and "hw_id" in h] if isinstance(data, list) else []
+
+
+def hw_save(title, due_date, class_id, student_ids, problem_ids, memo=""):
+    return _post_action({"action": "hw_save", "title": title, "due_date": due_date, "class_id": class_id,
+                         "student_ids": list(student_ids), "problem_ids": list(problem_ids), "memo": memo})
+
+
+def hw_delete(hw_id):
+    return bool(_post_action({"action": "hw_delete", "hw_id": hw_id}).get("ok"))
+
+
+def hw_results(hw_id="", student_id=""):
+    params = {"action": "hw_results"}
+    if hw_id:
+        params["hw_id"] = hw_id
+    if student_id:
+        params["student_id"] = student_id
+    data = _get_action(params, timeout=60)
+    return [r for r in data if isinstance(r, dict) and "problem_id" in r] if isinstance(data, list) else []
+
+
+def hw_submit(hw_id, student_id, answers):
+    return bool(_post_action({"action": "hw_submit", "hw_id": hw_id, "student_id": student_id,
+                              "answers": answers}).get("ok"))
+
+
+def hw_mark(hw_id, student_id, marks):
+    return bool(_post_action({"action": "hw_mark", "hw_id": hw_id, "student_id": student_id,
+                              "marks": marks}).get("ok"))
+
+
+def exam_list(student_id=""):
+    params = {"action": "exam_list"}
+    if student_id:
+        params["student_id"] = student_id
+    data = _get_action(params)
+    return [r for r in data if isinstance(r, dict) and "score" in r] if isinstance(data, list) else []
+
+
+def exam_save(student_id, date, kind, name, score, max_score, memo=""):
+    return bool(_post_action({"action": "exam_save", "student_id": student_id, "date": date, "kind": kind,
+                              "name": name, "score": score, "max_score": max_score, "memo": memo}).get("ok"))
+
+
+def exam_delete(exam_id):
+    return bool(_post_action({"action": "exam_delete", "id": exam_id}).get("ok"))
+
+
+def bank_by_ids(ids):
+    """문제 은행 문제들을 id로 한꺼번에 불러온다. {id: 문제} 반환."""
+    ids = [i for i in dict.fromkeys(str(x) for x in ids) if i]
+    out = {}
+    for k in range(0, len(ids), 80):
+        chunk = ids[k:k + 80]
+        for p in bank_search(limit=len(chunk), ids=chunk)["items"]:
+            out[p.get("id")] = p
+    return out
+
+
+# ---------- 자동 채점 ----------
+_CIRCLED = {"①": "1", "②": "2", "③": "3", "④": "4", "⑤": "5"}
+
+
+def _canon_answer_part(x):
+    for k, v in _CIRCLED.items():
+        x = x.replace(k, v)
+    x = x.strip().strip(".").strip()
+    x = re.sub(r"^(답|정답)[:：]?", "", x)
+    x = re.sub(r"^[a-z]=", "", x)                       # x=3 → 3
+    x = re.sub(r"(?<=\d)(cm|mm|km|kg|ml|[가-힣°%]+)$", "", x)  # 3cm, 5개, 30° → 숫자만
+    m = re.fullmatch(r"([-+]?)\(?([-+]?\d+(?:\.\d+)?)\)?/\(?([-+]?\d+(?:\.\d+)?)\)?", x)
+    try:
+        if m:
+            val = Fraction(m.group(2)) / Fraction(m.group(3))
+            return str(-val if m.group(1) == "-" else val)
+        if re.fullmatch(r"[-+]?\d+(?:\.\d+)?", x):
+            return str(Fraction(x))
+    except (ValueError, ZeroDivisionError):
+        pass
+    return x
+
+
+def norm_answer(s):
+    """답을 비교하기 좋은 꼴로: $·띄어쓰기 제거, \\frac{a}{b} → a/b, x=3 → 3, 여러 답은 순서 무관."""
+    s = str(s or "")
+    for a, b in (("$", ""), ("\\left", ""), ("\\right", ""), ("\\,", ""), ("\\ ", ""), ("−", "-"),
+                 ("×", "*"), ("÷", "/"), ("\\times", "*"), ("\\div", "/"), ("\\cdot", "*")):
+        s = s.replace(a, b)
+    s = re.sub(r"\\[dt]frac", r"\\frac", s)
+    prev = None
+    while prev != s:
+        prev = s
+        s = re.sub(r"\\frac\{([^{}]*)\}\{([^{}]*)\}", r"(\1)/(\2)", s)
+    s = re.sub(r"\s+", "", s).lower()
+    parts = re.split(r",|또는|or|;|그리고", s)
+    return sorted({_canon_answer_part(p) for p in parts if p})
+
+
+def grade_answer(given, correct):
+    """'Y' 맞음 / 'N' 틀림 / '?' 정답이 없어 선생님 확인 필요."""
+    if not str(correct or "").strip():
+        return "?"
+    if not str(given or "").strip():
+        return "N"
+    return "Y" if norm_answer(given) == norm_answer(correct) else "N"
+
+
+# ==========================================
 # ★ 문제 은행 (Apps Script 'bank' 탭 + 'taxonomy' 탭)
 # 문제를 학생과 상관없이 한 문제씩 저장한다.
 # 분류: 학년 › 단원 › 유형 › 문제틀(숫자·난이도만 다른 문제들의 묶음) + 난이도(하/중/상) + 검수 표시
@@ -791,6 +930,20 @@ body {{ font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; color: 
 <div class="print-btn-bar"><button onclick="window.print()" style="padding:10px 24px; font-size:15px;">🖨️ 인쇄하기 (A4)</button></div>
 {pages}{answers}
 </body></html>"""
+
+
+def add_to_hw_cart(problems):
+    """선생님이 고른 문제를 '숙제 바구니'에 담는다 (📝 숙제 탭에서 숙제로 낸다)."""
+    cart = st.session_state.setdefault("hw_cart", [])
+    store = st.session_state.setdefault("hw_cart_items", {})
+    added = 0
+    for p in problems:
+        pid = p.get("id")
+        if pid and pid not in cart:
+            cart.append(pid)
+            store[pid] = p
+            added += 1
+    st.success(f"숙제 바구니에 {added}문제를 담았어요. (지금 {len(cart)}문제) '📝 숙제' 탭에서 숙제로 내세요.")
 
 
 def render_bank_problem(p, key_prefix, editable=True):
@@ -1785,12 +1938,14 @@ if current_role == "admin" and sheet_url and not sheet_api_token:
 # ==========================================
 # ★ 수정: 문제는 선생님만 만든다. 학생은 선생님이 저장해 준 문제를 보기만 한다.
 tab2 = tab_archive = tab_stats = tab_mine = tab_star = tab_bank = tab_similar = None
+tab_hw = tab_report = tab_my_hw = None
 if current_role == "admin":
-    tab1, tab2, tab_bank, tab_similar, tab_archive, tab_stats = st.tabs(
-        ["📋 반 게시판", "📸 문제 만들기", "🏦 문제 은행", "🔍 비슷한 문제 찾기", "🗄️ 학생 보관함", "📊 학생별 유형 현황"])
+    tab1, tab2, tab_bank, tab_similar, tab_hw, tab_archive, tab_stats, tab_report = st.tabs(
+        ["📋 반 게시판", "📸 문제 만들기", "🏦 문제 은행", "🔍 비슷한 문제 찾기", "📝 숙제",
+         "🗄️ 학생 보관함", "📊 학생별 유형 현황", "📈 성적·리포트"])
 else:
     # 학생: 선생님이 배정해 준 문제(날짜별·단원별) → 중요 문제함 → 반 게시판
-    tab_mine, tab_star, tab1 = st.tabs(["📚 내 문제", "⭐ 중요 문제함", "📋 우리 반 게시판"])
+    tab_my_hw, tab_mine, tab_star, tab1 = st.tabs(["📝 숙제", "📚 내 문제", "⭐ 중요 문제함", "📋 우리 반 게시판"])
 
 # ------------------------------------------
 # [탭 1] 학생 게시판 (인쇄 메뉴 기본 숨김 접이식 적용)
@@ -2690,6 +2845,8 @@ if tab_bank is not None:
                             st.download_button(f"📥 {len(_psel)}문제 학습지 받기",
                                                data=make_problem_sheet_html(_ptitle, [_plabels[k] for k in _psel]),
                                                file_name="문제은행_학습지.html", mime="text/html", key="bf_print_dl", type="primary")
+                            if st.button(f"📝 고른 {len(_psel)}문제 숙제 바구니에 담기", key="bf_to_cart"):
+                                add_to_hw_cart([_plabels[k] for k in _psel])
 
                 _by_frame = {}
                 for p in _bitems:
@@ -2828,8 +2985,435 @@ if tab_similar is not None:
                         st.download_button(f"📥 고른 {len(_chosen)}문제 학습지 받기",
                                            data=make_problem_sheet_html("비슷한 문제 연습", _chosen),
                                            file_name="비슷한문제_학습지.html", mime="text/html", key="sim_dl", type="primary")
+                        if st.button(f"📝 고른 {len(_chosen)}문제 숙제 바구니에 담기", key="sim_to_cart"):
+                            add_to_hw_cart(_chosen)
                         st.markdown("##### 미리 보기")
                         for i, p in enumerate(_chosen, start=1):
                             with st.container(border=True):
                                 st.markdown(f"**[{i}]** · 난이도 {p.get('difficulty', '')}")
                                 render_bank_problem(p, "sim", editable=False)
+
+
+# ------------------------------------------
+# [선생님] 📝 숙제: 숙제 내기 · 제출 현황(O/X 확인·수정)
+# ------------------------------------------
+def _hw_targets(hw, students):
+    """숙제를 받는 학생 목록: 대상 학생이 있으면 그 학생들, 없으면 그 반 학생 전체."""
+    ids = [x for x in hw.get("student_ids", "").split(",") if x]
+    if ids:
+        return ids
+    return [s.get("student_id", "") for s in students if s.get("class_id", "") == hw.get("class_id", "")]
+
+
+def _hw_label(hw):
+    due = f" · 마감 {hw.get('due_date')}" if hw.get("due_date") else ""
+    who = hw.get("student_ids") or (f"{hw.get('class_id')}반 전체" if hw.get("class_id") else "")
+    return f"{hw.get('title', '숙제')}{due} · {who} · {len(hw.get('problem_ids', '').split(','))}문제"
+
+
+_OX = {"Y": "O", "N": "X", "?": "?"}
+_XO = {"O": "Y", "X": "N", "?": "?", "": ""}
+
+if tab_hw is not None:
+    with tab_hw:
+        st.subheader("📝 숙제")
+        if not hw_backend_ready():
+            st.warning(HW_SETUP_MSG)
+        else:
+            sub_new, sub_status = st.tabs(["➕ 숙제 내기", "✅ 제출 현황·채점"])
+
+            with sub_new:
+                st.caption("문제 은행의 '🔎 문제 찾기'나 '🔍 비슷한 문제 찾기'에서 문제를 고르고 '숙제 바구니에 담기'를 누르면 여기에 모여요. "
+                           "숙제는 문제를 복사하지 않고 문제 번호만 저장합니다.")
+                _cart = st.session_state.setdefault("hw_cart", [])
+                _citems = st.session_state.setdefault("hw_cart_items", {})
+                if not _cart:
+                    st.info("숙제 바구니가 비어 있어요.")
+                else:
+                    st.markdown(f"**숙제 바구니: {len(_cart)}문제**")
+                    for _i, _pid in enumerate(list(_cart), start=1):
+                        _p = _citems.get(_pid, {})
+                        _c1, _c2 = st.columns([6, 1])
+                        with _c1:
+                            st.caption(f"[{_i}] {frame_path(_p)} · {_p.get('difficulty', '')} · {_short_q(_p, 50)}")
+                        with _c2:
+                            if st.button("빼기", key=f"hw_rm_{_pid}"):
+                                _cart.remove(_pid)
+                                st.rerun()
+                    if st.button("🧹 바구니 비우기", key="hw_cart_clear"):
+                        _cart.clear()
+                        st.rerun()
+
+                    st.divider()
+                    _hv = st.session_state.get("hw_form_ver", 0)
+                    _title = st.text_input("숙제 이름", value=f"{datetime.date.today():%m/%d} 숙제", key=f"hw_title_{_hv}")
+                    _cA, _cB = st.columns(2)
+                    with _cA:
+                        _due = st.date_input("마감일", value=datetime.date.today() + datetime.timedelta(days=2), key=f"hw_due_{_hv}")
+                    with _cB:
+                        _cls = st.selectbox("반", class_list, key=f"hw_cls_{_hv}")
+                    _cls_students = [s.get("student_id", "") for s in admin_list_students() if s.get("class_id", "") == _cls]
+                    _who = st.radio("받는 학생", ["반 전체", "학생 골라서"], horizontal=True, key=f"hw_who_{_hv}")
+                    _picked = []
+                    if _who == "학생 골라서":
+                        _all_ids = [s.get("student_id", "") for s in admin_list_students()]
+                        _picked = st.multiselect("학생", _all_ids, default=_cls_students, key=f"hw_students_{_hv}")
+                    _memo = st.text_input("메모 (선택)", key=f"hw_memo_{_hv}")
+                    _probs = [_citems[i] for i in _cart if i in _citems]
+                    _cS, _cP = st.columns(2)
+                    with _cS:
+                        if st.button("📝 숙제 내기", type="primary", key=f"hw_save_{_hv}"):
+                            if _who == "학생 골라서" and not _picked:
+                                st.warning("학생을 한 명 이상 골라 주세요.")
+                            else:
+                                _r = hw_save(_title.strip() or "숙제", _due.strftime("%Y-%m-%d"), _cls, _picked, _cart, _memo.strip())
+                                if _r.get("ok"):
+                                    st.session_state.hw_flash = f"✅ '{_title}' 숙제를 냈어요. ({len(_cart)}문제)"
+                                    _cart.clear()
+                                    st.session_state.hw_form_ver = _hv + 1
+                                    st.rerun()
+                                else:
+                                    st.error(f"숙제를 저장하지 못했어요: {_r.get('error', '')}")
+                    with _cP:
+                        st.download_button("🖨️ 학습지 받기", data=make_problem_sheet_html(_title, _probs),
+                                           file_name="숙제_학습지.html", mime="text/html", key=f"hw_print_{_hv}")
+                if st.session_state.get("hw_flash"):
+                    st.success(st.session_state.pop("hw_flash"))
+
+            with sub_status:
+                _hws = hw_list()
+                if not _hws:
+                    st.info("아직 낸 숙제가 없어요.")
+                else:
+                    _hmap = {_hw_label(h) + f" [{h['hw_id']}]": h for h in _hws}
+                    _hsel = _hmap[st.selectbox("숙제 고르기 (최근 순)", list(_hmap.keys()), key="hw_status_pick")]
+                    _hid = _hsel["hw_id"]
+                    _pids = [x for x in _hsel.get("problem_ids", "").split(",") if x]
+                    _pmap = bank_by_ids(_pids)
+                    _targets = _hw_targets(_hsel, admin_list_students())
+                    _res = hw_results(hw_id=_hid)
+                    _cell = {(r["student_id"], r["problem_id"]): r for r in _res}
+                    st.caption("O = 맞음, X = 틀림, ? = 정답이 없어 확인 필요. 칸을 고친 뒤 '채점 저장'을 누르세요. "
+                               "종이로 걷은 숙제는 여기서 O/X만 넣어도 됩니다.")
+                    import pandas as pd
+                    _cols = [str(i) for i in range(1, len(_pids) + 1)]
+                    _grid = []
+                    for _sid in _targets:
+                        _row = {"학생": _sid}
+                        for _c, _pid in zip(_cols, _pids):
+                            _row[_c] = _OX.get(_cell.get((_sid, _pid), {}).get("correct", ""), "")
+                        _ok = sum(1 for _c in _cols if _row[_c] == "O")
+                        _done = sum(1 for _c in _cols if _row[_c])
+                        _row["점수"] = f"{_ok}/{len(_cols)}" if _done else "미제출"
+                        _grid.append(_row)
+                    if not _grid:
+                        st.info("이 숙제를 받는 학생이 없어요.")
+                    else:
+                        _df = pd.DataFrame(_grid)
+                        _edited = st.data_editor(
+                            _df, hide_index=True, disabled=["학생", "점수"], key=f"hw_grid_{_hid}",
+                            column_config={c: st.column_config.SelectboxColumn(c, options=["", "O", "X", "?"], width="small")
+                                           for c in _cols})
+                        if st.button("💾 채점 저장", type="primary", key=f"hw_grid_save_{_hid}"):
+                            _fail = 0
+                            for _, _er in _edited.iterrows():
+                                _sid = _er["학생"]
+                                _orig = next(g for g in _grid if g["학생"] == _sid)
+                                _marks = [{"problem_id": _pid, "correct": _XO.get(_er[_c] or "", "")}
+                                          for _c, _pid in zip(_cols, _pids) if (_er[_c] or "") != _orig[_c]]
+                                if _marks and not hw_mark(_hid, _sid, _marks):
+                                    _fail += 1
+                            if _fail:
+                                st.error(f"{_fail}명의 채점을 저장하지 못했어요.")
+                            else:
+                                st.success("채점을 저장했어요.")
+                                st.rerun()
+                        with st.expander("✍️ 학생이 낸 답 보기"):
+                            _ans = pd.DataFrame([{"학생": _sid, **{_c: _cell.get((_sid, _pid), {}).get("answer", "")
+                                                                   for _c, _pid in zip(_cols, _pids)}} for _sid in _targets])
+                            st.dataframe(_ans, hide_index=True)
+                    with st.expander("📄 숙제 문제와 정답 보기"):
+                        for _i, _pid in enumerate(_pids, start=1):
+                            _p = _pmap.get(_pid)
+                            if not _p:
+                                st.caption(f"[{_i}] (문제 은행에서 지워진 문제)")
+                                continue
+                            st.markdown(f"**[{_i}]** {frame_path(_p)} · {_p.get('difficulty', '')}")
+                            st.markdown(format_math(_p.get("question", "")), unsafe_allow_html=True)
+                            st.markdown(f"정답: {format_math(_p.get('answer', ''))}", unsafe_allow_html=True)
+                    if st.checkbox("이 숙제 삭제 (채점 기록도 함께 지워짐)", key=f"hw_del_chk_{_hid}"):
+                        if st.button("🗑️ 숙제 삭제", key=f"hw_del_{_hid}"):
+                            if hw_delete(_hid):
+                                st.rerun()
+                            else:
+                                st.error("삭제하지 못했어요.")
+
+
+# ------------------------------------------
+# [학생] 📝 숙제: 번호별로 답을 넣고 제출하면 자동 채점
+# ------------------------------------------
+if tab_my_hw is not None:
+    with tab_my_hw:
+        st.subheader("📝 숙제")
+        if not hw_backend_ready():
+            st.info("선생님이 앱을 새 버전으로 바꾸면 숙제를 볼 수 있어요.")
+        else:
+            _myhws = hw_list(student_id=current_student_id, class_id=current_role if current_role != "미배정" else "")
+            if not _myhws:
+                st.info("아직 받은 숙제가 없어요.")
+            else:
+                _myres = hw_results(student_id=current_student_id)
+                _by_hw = {}
+                for r in _myres:
+                    _by_hw.setdefault(r["hw_id"], {})[r["problem_id"]] = r
+
+                def _my_hw_label(h):
+                    n = len([x for x in h.get("problem_ids", "").split(",") if x])
+                    done = _by_hw.get(h["hw_id"], {})
+                    state = f"✅ 제출함 ({sum(1 for r in done.values() if r.get('correct') == 'Y')}/{n})" if done else "⏳ 아직 안 냄"
+                    due = f" · 마감 {h.get('due_date')}" if h.get("due_date") else ""
+                    return f"{h.get('title', '숙제')}{due} · {state}"
+
+                _hm = {_my_hw_label(h) + f" [{h['hw_id']}]": h for h in _myhws}
+                _h = _hm[st.selectbox("숙제 고르기", list(_hm.keys()), key="my_hw_pick")]
+                _hid = _h["hw_id"]
+                _pids = [x for x in _h.get("problem_ids", "").split(",") if x]
+                _pmap = bank_by_ids(_pids)
+                _done = _by_hw.get(_hid, {})
+                if _h.get("memo"):
+                    st.caption(f"📌 {_h['memo']}")
+                if not _done:
+                    st.caption("문제를 풀고 번호마다 답만 적어서 제출하세요. 제출하면 바로 채점돼요. (한 번만 낼 수 있어요)")
+                    with st.form(f"my_hw_form_{_hid}"):
+                        _answers = {}
+                        for _i, _pid in enumerate(_pids, start=1):
+                            _p = _pmap.get(_pid)
+                            if not _p:
+                                continue
+                            st.markdown(f"**[{_i}]**")
+                            st.markdown(format_math(_p.get("question", "")), unsafe_allow_html=True)
+                            _answers[_pid] = st.text_input(f"{_i}번 답", key=f"my_hw_ans_{_hid}_{_pid}")
+                            st.divider()
+                        if st.form_submit_button("📨 제출하고 채점하기", type="primary"):
+                            _sub = [{"problem_id": _pid, "answer": _a.strip(),
+                                     "correct": grade_answer(_a, _pmap[_pid].get("answer", ""))}
+                                    for _pid, _a in _answers.items()]
+                            if hw_submit(_hid, current_student_id, _sub):
+                                st.rerun()
+                            else:
+                                st.error("제출하지 못했어요. 잠시 후 다시 해 주세요.")
+                else:
+                    _ok = sum(1 for r in _done.values() if r.get("correct") == "Y")
+                    st.success(f"제출 완료 · {_ok} / {len(_pids)} 맞았어요")
+                    for _i, _pid in enumerate(_pids, start=1):
+                        _p = _pmap.get(_pid)
+                        if not _p:
+                            continue
+                        _r = _done.get(_pid, {})
+                        _mark = {"Y": "⭕ 맞음", "N": "❌ 틀림", "?": "❔ 선생님 확인 중"}.get(_r.get("correct", ""), "－ 안 냄")
+                        with st.container(border=True):
+                            st.markdown(f"**[{_i}]** {_mark}")
+                            st.markdown(format_math(_p.get("question", "")), unsafe_allow_html=True)
+                            st.caption(f"내 답: {_r.get('answer', '') or '(빈칸)'}")
+                            with st.expander("🔍 정답 및 풀이"):
+                                st.markdown(f"**정답:** {format_math(_p.get('answer', ''))}", unsafe_allow_html=True)
+                                if _p.get("solution"):
+                                    st.markdown(f"**풀이:**\n\n{format_math(_p.get('solution', ''))}", unsafe_allow_html=True)
+
+
+# ------------------------------------------
+# [선생님] 📈 성적·리포트: 시험 점수 입력, 리포트는 '만들기'를 누를 때만 분석
+# ------------------------------------------
+def build_student_report(student_id, date_from, date_to, class_id=""):
+    """기간 안의 숙제 채점 결과 + 시험 점수로 리포트 데이터를 만든다 (버튼을 눌렀을 때만 호출)."""
+    d_from, d_to = date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")
+    hws = {h["hw_id"]: h for h in hw_list(limit=500)}
+
+    def hw_date(h):
+        return h.get("due_date") or h.get("created_at", "")[:10]
+
+    results = [r for r in hw_results(student_id=student_id)
+               if r["hw_id"] in hws and d_from <= hw_date(hws[r["hw_id"]]) <= d_to]
+    my_hws = [h for h in hw_list(student_id=student_id, class_id=class_id, limit=500) if d_from <= hw_date(h) <= d_to]
+    probs = bank_by_ids({r["problem_id"] for r in results})
+    graded = [r for r in results if r.get("correct") in ("Y", "N")]
+
+    def tally(keyfn):
+        t = {}
+        for r in graded:
+            p = probs.get(r["problem_id"])
+            if not p:
+                continue
+            k = keyfn(p)
+            a = t.setdefault(k, [0, 0])
+            a[0] += 1
+            a[1] += r["correct"] == "Y"
+        return t
+
+    by_unit = tally(lambda p: " › ".join(x for x in (p.get("grade", ""), p.get("unit", "")) if x))
+    by_type = tally(lambda p: " › ".join(x for x in (p.get("unit", ""), p.get("type", "")) if x))
+    weak = sorted(((k, n, c) for k, (n, c) in by_type.items() if n >= 2 and c / n < 0.8),
+                  key=lambda x: (x[2] / x[1], -x[1]))[:5]
+    wrong = []
+    for r in sorted(results, key=lambda r: hw_date(hws[r["hw_id"]]), reverse=True):
+        if r.get("correct") == "N" and probs.get(r["problem_id"]):
+            wrong.append({"date": hw_date(hws[r["hw_id"]]), "problem": probs[r["problem_id"]], "answer": r.get("answer", "")})
+    exams = sorted((e for e in exam_list(student_id) if d_from <= e.get("date", "") <= d_to), key=lambda e: e.get("date", ""))
+    submitted = {r["hw_id"] for r in results}
+    return {
+        "student_id": student_id, "from": d_from, "to": d_to,
+        "hw_given": len(my_hws), "hw_done": len([h for h in my_hws if h["hw_id"] in submitted]),
+        "solved": len(graded), "correct": sum(1 for r in graded if r["correct"] == "Y"),
+        "by_unit": sorted(by_unit.items()), "weak": weak, "wrong": wrong[:15], "exams": exams,
+    }
+
+
+def report_ai_comment(rep):
+    """리포트 숫자를 바탕으로 학부모님께 드릴 종합 의견 초안 (선생님이 고쳐서 씀)."""
+    rate = f"{rep['correct'] / rep['solved'] * 100:.0f}%" if rep["solved"] else "기록 없음"
+    units = ", ".join(f"{k} {c}/{n}" for k, (n, c) in rep["by_unit"]) or "없음"
+    weak = ", ".join(f"{k} {c}/{n}" for k, n, c in rep["weak"]) or "뚜렷한 약점 없음"
+    exams = ", ".join(f"{e.get('date')} {e.get('kind')} {e.get('name')} {e.get('score')}/{e.get('max_score')}" for e in rep["exams"]) or "없음"
+    prompt = f"""너는 수학 학원 선생님이다. 아래 기록으로 학부모님께 보낼 학습 리포트의 '선생님 종합 의견'을 써라.
+- 기간: {rep['from']} ~ {rep['to']}
+- 숙제: {rep['hw_given']}번 중 {rep['hw_done']}번 제출, 채점된 문제 {rep['solved']}개, 정답률 {rate}
+- 단원별 (맞힌 수/푼 수): {units}
+- 약점 유형 (맞힌 수/푼 수): {weak}
+- 시험 성적: {exams}
+[규칙] 존댓말, 4~6문장, 잘한 점 → 보완할 점 → 앞으로의 지도 계획 순서. 기록에 없는 내용은 지어내지 말 것. 제목·머리말 없이 본문만."""
+    try:
+        genai.configure(api_key=gemini_api_key)
+        model = genai.GenerativeModel(get_fastest_model_name(gemini_api_key))
+        return model.generate_content(prompt).text.strip()
+    except Exception as e:
+        return f"(AI 의견을 만들지 못했어요: {e})"
+
+
+def make_report_html(rep, comment):
+    def esc(x):
+        return html.escape(str(x or ""))
+    rate = f"{rep['correct'] / rep['solved'] * 100:.0f}%" if rep["solved"] else "-"
+    unit_rows = "".join(f"<tr><td>{esc(k)}</td><td>{n}</td><td>{c}</td><td>{c / n * 100:.0f}%</td></tr>"
+                        for k, (n, c) in rep["by_unit"]) or "<tr><td colspan=4>기록 없음</td></tr>"
+    weak_rows = "".join(f"<tr><td>{esc(k)}</td><td>{c}/{n}</td><td>{c / n * 100:.0f}%</td></tr>"
+                        for k, n, c in rep["weak"]) or "<tr><td colspan=3>뚜렷한 약점 유형이 없습니다.</td></tr>"
+    exam_rows = "".join(f"<tr><td>{esc(e.get('date'))}</td><td>{esc(e.get('kind'))}</td><td>{esc(e.get('name'))}</td>"
+                        f"<td>{esc(e.get('score'))} / {esc(e.get('max_score'))}</td><td>{esc(e.get('memo'))}</td></tr>"
+                        for e in rep["exams"]) or "<tr><td colspan=5>기간 안의 시험 기록이 없습니다.</td></tr>"
+    wrong_rows = "".join(f"<div class='wrong'><div class='meta'>{esc(w['date'])} · {esc(w['problem'].get('unit', ''))}</div>"
+                         f"<div>{format_math(w['problem'].get('question', ''))}</div>"
+                         f"<div class='meta'>학생 답: {esc(w['answer']) or '(빈칸)'} · 정답: {format_math(w['problem'].get('answer', ''))}</div></div>"
+                         for w in rep["wrong"]) or "<p>틀린 문제가 없습니다.</p>"
+    return f"""<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>{esc(rep['student_id'])} 학습 리포트</title>
+<script>window.MathJax = {{ tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']] }} }};</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+@page {{ size: A4 portrait; margin: 12mm 14mm; }}
+body {{ font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; color: #111; max-width: 820px; margin: 0 auto; padding: 10px; font-size: 13.5px; }}
+h1 {{ font-size: 20px; border-bottom: 2px solid #000; padding-bottom: 6px; }}
+h2 {{ font-size: 15px; margin-top: 22px; border-left: 4px solid #333; padding-left: 8px; }}
+table {{ width: 100%; border-collapse: collapse; margin-top: 6px; }}
+th, td {{ border: 1px solid #ccc; padding: 5px 8px; text-align: left; }}
+th {{ background: #f3f3f3; }}
+.kpi {{ display: flex; gap: 12px; }} .kpi div {{ flex: 1; border: 1px solid #ccc; border-radius: 6px; padding: 8px; text-align: center; }}
+.kpi b {{ display: block; font-size: 20px; }}
+.wrong {{ border-bottom: 1px dashed #bbb; padding: 6px 0; }} .meta {{ color: #666; font-size: 12px; }}
+.comment {{ white-space: pre-wrap; line-height: 1.7; border: 1px solid #ccc; border-radius: 6px; padding: 10px; }}
+.bar {{ text-align: center; margin-bottom: 12px; }} @media print {{ .bar {{ display: none; }} }}
+</style></head><body>
+<div class="bar"><button onclick="window.print()" style="padding:8px 20px;">🖨️ 인쇄 / PDF로 저장</button></div>
+<h1>📊 {esc(rep['student_id'])} 학생 수학 학습 리포트</h1>
+<div class="meta">기간: {esc(rep['from'])} ~ {esc(rep['to'])}</div>
+<h2>숙제</h2>
+<div class="kpi"><div>낸 숙제<b>{rep['hw_done']} / {rep['hw_given']}</b></div><div>푼 문제<b>{rep['solved']}</b></div><div>정답률<b>{rate}</b></div></div>
+<h2>단원별 정답률</h2><table><tr><th>단원</th><th>푼 문제</th><th>맞힌 문제</th><th>정답률</th></tr>{unit_rows}</table>
+<h2>보완이 필요한 유형</h2><table><tr><th>유형</th><th>맞힌/푼</th><th>정답률</th></tr>{weak_rows}</table>
+<h2>시험 성적</h2><table><tr><th>날짜</th><th>구분</th><th>시험</th><th>점수</th><th>메모</th></tr>{exam_rows}</table>
+<h2>선생님 종합 의견</h2><div class="comment">{esc(comment)}</div>
+<h2>최근 틀린 문제</h2>{wrong_rows}
+</body></html>"""
+
+
+if tab_report is not None:
+    with tab_report:
+        st.subheader("📈 성적·리포트")
+        if not hw_backend_ready():
+            st.warning(HW_SETUP_MSG)
+        else:
+            _stu_ids = [s.get("student_id", "") for s in admin_list_students()]
+            if not _stu_ids:
+                st.info("아직 가입한 학생이 없어요.")
+            else:
+                _rs = st.selectbox("학생", _stu_ids, key="rp_student")
+                sub_exam, sub_rep = st.tabs(["📝 시험 점수", "📄 학부모 리포트"])
+                with sub_exam:
+                    _ev = st.session_state.get("ex_ver", 0)
+                    with st.form(f"exam_form_{_ev}"):
+                        _e1, _e2, _e3 = st.columns([1, 1, 2])
+                        with _e1:
+                            _ed = st.date_input("날짜", value=datetime.date.today())
+                        with _e2:
+                            _ek = st.selectbox("구분", ["학원", "학교"])
+                        with _e3:
+                            _en = st.text_input("시험 이름", placeholder="예: 2학기 중간고사, 10월 단원평가")
+                        _e4, _e5, _e6 = st.columns([1, 1, 2])
+                        with _e4:
+                            _esc = st.number_input("점수", min_value=0.0, step=1.0)
+                        with _e5:
+                            _emx = st.number_input("만점", min_value=1.0, value=100.0, step=1.0)
+                        with _e6:
+                            _emm = st.text_input("메모 (선택)")
+                        if st.form_submit_button("➕ 점수 저장", type="primary"):
+                            if not _en.strip():
+                                st.warning("시험 이름을 적어 주세요.")
+                            elif exam_save(_rs, _ed.strftime("%Y-%m-%d"), _ek, _en.strip(), f"{_esc:g}", f"{_emx:g}", _emm.strip()):
+                                st.session_state.ex_ver = _ev + 1
+                                st.rerun()
+                            else:
+                                st.error("저장하지 못했어요.")
+                    _exs = sorted(exam_list(_rs), key=lambda e: e.get("date", ""), reverse=True)
+                    if not _exs:
+                        st.caption("아직 입력한 시험 점수가 없어요.")
+                    for _e in _exs:
+                        _x1, _x2 = st.columns([6, 1])
+                        with _x1:
+                            st.markdown(f"**{_e.get('date')}** · {_e.get('kind')} · {_e.get('name')} · **{_e.get('score')} / {_e.get('max_score')}**"
+                                        + (f" · {_e.get('memo')}" if _e.get("memo") else ""))
+                        with _x2:
+                            if st.button("삭제", key=f"ex_del_{_e.get('id')}"):
+                                exam_delete(_e.get("id"))
+                                st.rerun()
+                with sub_rep:
+                    st.caption("약점 유형 분석은 '리포트 만들기'를 누를 때만 합니다. 기간 안의 숙제 채점 결과와 시험 점수를 모아요.")
+                    _r1, _r2 = st.columns([2, 1])
+                    with _r1:
+                        _rrange = st.date_input("기간", value=(datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()),
+                                                key="rp_range")
+                    with _r2:
+                        _rai = st.checkbox("AI 종합 의견 초안 넣기", value=True, key="rp_ai")
+                    if st.button("📄 리포트 만들기", type="primary", key="rp_make"):
+                        if not (isinstance(_rrange, (tuple, list)) and len(_rrange) == 2):
+                            st.warning("기간의 시작일과 끝일을 모두 골라 주세요.")
+                        else:
+                            with st.spinner("숙제·시험 기록을 분석하는 중..."):
+                                _rcls = next((s.get("class_id", "") for s in admin_list_students() if s.get("student_id") == _rs), "")
+                                _rep = build_student_report(_rs, _rrange[0], _rrange[1], _rcls)
+                                _cm = report_ai_comment(_rep) if _rai else ""
+                            st.session_state.rp_data = _rep
+                            st.session_state[f"rp_comment_{_rs}_{_rep['from']}_{_rep['to']}"] = _cm
+                    _rep = st.session_state.get("rp_data")
+                    if _rep and _rep["student_id"] == _rs:
+                        _rate = f"{_rep['correct'] / _rep['solved'] * 100:.0f}%" if _rep["solved"] else "-"
+                        _k1, _k2, _k3 = st.columns(3)
+                        _k1.metric("낸 숙제", f"{_rep['hw_done']} / {_rep['hw_given']}")
+                        _k2.metric("푼 문제", _rep["solved"])
+                        _k3.metric("정답률", _rate)
+                        if _rep["weak"]:
+                            st.markdown("**보완이 필요한 유형**")
+                            for _k, _n, _c in _rep["weak"]:
+                                st.markdown(f"- {_k}: {_c}/{_n} ({_c / _n * 100:.0f}%)")
+                        _ckey = f"rp_comment_{_rs}_{_rep['from']}_{_rep['to']}"
+                        _comment = st.text_area("선생님 종합 의견 (고쳐서 쓰세요)", key=_ckey, height=160)
+                        st.download_button("📥 학부모 리포트 받기 (인쇄·PDF 저장)", data=make_report_html(_rep, _comment),
+                                           file_name=f"{_rs}_학습리포트_{_rep['to']}.html", mime="text/html",
+                                           type="primary", key="rp_dl")

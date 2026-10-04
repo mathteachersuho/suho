@@ -99,6 +99,10 @@ function doGet(e) {
   if (action === 'taxonomy') return handleTaxonomy_();
   if (action === 'star_list') return handleStarList_(e);
   if (action === 'star_items') return handleStarItems_(e);
+  if (action === 'version') return jsonResponse_({ version: 3 });  // 3 = 숙제·채점·시험 점수 기능이 있는 버전
+  if (action === 'hw_list') return handleHwList_(e);
+  if (action === 'hw_results') return handleHwResults_(e);
+  if (action === 'exam_list') return handleExamList_(e);
   if (sheetParam === 'personal_problems') {
     return handleGetPersonal_(e);
   }
@@ -135,6 +139,12 @@ function doPost(e) {
   if (action === 'taxonomy_rename') return handleTaxonomyRename_(body);
   if (action === 'migrate_archive') return handleMigrateArchive_();
   if (action === 'star_set') return handleStarSet_(body);
+  if (action === 'hw_save') return handleHwSave_(body);
+  if (action === 'hw_delete') return handleHwDelete_(body);
+  if (action === 'hw_submit') return handleHwSubmit_(body);
+  if (action === 'hw_mark') return handleHwMark_(body);
+  if (action === 'exam_save') return handleExamSave_(body);
+  if (action === 'exam_delete') return handleExamDelete_(body);
   if (action === 'delete') return handleDeleteProblem_(body);
   return handleInsertProblem_(body); // action 없으면 기존 게시판 등록(기본 동작)
 }
@@ -1084,4 +1094,196 @@ function handleStarItems_(e) {
   var rows = order.filter(function (id) { return rowOf[id]; }).slice(0, 300).map(function (id) { return rowOf[id]; });
   var items = readRowsFull_(sheet, rows, ARCHIVE_HEADERS.length).map(function (r) { return archiveRowToObj_(r, false); });
   return jsonResponse_({ items: items, keys: keys });
+}
+
+// ==========================================
+// ★ 숙제 (homework 탭) + 채점 결과 (hw_results 탭) + 시험 점수 (exams 탭)
+// 숙제는 문제를 복사하지 않고 문제 은행(bank)의 문제 id 목록만 저장한다.
+// 채점 결과는 학생 · 숙제 · 문제 id · 낸 답 · 정답 여부(Y/N/?)만 남기고,
+// 단원·유형은 리포트를 만들 때 문제 은행에서 붙여 계산한다.
+// ==========================================
+var HW_HEADERS = ['hw_id', 'created_at', 'title', 'due_date', 'class_id', 'student_ids', 'problem_ids', 'memo'];
+var HWR_HEADERS = ['hw_id', 'student_id', 'problem_id', 'answer', 'correct', 'graded_by', 'updated_at'];
+var EXAM_HEADERS = ['id', 'student_id', 'date', 'kind', 'name', 'score', 'max_score', 'memo', 'created_at'];
+
+function rowsToObjs_(rows, headers) {
+  return rows.map(function (r) {
+    var o = {};
+    for (var k = 0; k < headers.length; k++) o[headers[k]] = cellStr_(r[k]);
+    return o;
+  });
+}
+
+// 숙제 목록 (최신순). student_id를 주면 그 학생이 받은 숙제만:
+// 대상 학생에 이름이 있거나, 대상 학생이 비어 있고 반이 같은 숙제.
+function handleHwList_(e) {
+  var p = e.parameter || {};
+  var student = p.student_id ? String(p.student_id) : '';
+  var classId = p.class_id ? String(p.class_id) : '';
+  var limit = Math.min(parseInt(p.limit || '100', 10) || 100, 500);
+  var rows = readCols_(getTextSheet_('homework', HW_HEADERS), 1, HW_HEADERS.length);
+  var out = [];
+  for (var i = rows.length - 1; i >= 0 && out.length < limit; i--) {
+    var r = rows[i];
+    if (!r[0]) continue;
+    var ids = splitIds_(r[5]);
+    var cls = cellStr_(r[4]);
+    if (student) {
+      var mine = ids.length ? ids.indexOf(student) !== -1 : (classId && cls === classId);
+      if (!mine) continue;
+    } else if (classId && cls !== classId) {
+      continue;
+    }
+    out.push(rowsToObjs_([r], HW_HEADERS)[0]);
+  }
+  return jsonResponse_(out);
+}
+
+function handleHwSave_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var pids = (body.problem_ids || []).map(String).filter(function (x) { return x; });
+    if (!pids.length) return jsonResponse_({ ok: false, error: "숙제에 넣을 문제가 없습니다." });
+    var id = 'hw' + new Date().getTime();
+    appendTextRows_(getTextSheet_('homework', HW_HEADERS), [[
+      id, new Date().toISOString(), body.title || '숙제', body.due_date || '', body.class_id || '',
+      splitIds_(Array.isArray(body.student_ids) ? body.student_ids.join(',') : (body.student_ids || '')).join(','),
+      pids.join(','), body.memo || ''
+    ]]);
+    return jsonResponse_({ ok: true, hw_id: id });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleHwDelete_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = getTextSheet_('homework', HW_HEADERS);
+    var row = findRowById_(sheet, 0, body.hw_id);
+    if (row < 0) return jsonResponse_({ ok: false, error: "숙제를 찾을 수 없습니다." });
+    sheet.deleteRow(row);
+    var rs = getTextSheet_('hw_results', HWR_HEADERS);
+    var ids = readCols_(rs, 1, 1);
+    for (var i = ids.length - 1; i >= 0; i--) {
+      if (String(ids[i][0]) === String(body.hw_id)) rs.deleteRow(i + 2);
+    }
+    return jsonResponse_({ ok: true });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 채점 결과. hw_id, student_id 로 좁힐 수 있다.
+function handleHwResults_(e) {
+  var p = e.parameter || {};
+  var hw = p.hw_id ? String(p.hw_id) : '';
+  var student = p.student_id ? String(p.student_id) : '';
+  var rows = readCols_(getTextSheet_('hw_results', HWR_HEADERS), 1, HWR_HEADERS.length);
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    if (!r[0]) continue;
+    if (hw && String(r[0]) !== hw) continue;
+    if (student && String(r[1]) !== student) continue;
+    out.push(rowsToObjs_([r], HWR_HEADERS)[0]);
+  }
+  return jsonResponse_(out);
+}
+
+// 결과 한 줄을 넣거나 고친다 (같은 숙제·학생·문제가 있으면 덮어씀)
+function upsertResults_(hwId, studentId, items, gradedBy) {
+  var sheet = getTextSheet_('hw_results', HWR_HEADERS);
+  var rows = readCols_(sheet, 1, 3);
+  var where = {};
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i][0]) === hwId && String(rows[i][1]) === studentId) where[String(rows[i][2])] = i + 2;
+  }
+  var now = new Date().toISOString();
+  var add = [];
+  for (var j = 0; j < items.length; j++) {
+    var it = items[j];
+    var pid = String(it.problem_id || '');
+    if (!pid) continue;
+    var vals = [hwId, studentId, pid, it.answer === undefined ? null : String(it.answer), String(it.correct || ''), gradedBy, now];
+    if (where[pid]) {
+      var old = sheet.getRange(where[pid], 1, 1, HWR_HEADERS.length).getValues()[0];
+      if (vals[3] === null) vals[3] = cellStr_(old[3]);  // 선생님이 O/X만 고칠 때는 학생 답을 그대로 둔다
+      var rg = sheet.getRange(where[pid], 1, 1, HWR_HEADERS.length);
+      rg.setNumberFormat('@');
+      rg.setValues([vals.map(safeCell_)]);
+    } else {
+      if (vals[3] === null) vals[3] = '';
+      add.push(vals);
+    }
+  }
+  appendTextRows_(sheet, add);
+}
+
+// 학생 제출: body.answers = [{problem_id, answer, correct}] (채점은 앱에서 해서 보낸다)
+function handleHwSubmit_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    upsertResults_(String(body.hw_id || ''), String(body.student_id || ''), body.answers || [], 'auto');
+    return jsonResponse_({ ok: true });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 선생님이 O/X를 직접 넣거나 고칠 때: body.marks = [{problem_id, correct}]
+function handleHwMark_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    upsertResults_(String(body.hw_id || ''), String(body.student_id || ''), body.marks || [], 'teacher');
+    return jsonResponse_({ ok: true });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleExamList_(e) {
+  var student = (e.parameter && e.parameter.student_id) ? String(e.parameter.student_id) : '';
+  var rows = readCols_(getTextSheet_('exams', EXAM_HEADERS), 1, EXAM_HEADERS.length);
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    if (!rows[i][0]) continue;
+    if (student && String(rows[i][1]) !== student) continue;
+    out.push(rowsToObjs_([rows[i]], EXAM_HEADERS)[0]);
+  }
+  return jsonResponse_(out);
+}
+
+function handleExamSave_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var id = 'ex' + new Date().getTime();
+    appendTextRows_(getTextSheet_('exams', EXAM_HEADERS), [[
+      id, body.student_id || '', body.date || '', body.kind || '', body.name || '',
+      String(body.score === undefined ? '' : body.score), String(body.max_score === undefined ? '' : body.max_score),
+      body.memo || '', new Date().toISOString()
+    ]]);
+    return jsonResponse_({ ok: true, id: id });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleExamDelete_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = getTextSheet_('exams', EXAM_HEADERS);
+    var row = findRowById_(sheet, 0, body.id);
+    if (row < 0) return jsonResponse_({ ok: false, error: "시험 기록을 찾을 수 없습니다." });
+    sheet.deleteRow(row);
+    return jsonResponse_({ ok: true });
+  } finally {
+    lock.releaseLock();
+  }
 }
