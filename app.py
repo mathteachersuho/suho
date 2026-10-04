@@ -432,6 +432,360 @@ def archive_image(file_id):
     return ""
 
 
+
+# ==========================================
+# ★ 문제 은행 (Apps Script 'bank' 탭 + 'taxonomy' 탭)
+# 문제를 학생과 상관없이 한 문제씩 저장한다.
+# 분류: 학년 › 단원 › 유형 › 문제틀(숫자·난이도만 다른 문제들의 묶음) + 난이도(하/중/상) + 검수 표시
+# ==========================================
+TAX_LEVELS = ["grade", "unit", "type", "frame"]
+TAX_LABELS = {"grade": "학년", "unit": "단원", "type": "유형", "frame": "문제틀"}
+DIFFICULTIES = ["하", "중", "상"]
+NEW_OPTION = "＋ 새로 입력"
+
+
+def bank_search(limit=50, offset=0, **filters):
+    """문제 은행 검색. filters: grade, unit, type, frame, difficulty(list), verified(bool), source, keyword, ids(list)."""
+    params = {"action": "bank_search", "limit": limit, "offset": offset}
+    for k in ("grade", "unit", "type", "frame", "source", "keyword"):
+        if filters.get(k):
+            params[k] = filters[k]
+    if filters.get("difficulty"):
+        params["difficulty"] = ",".join(filters["difficulty"])
+    if filters.get("verified"):
+        params["verified"] = "Y"
+    if filters.get("ids"):
+        params["ids"] = ",".join(filters["ids"])
+    data = _get_action(params, timeout=60)
+    if isinstance(data, dict) and isinstance(data.get("items"), list):
+        return data
+    return {"items": [], "total": 0}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def taxonomy_list():
+    """유형표 전체 + 문제틀마다 문제 수(count), 검수 완료 수(verified), 난이도별 수."""
+    data = _get_action({"action": "taxonomy"})
+    if not isinstance(data, list):
+        return []
+    return [t for t in data if isinstance(t, dict) and "frame" in t]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def bank_backend_ready():
+    """Apps Script가 문제 은행 기능이 있는 버전인지 확인."""
+    if not sheet_url:
+        return False
+    data = _get_action({"action": "bank_search", "limit": 1})
+    return isinstance(data, dict) and isinstance(data.get("items"), list)
+
+
+BANK_SETUP_MSG = (
+    "⚠️ 구글 Apps Script가 아직 문제 은행 기능이 없는 버전입니다. "
+    "저장소의 apps_script/Code.gs 내용으로 Apps Script를 바꾸고, [배포 관리]에서 기존 배포를 '새 버전'으로 수정해 주세요."
+)
+
+
+def _bank_changed():
+    taxonomy_list.clear()
+
+
+def bank_save(problems, image_b64=""):
+    result = _post_action({"action": "bank_save", "group_id": str(int(time.time() * 1000)),
+                           "problems": problems, "image_b64": image_b64 or ""})
+    if result.get("ok"):
+        _bank_changed()
+    return result
+
+
+def bank_update(prob_id, **fields):
+    result = _post_action({"action": "bank_update", "id": prob_id, "fields": fields})
+    if result.get("ok"):
+        _bank_changed()
+    return bool(result.get("ok"))
+
+
+def bank_delete(prob_id):
+    result = _post_action({"action": "bank_delete", "id": prob_id})
+    if result.get("ok"):
+        _bank_changed()
+    return bool(result.get("ok"))
+
+
+def taxonomy_upsert(grade, unit, type_, frame, description):
+    result = _post_action({"action": "taxonomy_upsert", "grade": grade, "unit": unit, "type": type_,
+                           "frame": frame, "description": description})
+    _bank_changed()
+    return bool(result.get("ok"))
+
+
+def taxonomy_rename(level, old, new):
+    payload = {"action": "taxonomy_rename", "level": level}
+    for lv in TAX_LEVELS[:TAX_LEVELS.index(level) + 1]:
+        payload["old_" + lv] = old.get(lv, "")
+        payload["new_" + lv] = new.get(lv, "")
+    result = _post_action(payload)
+    _bank_changed()
+    return result
+
+
+def migrate_archive_to_bank():
+    result = _post_action({"action": "migrate_archive"})
+    _bank_changed()
+    return result
+
+
+def _short_q(p, n=40):
+    """목록에 보여 줄 문제 앞부분 (줄바꿈·여러 칸 공백을 한 칸으로)."""
+    return re.sub(r"\s+", " ", p.get("question", ""))[:n]
+
+
+def frame_path(t):
+    return " › ".join(x for x in [t.get("grade", ""), t.get("unit", ""), t.get("type", ""), t.get("frame", "")] if x) or "(분류 없음)"
+
+
+def _children(taxonomy, level, parent):
+    """parent(상위 단계 값들)에 속한 level 단계의 이름 목록."""
+    idx = TAX_LEVELS.index(level)
+    out = []
+    for t in taxonomy:
+        if all(t.get(TAX_LEVELS[i], "") == parent.get(TAX_LEVELS[i], "") for i in range(idx)):
+            v = t.get(level, "")
+            if v and v not in out:
+                out.append(v)
+    return sorted(out)
+
+
+def taxonomy_picker(key_prefix, taxonomy, suggestion=None, allow_new=True, levels=TAX_LEVELS):
+    """학년 → 단원 → 유형 → 문제틀 순서로 고르는 선택 상자. 기존 이름에서 고르거나 '새로 입력'.
+    suggestion(AI 제안)이 기존 이름이면 그걸 미리 고르고, 새 이름이면 '새로 입력' 칸에 채워 둔다.
+    반환: {'grade','unit','type','frame','is_new_frame'}"""
+    suggestion = suggestion or {}
+    chosen = {}
+    cols = st.columns(len(levels))
+    for i, lv in enumerate(levels):
+        with cols[i]:
+            existing = _children(taxonomy, lv, chosen)
+            options = existing + ([NEW_OPTION] if allow_new else [])
+            if not options:
+                options = [NEW_OPTION]
+            sug = suggestion.get(lv, "")
+            default = options.index(sug) if sug in options else (options.index(NEW_OPTION) if (sug and NEW_OPTION in options) else 0)
+            pick = st.selectbox(TAX_LABELS[lv], options, index=default, key=f"{key_prefix}_{lv}_sel")
+            if pick == NEW_OPTION:
+                val = st.text_input(f"새 {TAX_LABELS[lv]} 이름", value=sug if sug not in existing else "",
+                                    key=f"{key_prefix}_{lv}_new", label_visibility="collapsed",
+                                    placeholder=f"새 {TAX_LABELS[lv]} 이름")
+                chosen[lv] = val.strip()
+                chosen["is_new_" + lv] = True
+            else:
+                chosen[lv] = pick
+                chosen["is_new_" + lv] = False
+    chosen["is_new_frame"] = chosen.get("is_new_frame", False)
+    return chosen
+
+
+def _ask_json(model, prompt):
+    text = model.generate_content(prompt).text.strip()
+    m = re.search(r"\{[\s\S]*\}", text)
+    try:
+        return json.loads(m.group(0)) if m else {}
+    except Exception:
+        return {}
+
+
+def classify_frame(problem_text, taxonomy, api_key, model_name):
+    """문제를 학년 › 단원 › 유형 › 문제틀로 분류하고 난이도를 매긴다.
+    유형표가 커져도 동작하도록 두 번에 나눠 고른다: ① 학년·단원·유형 ② 그 유형 안의 문제틀.
+    기존 이름이 맞으면 그 글자 그대로 쓰고, 없으면 새 이름(+문제틀 설명)을 제안한다."""
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(model_name)
+
+    types = []
+    for t in taxonomy:
+        key = (t.get("grade", ""), t.get("unit", ""), t.get("type", ""))
+        if key not in types:
+            types.append(key)
+    type_lines = "\n".join(f"{i}. {g} | {u} | {ty}" for i, (g, u, ty) in enumerate(types[:600]))
+    step1 = _ask_json(model, f"""
+    너는 대한민국 중·고등학교 수학 교육과정 전문가야. 아래 문제가 어느 학년·단원·유형인지 골라라.
+
+    [문제]
+    {problem_text}
+
+    [기존 목록] (번호. 학년 | 단원 | 유형)
+    {type_lines or "(아직 없음)"}
+
+    [규칙]
+    - 기존 목록에 맞는 것이 있으면 그 번호를 pick에 넣어라. 없으면 pick은 -1로 하고 새 이름을 만들어라.
+    - 학년 예: 중1, 중2, 중3, 공통수학1, 공통수학2, 대수, 미적분I, 확률과 통계
+    - 단원은 교과서 대단원/중단원 이름, 유형은 그 단원 안의 문제 유형(예: 방정식의 풀이, 활용 - 거리·속력·시간)
+    - 출력은 JSON 한 줄만: {{"pick": 번호 또는 -1, "grade": "...", "unit": "...", "type": "..."}}
+    """)
+    pick = step1.get("pick", -1)
+    try:
+        pick = int(pick)
+    except Exception:
+        pick = -1
+    if 0 <= pick < len(types):
+        grade, unit, type_ = types[pick]
+    else:
+        grade, unit, type_ = (str(step1.get(k, "")).strip() for k in ("grade", "unit", "type"))
+
+    frames = [t for t in taxonomy if (t.get("grade"), t.get("unit"), t.get("type")) == (grade, unit, type_)]
+    frame_lines = "\n".join(f"{i}. {t.get('frame', '')} — {t.get('description', '')}" for i, t in enumerate(frames[:300]))
+    step2 = _ask_json(model, f"""
+    너는 수학 문제 분류 전문가야. 아래 문제는 [{grade} › {unit} › {type_}] 유형이다.
+    이 유형 안에서 "문제틀"을 골라라. 문제틀은 숫자나 난이도만 다르고 푸는 방법과 구조가 같은 문제들의 묶음이다.
+
+    [문제]
+    {problem_text}
+
+    [기존 문제틀] (번호. 이름 — 설명)
+    {frame_lines or "(아직 없음)"}
+
+    [규칙]
+    - 푸는 방법과 문제 구조가 같은 기존 문제틀이 있으면 그 번호를 pick에 넣어라. 없으면 pick은 -1.
+    - 새로 만들 때 frame은 15자 안팎의 구체적인 이름, description은 "어떤 조건에서 무엇을 어떻게 구하는 문제인지" 한 문장.
+    - difficulty는 이 문제의 난이도 (하/중/상 중 하나).
+    - 출력은 JSON 한 줄만: {{"pick": 번호 또는 -1, "frame": "...", "description": "...", "difficulty": "중"}}
+    """)
+    fpick = step2.get("pick", -1)
+    try:
+        fpick = int(fpick)
+    except Exception:
+        fpick = -1
+    if 0 <= fpick < len(frames):
+        frame = frames[fpick].get("frame", "")
+        description = frames[fpick].get("description", "")
+        is_new = False
+    else:
+        frame = str(step2.get("frame", "")).strip()
+        description = str(step2.get("description", "")).strip()
+        is_new = True
+    difficulty = str(step2.get("difficulty", "중")).strip()
+    if difficulty not in DIFFICULTIES:
+        difficulty = "중"
+    return {"grade": grade, "unit": unit, "type": type_, "frame": frame,
+            "description": description, "difficulty": difficulty, "is_new_frame": is_new}
+
+
+def mathpix_ocr(image_bytes):
+    """사진에서 수식/글자 추출 (문제 만들기 탭과 같은 방식). 실패하면 빈 문자열."""
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    headers = {"app_id": mathpix_app_id, "app_key": mathpix_app_key, "Content-type": "application/json"}
+    data = {"src": f"data:image/jpeg;base64,{b64}", "formats": ["text", "latex_styled"]}
+    res = requests.post("https://api.mathpix.com/v3/text", headers=headers, json=data, timeout=60)
+    text = res.json().get("text", "")
+    text = re.sub(r'\\\(\s*', '$', text); text = re.sub(r'\s*\\\)', '$', text)
+    text = re.sub(r'\\\[\s*', '$$', text); text = re.sub(r'\s*\\\]', '$$', text)
+    return text
+
+
+def make_problem_sheet_html(title, problems, with_answers=True):
+    """문제 은행 문제들을 A4 학습지로 (한 쪽에 2문제, 맨 뒤에 정답)."""
+    pages = ""
+    for i in range(0, len(problems), 2):
+        blocks = ""
+        for j, p in enumerate(problems[i:i + 2], start=i + 1):
+            blocks += f"""
+            <div class="problem-container">
+                <div class="prob-header">[{j}] <span class="tag">{p.get('frame', '')} · {p.get('difficulty', '')}</span></div>
+                <div class="prob-body">{format_math(p.get('question', '')).replace(chr(10), '<br>')}</div>
+                <div class="work-space"><span class="work-label">[풀이 과정]</span></div>
+            </div>"""
+        pages += f"""
+        <div class="a4-page">
+            <div class="header-box"><div class="header-title">📐 {title}</div>
+            <div class="name-box">학년/반: ______ 이름: ______________</div></div>
+            {blocks}
+        </div>"""
+    answers = ""
+    if with_answers:
+        for j, p in enumerate(problems, start=1):
+            sol = format_math(p.get("solution", ""))
+            answers += f"""<div style="margin-bottom:10px; font-size:13px; line-height:1.6; border-bottom:1px solid #eee; padding-bottom:6px;">
+                <strong>[{j}] 정답:</strong> {format_math(p.get('answer', ''))}<br>{f'<strong>풀이:</strong> {sol}' if sol else ''}</div>"""
+        answers = f'<div class="answer-page"><div class="header-box"><div class="header-title">📋 [정답 및 해설] {title}</div></div>{answers}</div>'
+    return f"""<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>{title}</title>
+<script>window.MathJax = {{ tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$']] }} }};</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+@page {{ size: A4 portrait; margin: 10mm 15mm; }}
+* {{ box-sizing: border-box; }}
+body {{ font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; color: #111; background: #fff; max-width: 820px; margin: 0 auto; padding: 10px; }}
+.a4-page {{ page-break-after: always; height: 270mm; display: flex; flex-direction: column; overflow: hidden; }}
+.header-box {{ text-align: center; border-bottom: 2px solid #000; padding-bottom: 5px; margin-bottom: 8px; }}
+.header-title {{ font-size: 18px; font-weight: bold; }}
+.name-box {{ text-align: right; font-size: 13px; color: #444; }}
+.problem-container {{ flex: 1 1 0; display: flex; flex-direction: column; border-bottom: 1px dashed #aaa; padding: 6px 0; }}
+.problem-container:last-child {{ border-bottom: none; }}
+.prob-header {{ font-weight: bold; font-size: 14.5px; margin-bottom: 4px; }}
+.tag {{ font-weight: normal; font-size: 11px; color: #888; }}
+.prob-body {{ line-height: 1.7; font-size: 13.5px; }}
+.work-space {{ flex: 1 1 0; min-height: 80px; margin-top: 8px; border: 1px dotted #ccc; border-radius: 4px; padding: 6px 10px; }}
+.work-label {{ font-size: 11.5px; color: #888; }}
+.answer-page {{ page-break-before: always; }}
+.print-btn-bar {{ text-align: center; margin-bottom: 15px; }}
+@media print {{ .print-btn-bar {{ display: none; }} }}
+</style></head><body>
+<div class="print-btn-bar"><button onclick="window.print()" style="padding:10px 24px; font-size:15px;">🖨️ 인쇄하기 (A4)</button></div>
+{pages}{answers}
+</body></html>"""
+
+
+def render_bank_problem(p, key_prefix, editable=True):
+    """문제 은행 문제 1개: 문제, 정답·풀이, (선생님) 검수·수정·삭제."""
+    badge = "✅ 검수 완료" if p.get("verified") == "Y" else "⏳ 검수 전"
+    st.caption(f"{badge} · {p.get('source', '')} · 난이도 {p.get('difficulty', '')} · {p.get('created_at', '')[:10]}")
+    if p.get("image_file_id") and st.checkbox("🖼️ 원본 사진 보기", key=f"{key_prefix}_img_{p.get('id')}"):
+        img = archive_image(p["image_file_id"])
+        if img:
+            st.image(f"data:image/jpeg;base64,{img}", use_container_width=True)
+    st.markdown(format_math(p.get("question", "")), unsafe_allow_html=True)
+    with st.expander("🔍 정답 및 풀이"):
+        st.markdown(f"**정답:** {format_math(p.get('answer', ''))}", unsafe_allow_html=True)
+        if p.get("solution"):
+            st.markdown(f"**풀이:**\n\n{format_math(p.get('solution', ''))}", unsafe_allow_html=True)
+    if not editable:
+        return
+    pid = p.get("id")
+    c1, c2, c3 = st.columns([1.2, 1.2, 1])
+    with c1:
+        if p.get("verified") == "Y":
+            if st.button("검수 취소", key=f"{key_prefix}_unv_{pid}"):
+                if bank_update(pid, verified=""):
+                    st.rerun()
+        else:
+            if st.button("✅ 검수 완료로 표시", key=f"{key_prefix}_ver_{pid}"):
+                if bank_update(pid, verified="Y"):
+                    st.rerun()
+    with c2:
+        edit = st.checkbox("✏️ 수정", key=f"{key_prefix}_edit_{pid}")
+    with c3:
+        if st.checkbox("삭제 확인", key=f"{key_prefix}_delchk_{pid}"):
+            if st.button("🗑️ 삭제", key=f"{key_prefix}_del_{pid}"):
+                if bank_delete(pid):
+                    st.rerun()
+    if edit:
+        q = st.text_area("문제", value=p.get("question", ""), key=f"{key_prefix}_q_{pid}", height=120)
+        a = st.text_input("정답", value=p.get("answer", ""), key=f"{key_prefix}_a_{pid}")
+        s = st.text_area("풀이", value=p.get("solution", ""), key=f"{key_prefix}_s_{pid}", height=100)
+        d = st.selectbox("난이도", DIFFICULTIES, index=DIFFICULTIES.index(p.get("difficulty")) if p.get("difficulty") in DIFFICULTIES else 1,
+                         key=f"{key_prefix}_d_{pid}")
+        st.markdown("문제틀 옮기기")
+        moved = taxonomy_picker(f"{key_prefix}_mv_{pid}", taxonomy_list(), suggestion=p)
+        if st.button("💾 저장", key=f"{key_prefix}_save_{pid}"):
+            fields = dict(question=q, answer=a, solution=s, difficulty=d)
+            if all(moved.get(lv) for lv in TAX_LEVELS):
+                fields.update({lv: moved[lv] for lv in TAX_LEVELS})
+            if bank_update(pid, **fields):
+                st.success("저장했습니다.")
+                st.rerun()
+            else:
+                st.error("저장에 실패했습니다.")
+
+
 def type_label(t):
     parts = [t.get("grade", ""), t.get("unit", ""), t.get("subtype", "")]
     return " › ".join(x for x in parts if x) or "(유형 미지정)"
@@ -1363,9 +1717,10 @@ if current_role == "admin" and sheet_url and not sheet_api_token:
 # 메인 화면: 탭 구성 (학생으로 로그인 시에만 '내 보관함' 탭 추가)
 # ==========================================
 # ★ 수정: 문제는 선생님만 만든다. 학생은 선생님이 저장해 준 문제를 보기만 한다.
-tab2 = tab3 = tab_archive = tab_stats = tab_mine = None
+tab2 = tab3 = tab_archive = tab_stats = tab_mine = tab_bank = tab_similar = None
 if current_role == "admin":
-    tab1, tab2, tab_archive, tab_stats = st.tabs(["📋 반 게시판", "📸 문제 만들기", "🗄️ 문제 보관함", "📊 학생별 유형 현황"])
+    tab1, tab2, tab_bank, tab_similar, tab_archive, tab_stats = st.tabs(
+        ["📋 반 게시판", "📸 문제 만들기", "🏦 문제 은행", "🔍 비슷한 문제 찾기", "🗄️ 학생 보관함", "📊 학생별 유형 현황"])
 else:
     tab1, tab_mine, tab3 = st.tabs(["📋 우리 반 게시판", "📚 선생님이 준 문제", "📂 예전 보관함"])
 
@@ -1590,20 +1945,27 @@ if tab2 is not None:
                         solution_instruction = "단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                         fast_model = get_fastest_model_name(gemini_api_key)
                     
-                        existing_types = archive_types()
+                        existing_tax = taxonomy_list() if bank_backend_ready() else []
                         with ThreadPoolExecutor(max_workers=3) as executor:
                             future_p1 = executor.submit(generate_one_problem_async, "1번 기본 다지기 문제", 1, edited_text, solution_instruction, gemini_api_key, fast_model)
                             future_p2 = executor.submit(generate_one_problem_async, "2번 실력 키우기 문제", 2, edited_text, solution_instruction, gemini_api_key, fast_model)
                             # 보관함 저장용 유형(학년 › 단원 › 세부 유형)도 동시에 AI가 제안
-                            future_type = executor.submit(classify_problem, edited_text, existing_types, gemini_api_key, fast_model)
+                            future_type = executor.submit(classify_frame, edited_text, existing_tax, gemini_api_key, fast_model)
                         
                             p1_res = future_p1.result()
                             p2_res = future_p2.result()
                             try:
-                                st.session_state.suggested_type = future_type.result()
+                                st.session_state.suggested_frame = future_type.result()
+                                # 학생 보관함 저장 칸(학년 › 단원 › 세부 유형)에도 같은 분류를 채워 둔다
+                                st.session_state.suggested_type = {
+                                    "grade": st.session_state.suggested_frame.get("grade", ""),
+                                    "unit": st.session_state.suggested_frame.get("unit", ""),
+                                    "subtype": st.session_state.suggested_frame.get("frame", ""),
+                                }
                             except Exception:
                                 # 유형 제안이 실패해도 문제 생성 결과는 그대로 쓴다 (선생님이 직접 입력)
                                 st.session_state.suggested_type = None
+                                st.session_state.suggested_frame = None
                     
                         st.session_state.similar_problems = [p1_res, p2_res]
                         st.session_state.edit_ver = st.session_state.get("edit_ver", 0) + 1
@@ -1730,90 +2092,159 @@ if tab2 is not None:
                 st.write("")
                 st.divider()
                 # ==========================================
-                # ★ 선생님 문제 보관함에 저장 (날짜 / 학생 / 유형)
+                # ★ 문제 은행에 저장 (원본 + 1번 + 2번을 한 문제씩)
                 # ==========================================
-                st.subheader("🗄️ 문제 보관함에 저장")
-                st.caption("위에서 확인·수정한 문제를 날짜, 대상 학생, 유형과 함께 오래 보관합니다. 원본 사진은 구글 드라이브에 따로 저장돼요.")
+                st.subheader("🏦 문제 은행에 저장")
+                if not bank_backend_ready():
+                    st.warning(BANK_SETUP_MSG)
+                else:
+                    _bver = st.session_state.get("edit_ver", 0)
+                    _bsug = st.session_state.get("suggested_frame") or {}
+                    _tax = taxonomy_list()
+                    st.caption("원본 문제와 만든 문제를 같은 문제틀로 묶어 저장합니다. 숫자나 난이도만 다른 문제는 같은 문제틀에 쌓아 주세요.")
+                    if _bsug:
+                        st.caption(f"🤖 AI 제안: {frame_path(_bsug)}" + (" (새 문제틀)" if _bsug.get("is_new_frame") else " (기존 문제틀)"))
+                    _main = taxonomy_picker(f"bk_main_{_bver}", _tax, suggestion=_bsug)
+                    _desc_default = _bsug.get("description", "") if _bsug.get("frame") == _main.get("frame") else ""
+                    _frame_desc = ""
+                    if _main.get("is_new_frame"):
+                        _frame_desc = st.text_input("새 문제틀 설명 (어떤 조건에서 무엇을 구하는 문제인지)", value=_desc_default, key=f"bk_desc_{_bver}")
 
-                _ver = st.session_state.get("edit_ver", 0)
-                _sug = st.session_state.get("suggested_type") or {}
-                for _k in ("grade", "unit", "subtype"):
-                    _key = f"arch_{_k}_{_ver}"
-                    if _key not in st.session_state:
-                        st.session_state[_key] = _sug.get(_k, "")
+                    _rows = []
+                    _orig_diff = _bsug.get("difficulty", "중") if _bsug.get("difficulty") in DIFFICULTIES else "중"
+                    _candidates = [
+                        ("원본", "📷 원본 문제 (학생이 틀린 문제)", st.session_state.ocr_text, "", "", _orig_diff),
+                        ("AI 기본", "[문제 1] 기본 다지기", p1["question"], p1["answer"], p1.get("solution", ""), _orig_diff),
+                        ("AI 실력", "[문제 2] 실력 키우기", p2["question"], p2["answer"], p2.get("solution", ""),
+                         DIFFICULTIES[min(DIFFICULTIES.index(_orig_diff) + 1, 2)]),
+                    ]
+                    for _i, (_src, _label, _q, _a, _s, _d) in enumerate(_candidates):
+                        with st.container(border=True):
+                            _cA, _cB, _cC = st.columns([2.2, 1, 1.2])
+                            with _cA:
+                                _inc = st.checkbox(_label, value=True, key=f"bk_inc_{_i}_{_bver}")
+                            with _cB:
+                                _diff = st.selectbox("난이도", DIFFICULTIES, index=DIFFICULTIES.index(_d), key=f"bk_diff_{_i}_{_bver}",
+                                                     label_visibility="collapsed")
+                            with _cC:
+                                _ver = st.checkbox("✅ 검수 완료", value=False, key=f"bk_ver_{_i}_{_bver}",
+                                                   help="정답과 풀이까지 확인한 문제만 체크하세요. 비슷한 문제 찾기·숙제에는 검수 완료 문제가 먼저 나갑니다.")
+                            _cls = _main
+                            _cls_desc = _frame_desc
+                            if _src != "원본" and st.checkbox("이 문제는 다른 문제틀", key=f"bk_other_{_i}_{_bver}"):
+                                _cls = taxonomy_picker(f"bk_cls_{_i}_{_bver}", _tax, suggestion=_main)
+                                _cls_desc = st.text_input("새 문제틀 설명", key=f"bk_cdesc_{_i}_{_bver}") if _cls.get("is_new_frame") else ""
+                            if _inc:
+                                _rows.append({
+                                    "grade": _cls.get("grade", ""), "unit": _cls.get("unit", ""), "type": _cls.get("type", ""),
+                                    "frame": _cls.get("frame", ""), "frame_description": _cls_desc,
+                                    "difficulty": _diff, "source": _src, "question": _q, "answer": _a, "solution": _s,
+                                    "verified": _ver, "memo": "", "use_image": _src == "원본",
+                                })
 
-                _types = archive_types()
-                _type_options = ["(AI 제안 / 직접 입력)"] + [type_label(t) for t in _types]
-
-                def _apply_existing_type():
-                    choice = st.session_state.get(f"arch_pick_type_{_ver}")
-                    for t in _types:
-                        if type_label(t) == choice:
-                            st.session_state[f"arch_grade_{_ver}"] = t.get("grade", "")
-                            st.session_state[f"arch_unit_{_ver}"] = t.get("unit", "")
-                            st.session_state[f"arch_subtype_{_ver}"] = t.get("subtype", "")
-                            break
-
-                st.selectbox("기존 유형에서 고르기", _type_options, key=f"arch_pick_type_{_ver}", on_change=_apply_existing_type)
-                col_g, col_u, col_s = st.columns([1, 1.4, 2])
-                with col_g:
-                    st.text_input("학년", key=f"arch_grade_{_ver}")
-                with col_u:
-                    st.text_input("단원", key=f"arch_unit_{_ver}")
-                with col_s:
-                    st.text_input("세부 유형", key=f"arch_subtype_{_ver}")
-                if _sug:
-                    st.caption(f"🤖 AI 제안: {type_label(_sug)}")
-
-                _all_students = admin_list_students()
-                col_cls, col_date = st.columns([1, 1])
-                with col_cls:
-                    _cls_filter = st.selectbox("학생 목록 반 필터", ["전체"] + class_list, key="arch_cls_filter")
-                with col_date:
-                    _arch_date = st.date_input("날짜", value=datetime.date.today(), key="arch_date")
-                _student_options = [s.get("student_id", "") for s in _all_students
-                                    if _cls_filter == "전체" or s.get("class_id", "") == _cls_filter]
-                _picked_students = st.multiselect("대상 학생 (여러 명 선택 가능, 비워두면 학생 미지정)", _student_options, key=f"arch_students_{_ver}")
-                _memo = st.text_input("메모 (선택)", key=f"arch_memo_{_ver}", placeholder="예: 3단계 이항에서 부호 실수")
-
-                _backend_ok = archive_backend_ready()
-                if not _backend_ok:
-                    st.warning(ARCHIVE_SETUP_MSG)
-                if st.button("🗄️ 보관함에 저장하기", type="primary", key=f"arch_save_btn_{_ver}", disabled=not _backend_ok):
-                    _grade = st.session_state.get(f"arch_grade_{_ver}", "").strip()
-                    _unit = st.session_state.get(f"arch_unit_{_ver}", "").strip()
-                    _subtype = st.session_state.get(f"arch_subtype_{_ver}", "").strip()
-                    if not (_unit and _subtype):
-                        st.warning("단원과 세부 유형을 입력해 주세요. 나중에 유형별로 찾을 때 필요해요.")
-                    else:
-                        _class_of = {s.get("student_id", ""): s.get("class_id", "") for s in _all_students}
-                        _classes = {_class_of.get(sid, "") for sid in _picked_students}
-                        if len(_classes) == 1:
-                            _arch_class = _classes.pop()
-                        elif not _picked_students and _cls_filter != "전체":
-                            _arch_class = _cls_filter
+                    if st.button("🏦 문제 은행에 저장하기", type="primary", key=f"bk_save_{_bver}"):
+                        _missing = [r for r in _rows if not all(r.get(lv) for lv in TAX_LEVELS)]
+                        if not _rows:
+                            st.warning("저장할 문제를 하나 이상 체크해 주세요.")
+                        elif _missing:
+                            st.warning("학년·단원·유형·문제틀을 모두 정해 주세요.")
                         else:
-                            _arch_class = ""
-                        _payload = {
-                            "id": f"{int(time.time() * 1000)}",
-                            "date": _arch_date.strftime("%Y-%m-%d") + datetime.datetime.now().strftime(" %H:%M"),
-                            "student_ids": ",".join(_picked_students),
-                            "class_id": _arch_class,
-                            "grade": _grade, "unit": _unit, "subtype": _subtype,
-                            "source_text": st.session_state.ocr_text,
-                            "image_b64": compress_image_for_storage(st.session_state.current_image_b64, max_dimension=1400, max_chars=3_000_000),
-                            "q1": p1["question"], "a1": p1["answer"], "s1": p1.get("solution", ""),
-                            "q2": p2["question"], "a2": p2["answer"], "s2": p2.get("solution", ""),
-                            "memo": _memo,
-                        }
-                        with st.spinner("보관함에 저장하는 중..."):
-                            _result = archive_save(_payload)
-                        if _result.get("ok"):
-                            archive_types.clear()
-                            _who = ", ".join(_picked_students) if _picked_students else "학생 미지정"
-                            st.success(f"✅ 보관 완료! ({_payload['date'][:10]} · {_who} · {_grade} › {_unit} › {_subtype})")
+                            _img = ""
+                            if any(r["use_image"] for r in _rows):
+                                _img = compress_image_for_storage(st.session_state.current_image_b64, max_dimension=1400, max_chars=3_000_000)
+                            with st.spinner("문제 은행에 저장하는 중..."):
+                                _res = bank_save(_rows, _img)
+                            if _res.get("ok"):
+                                st.success(f"✅ {len(_rows)}문제를 저장했습니다 · {frame_path(_rows[0])}")
+                            else:
+                                st.error(f"❌ 저장에 실패했습니다: {_res.get('error', '알 수 없는 오류')}")
+                st.divider()
+                with st.expander("👤 학생에게 바로 주기 (학생 보관함)", expanded=False):
+                    # ==========================================
+                    # ★ 선생님 문제 보관함에 저장 (날짜 / 학생 / 유형)
+                    # ==========================================
+                    st.subheader("🗄️ 문제 보관함에 저장")
+                    st.caption("위에서 확인·수정한 문제를 날짜, 대상 학생, 유형과 함께 오래 보관합니다. 원본 사진은 구글 드라이브에 따로 저장돼요.")
+
+                    _ver = st.session_state.get("edit_ver", 0)
+                    _sug = st.session_state.get("suggested_type") or {}
+                    for _k in ("grade", "unit", "subtype"):
+                        _key = f"arch_{_k}_{_ver}"
+                        if _key not in st.session_state:
+                            st.session_state[_key] = _sug.get(_k, "")
+
+                    _types = archive_types()
+                    _type_options = ["(AI 제안 / 직접 입력)"] + [type_label(t) for t in _types]
+
+                    def _apply_existing_type():
+                        choice = st.session_state.get(f"arch_pick_type_{_ver}")
+                        for t in _types:
+                            if type_label(t) == choice:
+                                st.session_state[f"arch_grade_{_ver}"] = t.get("grade", "")
+                                st.session_state[f"arch_unit_{_ver}"] = t.get("unit", "")
+                                st.session_state[f"arch_subtype_{_ver}"] = t.get("subtype", "")
+                                break
+
+                    st.selectbox("기존 유형에서 고르기", _type_options, key=f"arch_pick_type_{_ver}", on_change=_apply_existing_type)
+                    col_g, col_u, col_s = st.columns([1, 1.4, 2])
+                    with col_g:
+                        st.text_input("학년", key=f"arch_grade_{_ver}")
+                    with col_u:
+                        st.text_input("단원", key=f"arch_unit_{_ver}")
+                    with col_s:
+                        st.text_input("세부 유형", key=f"arch_subtype_{_ver}")
+                    if _sug:
+                        st.caption(f"🤖 AI 제안: {type_label(_sug)}")
+
+                    _all_students = admin_list_students()
+                    col_cls, col_date = st.columns([1, 1])
+                    with col_cls:
+                        _cls_filter = st.selectbox("학생 목록 반 필터", ["전체"] + class_list, key="arch_cls_filter")
+                    with col_date:
+                        _arch_date = st.date_input("날짜", value=datetime.date.today(), key="arch_date")
+                    _student_options = [s.get("student_id", "") for s in _all_students
+                                        if _cls_filter == "전체" or s.get("class_id", "") == _cls_filter]
+                    _picked_students = st.multiselect("대상 학생 (여러 명 선택 가능, 비워두면 학생 미지정)", _student_options, key=f"arch_students_{_ver}")
+                    _memo = st.text_input("메모 (선택)", key=f"arch_memo_{_ver}", placeholder="예: 3단계 이항에서 부호 실수")
+
+                    _backend_ok = archive_backend_ready()
+                    if not _backend_ok:
+                        st.warning(ARCHIVE_SETUP_MSG)
+                    if st.button("🗄️ 보관함에 저장하기", type="primary", key=f"arch_save_btn_{_ver}", disabled=not _backend_ok):
+                        _grade = st.session_state.get(f"arch_grade_{_ver}", "").strip()
+                        _unit = st.session_state.get(f"arch_unit_{_ver}", "").strip()
+                        _subtype = st.session_state.get(f"arch_subtype_{_ver}", "").strip()
+                        if not (_unit and _subtype):
+                            st.warning("단원과 세부 유형을 입력해 주세요. 나중에 유형별로 찾을 때 필요해요.")
                         else:
-                            st.error(f"❌ 보관에 실패했습니다: {_result.get('error', '알 수 없는 오류')}")
+                            _class_of = {s.get("student_id", ""): s.get("class_id", "") for s in _all_students}
+                            _classes = {_class_of.get(sid, "") for sid in _picked_students}
+                            if len(_classes) == 1:
+                                _arch_class = _classes.pop()
+                            elif not _picked_students and _cls_filter != "전체":
+                                _arch_class = _cls_filter
+                            else:
+                                _arch_class = ""
+                            _payload = {
+                                "id": f"{int(time.time() * 1000)}",
+                                "date": _arch_date.strftime("%Y-%m-%d") + datetime.datetime.now().strftime(" %H:%M"),
+                                "student_ids": ",".join(_picked_students),
+                                "class_id": _arch_class,
+                                "grade": _grade, "unit": _unit, "subtype": _subtype,
+                                "source_text": st.session_state.ocr_text,
+                                "image_b64": compress_image_for_storage(st.session_state.current_image_b64, max_dimension=1400, max_chars=3_000_000),
+                                "q1": p1["question"], "a1": p1["answer"], "s1": p1.get("solution", ""),
+                                "q2": p2["question"], "a2": p2["answer"], "s2": p2.get("solution", ""),
+                                "memo": _memo,
+                            }
+                            with st.spinner("보관함에 저장하는 중..."):
+                                _result = archive_save(_payload)
+                            if _result.get("ok"):
+                                archive_types.clear()
+                                _who = ", ".join(_picked_students) if _picked_students else "학생 미지정"
+                                st.success(f"✅ 보관 완료! ({_payload['date'][:10]} · {_who} · {_grade} › {_unit} › {_subtype})")
+                            else:
+                                st.error(f"❌ 보관에 실패했습니다: {_result.get('error', '알 수 없는 오류')}")
 
 
 # ------------------------------------------
@@ -1896,7 +2327,7 @@ def _type_filter_widgets(types, key_prefix):
 # ------------------------------------------
 if tab_archive is not None:
     with tab_archive:
-        st.subheader("🗄️ 문제 보관함")
+        st.subheader("🗄️ 학생 보관함")
         if not archive_backend_ready():
             st.warning(ARCHIVE_SETUP_MSG)
         else:
@@ -2080,3 +2511,199 @@ if tab_mine is not None:
                     if st.button("⬇️ 이전 문제 더 보기", key="mine_more"):
                         st.session_state.mine_limit += 30
                         st.rerun()
+
+
+# ------------------------------------------
+# [선생님] 문제 은행: 찾기 / 유형표 / 옮기기
+# ------------------------------------------
+if tab_bank is not None:
+    with tab_bank:
+        st.subheader("🏦 문제 은행")
+        if not bank_backend_ready():
+            st.warning(BANK_SETUP_MSG)
+        else:
+            _btax = taxonomy_list()
+            _total = sum(t.get("count", 0) for t in _btax)
+            _verified = sum(t.get("verified", 0) for t in _btax)
+            st.caption(f"문제틀 {len([t for t in _btax if t.get('frame')])}개 · 문제 {_total}개 (검수 완료 {_verified}개)")
+            sub_find, sub_tax, sub_move = st.tabs(["🔎 문제 찾기", "🗂️ 유형표", "📦 예전 보관함 옮기기"])
+
+            with sub_find:
+                _f = {}
+                c1, c2, c3, c4 = st.columns(4)
+                for _col, _lv in zip((c1, c2, c3, c4), TAX_LEVELS):
+                    with _col:
+                        _opts = _children(_btax, _lv, _f)
+                        _v = st.selectbox(TAX_LABELS[_lv], ["전체"] + _opts, key=f"bf_{_lv}")
+                        if _v == "전체":
+                            break
+                        _f[_lv] = _v
+                c5, c6, c7 = st.columns([1.4, 1, 1.6])
+                with c5:
+                    _bdiff = st.multiselect("난이도", DIFFICULTIES, default=DIFFICULTIES, key="bf_diff")
+                with c6:
+                    _bver_only = st.checkbox("검수 완료만", key="bf_ver")
+                with c7:
+                    _bkw = st.text_input("🔎 검색어 (문제·메모·문제틀)", key="bf_kw")
+                _bfilters = dict(_f, difficulty=_bdiff, verified=_bver_only, keyword=_bkw.strip())
+                _bsig = json.dumps(_bfilters, sort_keys=True, ensure_ascii=False)
+                if st.session_state.get("bf_sig") != _bsig:
+                    st.session_state.bf_sig = _bsig
+                    st.session_state.bf_limit = 30
+                with st.spinner("검색하는 중..."):
+                    _bres = bank_search(limit=st.session_state.bf_limit, **_bfilters)
+                _bitems = _bres["items"]
+                st.caption(f"검색 결과 {_bres['total']}개 중 {len(_bitems)}개 표시")
+
+                if _bitems:
+                    with st.expander("🖨️ 검색 결과로 학습지 만들기"):
+                        _plabels = {f"{frame_path(p)} · {p.get('difficulty', '')} · {p.get('source', '')} [{p.get('id')}]": p for p in _bitems}
+                        _psel = st.multiselect("넣을 문제", list(_plabels.keys()), default=list(_plabels.keys())[:10], key="bf_print_sel")
+                        _ptitle = st.text_input("학습지 제목", value="유형별 연습 문제", key="bf_print_title")
+                        if _psel:
+                            st.download_button(f"📥 {len(_psel)}문제 학습지 받기",
+                                               data=make_problem_sheet_html(_ptitle, [_plabels[k] for k in _psel]),
+                                               file_name="문제은행_학습지.html", mime="text/html", key="bf_print_dl", type="primary")
+
+                _by_frame = {}
+                for p in _bitems:
+                    _by_frame.setdefault(frame_path(p), []).append(p)
+                for _path, _plist in _by_frame.items():
+                    st.markdown(f"##### 🏷️ {_path} ({len(_plist)})")
+                    for p in _plist:
+                        with st.expander(f"{'✅' if p.get('verified') == 'Y' else '⏳'} [{p.get('difficulty', '')}] {p.get('source', '')} · {_short_q(p)}"):
+                            render_bank_problem(p, "bf")
+                if len(_bitems) < _bres["total"]:
+                    if st.button("⬇️ 더 보기", key="bf_more"):
+                        st.session_state.bf_limit += 30
+                        st.rerun()
+
+            with sub_tax:
+                import pandas as pd
+                if not _btax:
+                    st.info("아직 유형표가 비어 있어요. 문제를 저장하면 자동으로 채워집니다.")
+                else:
+                    _tdf = pd.DataFrame(_btax)
+                    for _c in ("count", "verified", "하", "중", "상"):
+                        if _c not in _tdf:
+                            _tdf[_c] = 0
+                    _tdf = _tdf[["grade", "unit", "type", "frame", "count", "verified", "하", "중", "상", "description"]].rename(columns={
+                        "grade": "학년", "unit": "단원", "type": "유형", "frame": "문제틀", "count": "문제 수",
+                        "verified": "검수 완료", "description": "설명"})
+                    _tdf = _tdf.sort_values(["학년", "단원", "유형", "문제틀"])
+                    _few = st.number_input("검수 완료 문제가 이 개수보다 적은 문제틀만 보기 (0 = 전체)", min_value=0, value=0, step=1, key="tx_few")
+                    if _few:
+                        _tdf = _tdf[_tdf["검수 완료"] < _few]
+                    st.dataframe(_tdf, use_container_width=True, hide_index=True)
+
+                    st.markdown("##### ✏️ 이름 바꾸기 · 옮기기 · 합치기")
+                    st.caption("바꿀 이름이 이미 있으면 두 묶음이 하나로 합쳐집니다. 그 아래 문제와 문제틀도 함께 옮겨져요.")
+                    _lvl_label = st.radio("무엇을 바꿀까요?", [TAX_LABELS[lv] for lv in TAX_LEVELS], index=3, horizontal=True, key="tx_level")
+                    _lvl = TAX_LEVELS[[TAX_LABELS[lv] for lv in TAX_LEVELS].index(_lvl_label)]
+                    _lv_list = TAX_LEVELS[:TAX_LEVELS.index(_lvl) + 1]
+                    st.markdown("바꿀 대상")
+                    _old = taxonomy_picker("tx_old", _btax, allow_new=False, levels=_lv_list)
+                    st.markdown("새 이름 / 옮길 위치")
+                    _new = taxonomy_picker("tx_new", _btax, suggestion=_old, levels=_lv_list)
+                    if st.session_state.get("tx_flash"):
+                        st.success(st.session_state.pop("tx_flash"))
+                    if st.button("적용하기", key="tx_apply"):
+                        if not all(_new.get(lv) for lv in _lv_list):
+                            st.warning("새 이름을 모두 입력해 주세요.")
+                        elif all(_new.get(lv) == _old.get(lv) for lv in _lv_list):
+                            st.info("바뀐 것이 없습니다.")
+                        else:
+                            _r = taxonomy_rename(_lvl, _old, _new)
+                            if _r.get("ok"):
+                                st.session_state["tx_flash"] = f"바꿨습니다. ({_r.get('changed', 0)}줄 변경)"
+                                st.rerun()
+                            else:
+                                st.error(f"실패했습니다: {_r.get('error', '')}")
+
+                    st.markdown("##### 📝 문제틀 설명 고치기")
+                    _dsel = taxonomy_picker("tx_desc", _btax, allow_new=False)
+                    _cur_desc = next((t.get("description", "") for t in _btax
+                                      if all(t.get(lv) == _dsel.get(lv) for lv in TAX_LEVELS)), "")
+                    _ndesc = st.text_input("설명", value=_cur_desc, key=f"tx_desc_text_{frame_path(_dsel)}")
+                    if st.button("설명 저장", key="tx_desc_save"):
+                        if taxonomy_upsert(_dsel.get("grade"), _dsel.get("unit"), _dsel.get("type"), _dsel.get("frame"), _ndesc):
+                            st.success("저장했습니다.")
+                            st.rerun()
+
+            with sub_move:
+                st.caption("'학생 보관함'에 저장했던 문제를 문제 은행으로 복사합니다. 한 번 옮긴 문제는 다시 옮겨지지 않고, 학생 보관함 자료는 그대로 남아요.")
+                st.caption("예전 분류(학년 › 단원 › 세부 유형)는 유형과 문제틀에 같은 이름으로 들어갑니다. 옮긴 뒤 '유형표'에서 다듬어 주세요.")
+                if st.button("📦 예전 보관함 문제 옮기기", key="mv_run"):
+                    with st.spinner("옮기는 중..."):
+                        _m = migrate_archive_to_bank()
+                    if _m.get("ok"):
+                        st.success(f"{_m.get('sets', 0)}세트, {_m.get('problems', 0)}문제를 옮겼습니다.")
+                    else:
+                        st.error(f"실패했습니다: {_m.get('error', '')}")
+
+
+# ------------------------------------------
+# [선생님] 비슷한 문제 찾기: 새 문제 → AI가 문제틀을 찾고 → 문제 은행에서 골라 내기
+# ------------------------------------------
+if tab_similar is not None:
+    with tab_similar:
+        st.subheader("🔍 비슷한 문제 찾기")
+        st.caption("학생이 틀린 문제를 올리면 AI가 같은 문제틀을 찾아, 문제 은행에 모아 둔 문제를 바로 골라 줍니다.")
+        if not bank_backend_ready():
+            st.warning(BANK_SETUP_MSG)
+        else:
+            _stax = taxonomy_list()
+            _sfile = st.file_uploader("문제 사진", type=["png", "jpg", "jpeg"], key="sim_upload")
+            if _sfile and st.button("📸 사진에서 글자 읽기", key="sim_ocr"):
+                with st.spinner("문제를 읽는 중..."):
+                    try:
+                        st.session_state.sim_text = mathpix_ocr(_sfile.getvalue())
+                        st.session_state.sim_ocr_n = st.session_state.get("sim_ocr_n", 0) + 1
+                    except Exception as e:
+                        st.error(f"읽기에 실패했습니다: {e}")
+            _stext = st.text_area("문제 내용 (직접 입력하거나 고칠 수 있어요)", value=st.session_state.get("sim_text", ""), key=f"sim_text_area_{st.session_state.get('sim_ocr_n', 0)}", height=120)
+            if _stext.strip() and st.button("🤖 AI로 문제틀 찾기", type="primary", key="sim_classify"):
+                if not _stax:
+                    st.warning("문제 은행이 아직 비어 있어요. 먼저 문제를 저장해 주세요.")
+                else:
+                    with st.spinner("AI가 같은 문제틀을 찾는 중..."):
+                        try:
+                            st.session_state.sim_result = classify_frame(_stext, _stax, gemini_api_key, get_fastest_model_name(gemini_api_key))
+                            st.session_state.sim_ver = st.session_state.get("sim_ver", 0) + 1
+                        except Exception as e:
+                            st.error(f"AI 분류에 실패했습니다: {e}")
+
+            _sres = st.session_state.get("sim_result")
+            if _sres:
+                if _sres.get("is_new_frame"):
+                    st.info(f"🤖 딱 맞는 문제틀이 아직 없어요. 가장 가까운 유형: {_sres.get('grade')} › {_sres.get('unit')} › {_sres.get('type')}  (제안 이름: {_sres.get('frame')})")
+                else:
+                    st.success(f"🤖 찾은 문제틀: {frame_path(_sres)} · 이 문제 난이도 {_sres.get('difficulty', '')}")
+                st.markdown("문제틀 확인 (다르면 바꿔 주세요)")
+                _spick = taxonomy_picker(f"sim_pick_{st.session_state.get('sim_ver', 0)}", _stax, suggestion=_sres, allow_new=False)
+                c1, c2, c3 = st.columns([1.4, 1, 1])
+                with c1:
+                    _sdiff = st.multiselect("난이도", DIFFICULTIES, default=DIFFICULTIES, key="sim_diff")
+                with c2:
+                    _sver = st.checkbox("검수 완료만", value=True, key="sim_ver_only")
+                with c3:
+                    _swide = st.checkbox("같은 유형 전체로 넓히기", key="sim_wide")
+                _sfilter = {lv: _spick.get(lv) for lv in (TAX_LEVELS[:3] if _swide else TAX_LEVELS) if _spick.get(lv)}
+                _found = bank_search(limit=100, difficulty=_sdiff, verified=_sver, **_sfilter)
+                _fitems = _found["items"]
+                st.caption(f"문제 은행에서 {_found['total']}문제를 찾았습니다.")
+                if not _fitems:
+                    st.info("조건에 맞는 문제가 없어요. '검수 완료만'을 끄거나 '같은 유형 전체로 넓히기'를 켜 보세요.")
+                else:
+                    _slabels = {f"[{p.get('difficulty', '')}] {p.get('frame', '')} · {_short_q(p)} [{p.get('id')}]": p for p in _fitems}
+                    _ssel = st.multiselect("낼 문제 고르기", list(_slabels.keys()), default=list(_slabels.keys())[:4], key="sim_sel")
+                    _chosen = [_slabels[k] for k in _ssel]
+                    if _chosen:
+                        st.download_button(f"📥 고른 {len(_chosen)}문제 학습지 받기",
+                                           data=make_problem_sheet_html("비슷한 문제 연습", _chosen),
+                                           file_name="비슷한문제_학습지.html", mime="text/html", key="sim_dl", type="primary")
+                        st.markdown("##### 미리 보기")
+                        for i, p in enumerate(_chosen, start=1):
+                            with st.container(border=True):
+                                st.markdown(f"**[{i}]** · 난이도 {p.get('difficulty', '')}")
+                                render_bank_problem(p, "sim", editable=False)

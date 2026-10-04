@@ -1,7 +1,12 @@
 /**
  * ===== 수학 클래스룸 앱 - 구글시트 연동 Apps Script (선생님 문제 보관함 추가판) =====
  *
- * 이 버전에서 새로 생긴 것:
+ * 이 버전에서 새로 생긴 것 (문제 은행판):
+ *   - 문제 은행 'bank' 탭: 학생과 상관없이 한 문제씩 저장 (학년 › 단원 › 유형 › 문제틀 + 난이도 + 검수 표시)
+ *   - 유형표 'taxonomy' 탭: 문제틀 이름과 설명, 이름 바꾸기·옮기기·합치기
+ *   - 예전 보관함(archive) 문제를 문제 은행으로 옮기기
+ *
+ * 이전 버전에서 생긴 것:
  *   1. 선생님 문제 보관함 - 'archive' 탭에 저장
  *      날짜 / 대상 학생(여러 명) / 반 / 학년 › 단원 › 세부 유형 별로 오래 쌓아두고 검색한다.
  *   2. 원본 사진은 시트 칸이 아니라 구글 드라이브 폴더('수학클래스룸_원본사진')에 저장하고,
@@ -74,6 +79,8 @@ function doGet(e) {
   if (action === 'archive_types') return handleArchiveTypes_();
   if (action === 'archive_stats') return handleArchiveStats_(e);
   if (action === 'archive_image') return handleArchiveImage_(e);
+  if (action === 'bank_search') return handleBankSearch_(e);
+  if (action === 'taxonomy') return handleTaxonomy_();
   if (sheetParam === 'personal_problems') {
     return handleGetPersonal_(e);
   }
@@ -103,6 +110,12 @@ function doPost(e) {
   if (action === 'archive_save') return handleArchiveSave_(body);
   if (action === 'archive_delete') return handleArchiveDelete_(body);
   if (action === 'archive_update_students') return handleArchiveUpdateStudents_(body);
+  if (action === 'bank_save') return handleBankSave_(body);
+  if (action === 'bank_update') return handleBankUpdate_(body);
+  if (action === 'bank_delete') return handleBankDelete_(body);
+  if (action === 'taxonomy_upsert') return handleTaxonomyUpsert_(body);
+  if (action === 'taxonomy_rename') return handleTaxonomyRename_(body);
+  if (action === 'migrate_archive') return handleMigrateArchive_();
   if (action === 'delete') return handleDeleteProblem_(body);
   return handleInsertProblem_(body); // action 없으면 기존 게시판 등록(기본 동작)
 }
@@ -574,5 +587,363 @@ function handleArchiveImage_(e) {
     return jsonResponse_({ ok: true, image_b64: Utilities.base64Encode(file.getBlob().getBytes()) });
   } catch (err) {
     return jsonResponse_({ ok: false, error: "사진을 찾을 수 없습니다." });
+  }
+}
+
+// ==========================================
+// ★ 문제 은행 (bank 탭) + 유형표 (taxonomy 탭)
+// 문제를 학생과 상관없이 한 문제씩 저장한다.
+// 분류: 학년 › 단원 › 유형 › 문제틀(숫자·난이도만 다른 문제들의 묶음) + 난이도(하/중/상)
+// ==========================================
+var BANK_HEADERS = ['id', 'created_at', 'grade', 'unit', 'type', 'frame', 'difficulty', 'source', 'origin_id',
+                    'question', 'answer', 'solution', 'image_file_id', 'verified', 'memo', 'legacy_archive_id'];
+var BANK_COL = {};
+for (var _b = 0; _b < BANK_HEADERS.length; _b++) BANK_COL[BANK_HEADERS[_b]] = _b;
+var TAXONOMY_HEADERS = ['grade', 'unit', 'type', 'frame', 'description', 'created_at'];
+var TAX_LEVELS = ['grade', 'unit', 'type', 'frame'];
+
+function getTextSheet_(name, headers) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    var hr = sheet.getRange(1, 1, 1, headers.length);
+    hr.setNumberFormat('@');
+    hr.setValues([headers]);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+// 서식을 "일반 텍스트"로 지정한 뒤 여러 줄을 한 번에 추가한다
+function appendTextRows_(sheet, rows) {
+  if (!rows.length) return;
+  var range = sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length);
+  range.setNumberFormat('@');
+  range.setValues(rows.map(function (r) { return r.map(safeCell_); }));
+}
+
+function taxKey_(o) {
+  return [o.grade || '', o.unit || '', o.type || '', o.frame || ''].join('\u0001');
+}
+
+function bankRowToObj_(r) {
+  var o = {};
+  for (var k = 0; k < BANK_HEADERS.length; k++) o[BANK_HEADERS[k]] = cellStr_(r[k]);
+  return o;
+}
+
+// 유형표에 없는 (학년, 단원, 유형, 문제틀)이면 추가한다
+function ensureTaxonomy_(entries) {
+  var sheet = getTextSheet_('taxonomy', TAXONOMY_HEADERS);
+  var data = sheet.getDataRange().getValues();
+  var seen = {};
+  for (var i = 1; i < data.length; i++) {
+    seen[taxKey_({ grade: cellStr_(data[i][0]), unit: cellStr_(data[i][1]), type: cellStr_(data[i][2]), frame: cellStr_(data[i][3]) })] = true;
+  }
+  var add = [];
+  var now = new Date().toISOString();
+  for (var j = 0; j < entries.length; j++) {
+    var e = entries[j];
+    var key = taxKey_(e);
+    if (!e.frame || seen[key]) continue;
+    seen[key] = true;
+    add.push([e.grade || '', e.unit || '', e.type || '', e.frame || '', e.description || '', now]);
+  }
+  appendTextRows_(sheet, add);
+}
+
+// 여러 문제를 한 번에 저장. body.problems = [{grade, unit, type, frame, frame_description, difficulty, source,
+//   question, answer, solution, verified, memo, use_image}], body.image_b64 = 원본 사진(선택)
+function handleBankSave_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var problems = body.problems || [];
+    if (!problems.length) return jsonResponse_({ ok: false, error: "저장할 문제가 없습니다." });
+    var fileId = '';
+    if (body.image_b64) {
+      var blob = Utilities.newBlob(Utilities.base64Decode(body.image_b64), 'image/jpeg', 'bank_' + body.group_id + '.jpg');
+      fileId = getArchiveFolder_().createFile(blob).getId();
+    }
+    var now = new Date().toISOString();
+    var base = String(body.group_id || new Date().getTime());
+    var rows = [];
+    var ids = [];
+    var originId = '';
+    for (var i = 0; i < problems.length; i++) {
+      var p = problems[i];
+      var id = base + '_' + (i + 1);
+      if (p.source === '원본') originId = id;
+      ids.push(id);
+      rows.push([id, now, p.grade, p.unit, p.type, p.frame, p.difficulty, p.source,
+                 p.source === '원본' ? '' : originId, p.question, p.answer, p.solution,
+                 p.use_image ? fileId : '', p.verified ? 'Y' : '', p.memo, '']);
+    }
+    appendTextRows_(getTextSheet_('bank', BANK_HEADERS), rows);
+    ensureTaxonomy_(problems.map(function (p) {
+      return { grade: p.grade, unit: p.unit, type: p.type, frame: p.frame, description: p.frame_description };
+    }));
+    return jsonResponse_({ ok: true, ids: ids, image_file_id: fileId });
+  } catch (err) {
+    return jsonResponse_({ ok: false, error: String(err) });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 한 문제의 일부 칸만 고친다 (body.fields = {question: ..., verified: 'Y', ...})
+function handleBankUpdate_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = getTextSheet_('bank', BANK_HEADERS);
+    var data = sheet.getDataRange().getValues();
+    var editable = ['grade', 'unit', 'type', 'frame', 'difficulty', 'question', 'answer', 'solution', 'verified', 'memo'];
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][BANK_COL.id]) !== String(body.id)) continue;
+      var fields = body.fields || {};
+      for (var k = 0; k < editable.length; k++) {
+        var f = editable[k];
+        if (fields.hasOwnProperty(f)) {
+          var cell = sheet.getRange(i + 1, BANK_COL[f] + 1);
+          cell.setNumberFormat('@');
+          cell.setValue(safeCell_(fields[f]));
+        }
+      }
+      if (fields.frame) ensureTaxonomy_([{ grade: fields.grade, unit: fields.unit, type: fields.type, frame: fields.frame }]);
+      return jsonResponse_({ ok: true });
+    }
+    return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function handleBankDelete_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = getTextSheet_('bank', BANK_HEADERS);
+    var data = sheet.getDataRange().getValues();
+    for (var i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][BANK_COL.id]) !== String(body.id)) continue;
+      var fileId = cellStr_(data[i][BANK_COL.image_file_id]);
+      sheet.deleteRow(i + 1);
+      // 같은 사진을 쓰는 다른 문제가 없을 때만 사진도 휴지통으로
+      if (fileId) {
+        var used = false;
+        for (var j = 1; j < data.length; j++) {
+          if (j !== i && cellStr_(data[j][BANK_COL.image_file_id]) === fileId) { used = true; break; }
+        }
+        if (!used) { try { DriveApp.getFileById(fileId).setTrashed(true); } catch (err) { } }
+      }
+      return jsonResponse_({ ok: true });
+    }
+    return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 검색: grade, unit, type, frame, difficulty(쉼표로 여러 개), verified=Y, source, keyword, ids(쉼표), offset, limit
+function handleBankSearch_(e) {
+  var p = e.parameter || {};
+  var exact = {};
+  ['grade', 'unit', 'type', 'frame', 'source'].forEach(function (f) { if (p[f]) exact[f] = String(p[f]); });
+  var diffs = p.difficulty ? String(p.difficulty).split(',') : null;
+  var verifiedOnly = p.verified === 'Y';
+  var keyword = p.keyword ? String(p.keyword).toLowerCase() : '';
+  var idSet = null;
+  if (p.ids) { idSet = {}; String(p.ids).split(',').forEach(function (x) { idSet[x.trim()] = true; }); }
+  var offset = parseInt(p.offset || '0', 10) || 0;
+  var limit = Math.min(parseInt(p.limit || '50', 10) || 50, 500);
+
+  var data = getTextSheet_('bank', BANK_HEADERS).getDataRange().getValues();
+  var items = [];
+  var total = 0;
+  for (var i = data.length - 1; i >= 1; i--) {
+    var r = data[i];
+    if (!r[BANK_COL.id]) continue;
+    if (idSet && !idSet[cellStr_(r[BANK_COL.id])]) continue;
+    var skip = false;
+    for (var f in exact) { if (cellStr_(r[BANK_COL[f]]) !== exact[f]) { skip = true; break; } }
+    if (skip) continue;
+    if (diffs && diffs.indexOf(cellStr_(r[BANK_COL.difficulty])) === -1) continue;
+    if (verifiedOnly && cellStr_(r[BANK_COL.verified]) !== 'Y') continue;
+    if (keyword) {
+      var hay = (cellStr_(r[BANK_COL.question]) + ' ' + cellStr_(r[BANK_COL.memo]) + ' ' + cellStr_(r[BANK_COL.frame])).toLowerCase();
+      if (hay.indexOf(keyword) === -1) continue;
+    }
+    if (total >= offset && items.length < limit) items.push(bankRowToObj_(r));
+    total++;
+  }
+  return jsonResponse_({ items: items, total: total });
+}
+
+// 유형표 + 문제틀마다 문제 수 / 검수 완료 수 / 난이도별 수
+function handleTaxonomy_() {
+  var tax = getTextSheet_('taxonomy', TAXONOMY_HEADERS).getDataRange().getValues();
+  var bank = getTextSheet_('bank', BANK_HEADERS).getDataRange().getValues();
+  var map = {};
+  var list = [];
+  function entry(g, u, t, f, d) {
+    var key = taxKey_({ grade: g, unit: u, type: t, frame: f });
+    if (!map[key]) {
+      map[key] = { grade: g, unit: u, type: t, frame: f, description: d || '', count: 0, verified: 0, '하': 0, '중': 0, '상': 0 };
+      list.push(map[key]);
+    } else if (d && !map[key].description) {
+      map[key].description = d;
+    }
+    return map[key];
+  }
+  for (var i = 1; i < tax.length; i++) {
+    if (!tax[i][3]) continue;
+    entry(cellStr_(tax[i][0]), cellStr_(tax[i][1]), cellStr_(tax[i][2]), cellStr_(tax[i][3]), cellStr_(tax[i][4]));
+  }
+  for (var j = 1; j < bank.length; j++) {
+    var r = bank[j];
+    if (!r[BANK_COL.id]) continue;
+    var en = entry(cellStr_(r[BANK_COL.grade]), cellStr_(r[BANK_COL.unit]), cellStr_(r[BANK_COL.type]), cellStr_(r[BANK_COL.frame]), '');
+    en.count++;
+    if (cellStr_(r[BANK_COL.verified]) === 'Y') en.verified++;
+    var d = cellStr_(r[BANK_COL.difficulty]);
+    if (en.hasOwnProperty(d)) en[d]++;
+  }
+  return jsonResponse_(list);
+}
+
+// 문제틀 설명 추가/수정 (없으면 새로 만든다)
+function handleTaxonomyUpsert_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = getTextSheet_('taxonomy', TAXONOMY_HEADERS);
+    var data = sheet.getDataRange().getValues();
+    var key = taxKey_(body);
+    for (var i = 1; i < data.length; i++) {
+      var k = taxKey_({ grade: cellStr_(data[i][0]), unit: cellStr_(data[i][1]), type: cellStr_(data[i][2]), frame: cellStr_(data[i][3]) });
+      if (k === key) {
+        var cell = sheet.getRange(i + 1, 5);
+        cell.setNumberFormat('@');
+        cell.setValue(safeCell_(body.description || ''));
+        return jsonResponse_({ ok: true });
+      }
+    }
+    ensureTaxonomy_([body]);
+    return jsonResponse_({ ok: true });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 이름 바꾸기 / 옮기기 / 합치기.
+// level = 'grade' | 'unit' | 'type' | 'frame'. old_* 로 고른 묶음(그 아래 전부)의 이름을 new_* 로 바꾼다.
+// 바꾼 이름이 이미 있으면 자연스럽게 합쳐진다.
+function handleTaxonomyRename_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var depth = TAX_LEVELS.indexOf(body.level || 'frame') + 1;
+    if (depth < 1) return jsonResponse_({ ok: false, error: "level이 올바르지 않습니다." });
+    var oldVals = TAX_LEVELS.slice(0, depth).map(function (l) { return String(body['old_' + l] || ''); });
+    var newVals = TAX_LEVELS.slice(0, depth).map(function (l) { return String(body['new_' + l] || ''); });
+    var changed = 0;
+
+    function renameIn(sheet, cols) {
+      var range = sheet.getDataRange();
+      var data = range.getValues();
+      var dirty = false;
+      for (var i = 1; i < data.length; i++) {
+        var match = true;
+        for (var d = 0; d < depth; d++) { if (cellStr_(data[i][cols[d]]) !== oldVals[d]) { match = false; break; } }
+        if (!match) continue;
+        for (var d2 = 0; d2 < depth; d2++) data[i][cols[d2]] = newVals[d2];
+        dirty = true;
+        changed++;
+      }
+      if (dirty) {
+        for (var c = 0; c < depth; c++) {
+          var colVals = data.slice(1).map(function (row) { return [cellStr_(row[cols[c]])]; });
+          var colRange = sheet.getRange(2, cols[c] + 1, colVals.length, 1);
+          colRange.setNumberFormat('@');
+          colRange.setValues(colVals);
+        }
+      }
+    }
+    renameIn(getTextSheet_('bank', BANK_HEADERS), [BANK_COL.grade, BANK_COL.unit, BANK_COL.type, BANK_COL.frame]);
+    renameIn(getTextSheet_('taxonomy', TAXONOMY_HEADERS), [0, 1, 2, 3]);
+
+    // 합쳐져서 같은 유형표 줄이 두 개가 되면 하나만 남긴다
+    var tsheet = getTextSheet_('taxonomy', TAXONOMY_HEADERS);
+    var tdata = tsheet.getDataRange().getValues();
+    var firstRow = {};
+    var toDelete = [];
+    for (var i = 1; i < tdata.length; i++) {
+      var key = taxKey_({ grade: cellStr_(tdata[i][0]), unit: cellStr_(tdata[i][1]), type: cellStr_(tdata[i][2]), frame: cellStr_(tdata[i][3]) });
+      if (firstRow[key] === undefined) { firstRow[key] = i; continue; }
+      // 남기는 줄에 설명이 없으면 지우는 줄의 설명을 옮겨 둔다
+      var keep = firstRow[key];
+      if (!cellStr_(tdata[keep][4]) && cellStr_(tdata[i][4])) {
+        tdata[keep][4] = tdata[i][4];
+        var dc = tsheet.getRange(keep + 1, 5);
+        dc.setNumberFormat('@');
+        dc.setValue(cellStr_(tdata[i][4]));
+      }
+      toDelete.push(i);
+    }
+    for (var x = toDelete.length - 1; x >= 0; x--) tsheet.deleteRow(toDelete[x] + 1);
+    return jsonResponse_({ ok: true, changed: changed });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 예전 보관함(archive)의 문제를 문제 은행으로 옮긴다 (한 번 옮긴 것은 다시 옮기지 않음).
+// 예전 분류(학년 › 단원 › 세부 유형)는 유형과 문제틀에 같은 이름으로 들어가므로 나중에 유형표에서 다듬으면 된다.
+function handleMigrateArchive_() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var bankSheet = getTextSheet_('bank', BANK_HEADERS);
+    var bank = bankSheet.getDataRange().getValues();
+    var done = {};
+    for (var i = 1; i < bank.length; i++) {
+      var lid = cellStr_(bank[i][BANK_COL.legacy_archive_id]);
+      if (lid) done[lid] = true;
+    }
+    var arch = getArchiveSheet_().getDataRange().getValues();
+    var rows = [];
+    var tax = [];
+    var now = new Date().toISOString();
+    var sets = 0;
+    for (var j = 1; j < arch.length; j++) {
+      var a = arch[j];
+      var aid = cellStr_(a[ARCHIVE_COL.id]);
+      if (!aid || done[aid]) continue;
+      var g = cellStr_(a[ARCHIVE_COL.grade]), u = cellStr_(a[ARCHIVE_COL.unit]), s = cellStr_(a[ARCHIVE_COL.subtype]);
+      var base = 'm' + aid;
+      var originId = '';
+      var src = cellStr_(a[ARCHIVE_COL.source_text]);
+      if (src) {
+        originId = base + '_0';
+        rows.push([originId, now, g, u, s, s, '중', '원본', '', src, '', '', cellStr_(a[ARCHIVE_COL.image_file_id]), '', '', aid]);
+      }
+      if (cellStr_(a[ARCHIVE_COL.q1])) {
+        rows.push([base + '_1', now, g, u, s, s, '중', 'AI 기본', originId, cellStr_(a[ARCHIVE_COL.q1]),
+                   cellStr_(a[ARCHIVE_COL.a1]), cellStr_(a[ARCHIVE_COL.s1]), '', '', cellStr_(a[ARCHIVE_COL.memo]), aid]);
+      }
+      if (cellStr_(a[ARCHIVE_COL.q2])) {
+        rows.push([base + '_2', now, g, u, s, s, '상', 'AI 실력', originId, cellStr_(a[ARCHIVE_COL.q2]),
+                   cellStr_(a[ARCHIVE_COL.a2]), cellStr_(a[ARCHIVE_COL.s2]), '', '', cellStr_(a[ARCHIVE_COL.memo]), aid]);
+      }
+      tax.push({ grade: g, unit: u, type: s, frame: s });
+      sets++;
+    }
+    appendTextRows_(bankSheet, rows);
+    ensureTaxonomy_(tax);
+    return jsonResponse_({ ok: true, sets: sets, problems: rows.length });
+  } finally {
+    lock.releaseLock();
   }
 }
