@@ -578,6 +578,20 @@ def tags_backend_ready():
     return backend_version() >= 6
 
 
+def backup_ready():
+    """Apps Script가 백업 기능이 있는 버전(8 이상)인지 확인."""
+    return backend_version() >= 8
+
+
+def backup_info():
+    data = _get_action({"action": "backup_info"})
+    return data if isinstance(data, dict) and "last_at" in data else {}
+
+
+def backup_now():
+    return _post_action({"action": "backup_now"})
+
+
 TAGS_SETUP_MSG = "문제 구분을 저장하려면 저장소의 apps_script/Code.gs로 Apps Script를 바꾸고 '새 버전'으로 재배포해 주세요."
 
 
@@ -2104,6 +2118,38 @@ def restore_login_from_token():
 if not st.session_state.auth_role:
     restore_login_from_token()
 
+# 데이터 백업: 마지막 백업 시간을 보여 주고, 지금 바로 백업하는 버튼을 둔다 (조각으로 만들어 앱 전체가 다시 실행되지 않게)
+@st.fragment
+def backup_panel():
+    with st.expander("💾 데이터 백업"):
+        if not backup_ready():
+            st.caption("Apps Script를 최신 버전으로 재배포하면 백업을 쓸 수 있어요.")
+            return
+        info = backup_info()
+        if info.get("last_at"):
+            try:
+                when = datetime.datetime.fromisoformat(info["last_at"].replace("Z", "+00:00")).astimezone(
+                    datetime.timezone(datetime.timedelta(hours=9)))
+                st.caption(f"마지막 백업: {when:%Y-%m-%d %H:%M} ({'자동' if info.get('last_kind') == 'auto' else '직접'})")
+            except ValueError:
+                st.caption(f"마지막 백업: {info['last_at']}")
+        else:
+            st.warning("아직 백업이 없어요.")
+        if info.get("last_error"):
+            st.error("최근 백업에 실패한 적이 있어요. 아래 버튼으로 다시 해 보세요.")
+        if not info.get("auto"):
+            st.caption("매주 자동 백업이 꺼져 있어요. Apps Script 편집기에서 setupWeeklyBackup을 한 번 실행하면 켜져요.")
+        st.caption(f"드라이브 '수학클래스룸_백업' 폴더에 최근 {info.get('keep', 8)}개만 남겨요.")
+        if st.button("지금 백업하기", key="backup_now_btn"):
+            with st.spinner("백업하는 중..."):
+                res = backup_now()
+            if res.get("ok"):
+                st.success("백업했어요.")
+                st.rerun(scope="fragment")
+            else:
+                safe_error("백업하지 못했어요.", res.get("error", ""))
+
+
 # 학생 계정 관리는 따로 새로고침되는 조각(fragment)으로 만들어,
 # 스위치나 선택을 바꿔도 앱 전체가 다시 실행되지 않게 함
 @st.fragment
@@ -2261,6 +2307,7 @@ with st.sidebar:
 
         st.divider()
         student_admin_panel(class_list)
+        backup_panel()
 
 # ==========================================
 # 화면 차단 로직
