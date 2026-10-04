@@ -281,10 +281,94 @@ function handleAssignClass_(body) {
   return jsonResponse_({ ok: false, error: "학생을 찾을 수 없습니다." });
 }
 
-// 회원 탈퇴: 계정(students)과 개인 보관함(personal_problems) 데이터를 함께 삭제한다.
+// 이미 있는 탭만 가져온다 (탈퇴 처리 때문에 빈 탭이 새로 만들어지지 않게)
+function existingSheet_(name) {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+}
+
+// 지정한 열(col, 1부터 시작)의 값이 value인 줄을 모두 지운다. 이어진 줄은 한 번에 지운다.
+// 지운 줄 수를 돌려준다.
+function deleteRowsWhere_(sheet, col, value) {
+  if (!sheet) return 0;
+  var vals = readCols_(sheet, col, 1);
+  var removed = 0;
+  var end = -1;  // 지울 덩어리의 끝(시트 줄 번호)
+  for (var i = vals.length - 1; i >= -1; i--) {
+    var hit = i >= 0 && String(vals[i][0]).trim() === value;
+    if (hit && end < 0) end = i + 2;
+    if (!hit && end >= 0) {
+      var start = i + 3;
+      sheet.deleteRows(start, end - start + 1);
+      removed += end - start + 1;
+      end = -1;
+    }
+  }
+  return removed;
+}
+
+// 문제 보관함(archive): 문제는 그대로 두고, 대상 학생 목록과 학생별 구분에서만 그 학생을 뺀다.
+function removeStudentFromArchive_(studentId) {
+  var sheet = existingSheet_('archive');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  getArchiveSheet_();  // 예전 탭에 student_tags 머리글이 없으면 채워 둔다
+  var n = sheet.getLastRow() - 1;
+  var idRange = sheet.getRange(2, ARCHIVE_COL.student_ids + 1, n, 1);
+  var tagRange = sheet.getRange(2, ARCHIVE_COL.student_tags + 1, n, 1);
+  var idVals = idRange.getValues();
+  var tagVals = tagRange.getValues();
+  var changed = 0;
+  for (var i = 0; i < n; i++) {
+    var ids = splitIds_(idVals[i][0]);
+    var at = ids.indexOf(studentId);
+    if (at === -1) continue;
+    ids.splice(at, 1);
+    idVals[i][0] = ids.join(',');
+    var raw = cellStr_(tagVals[i][0]);
+    if (raw) {
+      var obj = {};
+      try { obj = JSON.parse(raw); } catch (err) { obj = {}; }
+      if (obj && typeof obj === 'object') delete obj[studentId];
+      tagVals[i][0] = cleanStudentTags_(obj);
+    }
+    changed++;
+  }
+  if (changed) {
+    idRange.setNumberFormat('@');
+    idRange.setValues(idVals.map(function (r) { return [safeCell_(r[0])]; }));
+    tagRange.setNumberFormat('@');
+    tagRange.setValues(tagVals.map(function (r) { return [safeCell_(r[0])]; }));
+  }
+  return changed;
+}
+
+// 숙제(homework): 여러 명에게 낸 숙제는 그 학생만 빼고, 그 학생에게만 낸 숙제는 지운다.
+// (대상 학생이 비면 "반 전체 숙제"로 바뀌어 버리므로 남겨 두면 안 된다. 문제 자체는 문제 은행에 그대로 있다.)
+function removeStudentFromHomework_(studentId) {
+  var sheet = existingSheet_('homework');
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var col = HW_HEADERS.indexOf('student_ids') + 1;
+  var vals = readCols_(sheet, col, 1);
+  var changed = 0;
+  var drop = [];
+  for (var i = 0; i < vals.length; i++) {
+    var ids = splitIds_(vals[i][0]);
+    var at = ids.indexOf(studentId);
+    if (at === -1) continue;
+    changed++;
+    if (ids.length === 1) { drop.push(i + 2); continue; }
+    ids.splice(at, 1);
+    var cell = sheet.getRange(i + 2, col);
+    cell.setNumberFormat('@');
+    cell.setValue(safeCell_(ids.join(',')));
+  }
+  for (var d = drop.length - 1; d >= 0; d--) sheet.deleteRow(drop[d]);
+  return changed;
+}
+
+// 회원 탈퇴: 학생의 계정과 학생 관련 기록(개인 보관함, 중요 표시, 숙제 결과, 시험 점수, 문제 배정)을 함께 지운다.
+// 문제 은행과 선생님 보관함의 문제 자체는 지우지 않는다 (대상 학생에서만 빠진다).
 // by_admin=true면 선생님이 강제 탈퇴시키는 것이므로 비밀번호 확인을 건너뛴다.
 // by_admin이 없거나 false면 본인 탈퇴이므로 반드시 비밀번호가 일치해야 한다.
-// (선생님 보관함 'archive'의 문제는 선생님 자료이므로 탈퇴해도 지우지 않는다)
 function handleWithdraw_(body) {
   var studentId = String(body.student_id || '').trim();
   if (!studentId) {
@@ -292,45 +376,49 @@ function handleWithdraw_(body) {
   }
   var byAdmin = !!body.by_admin;
 
-  var studentsSheet = getOrCreateSheet_('students', STUDENTS_HEADERS);
-  var data = studentsSheet.getDataRange().getValues();
-  var foundRow = -1;
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]).trim() === studentId) {
-      foundRow = i;
-      break;
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+  } catch (err) {
+    return jsonResponse_({ ok: false, error: "다른 작업이 진행 중입니다. 잠시 후 다시 해 주세요." });
+  }
+  try {
+    var studentsSheet = getOrCreateSheet_('students', STUDENTS_HEADERS);
+    var data = studentsSheet.getDataRange().getValues();
+    var foundRow = -1;
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === studentId) {
+        foundRow = i;
+        break;
+      }
     }
-  }
-  if (foundRow === -1) {
-    return jsonResponse_({ ok: false, error: "학생을 찾을 수 없습니다." });
-  }
-  if (!byAdmin) {
-    var pwHash = String(body.password_hash || '');
-    if (String(data[foundRow][1]) !== pwHash) {
-      return jsonResponse_({ ok: false, error: "비밀번호가 일치하지 않습니다." });
+    if (foundRow === -1) {
+      return jsonResponse_({ ok: false, error: "학생을 찾을 수 없습니다." });
     }
-  }
-  studentsSheet.deleteRow(foundRow + 1);
+    if (!byAdmin) {
+      var pwHash = String(body.password_hash || '');
+      if (String(data[foundRow][1]) !== pwHash) {
+        return jsonResponse_({ ok: false, error: "비밀번호가 일치하지 않습니다." });
+      }
+    }
 
-  // 개인 보관함도 함께 정리 (뒤에서부터 삭제해야 행 번호가 안 꼬임)
-  var personalSheet = getOrCreateSheet_('personal_problems', PERSONAL_HEADERS);
-  var pData = personalSheet.getDataRange().getValues();
-  for (var j = pData.length - 1; j >= 1; j--) {
-    if (String(pData[j][1]) === studentId) {
-      personalSheet.deleteRow(j + 1);
-    }
+    // 학생 기록부터 정리하고, 마지막에 계정을 지운다.
+    // (중간에 실패하면 계정이 남아 있으니 다시 탈퇴를 눌러 이어서 처리할 수 있다)
+    var summary = {
+      personal: deleteRowsWhere_(existingSheet_('personal_problems'), 2, studentId),
+      stars: deleteRowsWhere_(existingSheet_('stars'), 1, studentId),
+      hw_results: deleteRowsWhere_(existingSheet_('hw_results'), 2, studentId),
+      exams: deleteRowsWhere_(existingSheet_('exams'), 2, studentId),
+      archive: removeStudentFromArchive_(studentId),
+      homework: removeStudentFromHomework_(studentId)
+    };
+    studentsSheet.deleteRow(foundRow + 1);
+    return jsonResponse_({ ok: true, removed: summary });
+  } catch (err) {
+    return jsonResponse_({ ok: false, error: String(err) });
+  } finally {
+    lock.releaseLock();
   }
-
-  // 중요 문제 표시도 함께 정리
-  var starSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('stars');
-  if (starSheet) {
-    var sData = readCols_(starSheet, 1, 1);
-    for (var k = sData.length - 1; k >= 0; k--) {
-      if (String(sData[k][0]) === studentId) starSheet.deleteRow(k + 2);
-    }
-  }
-
-  return jsonResponse_({ ok: true });
 }
 
 function handleListStudents_() {
