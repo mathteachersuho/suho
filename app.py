@@ -89,6 +89,8 @@ def _get_json(params, timeout=30):
 def invalidate_reads():
     """쓰기 후 호출: 기억해 둔 읽기 결과를 모두 지워 다음 화면에서 새로 읽게 한다."""
     _cached_get_json.clear()
+    _db_students.clear()
+    _db_status.clear()
     for fn in ("archive_types", "taxonomy_list"):
         f = globals().get(fn)
         if f is not None:
@@ -231,6 +233,47 @@ def hash_password(raw_password):
     return hashlib.sha256((password_salt + raw_password).encode("utf-8")).hexdigest()
 
 
+# ★ 저장 방식 선택: Secrets의 STORAGE_BACKEND = "sheet"(기본, 구글 시트) 또는 "supabase".
+# 기능별로 옮기는 중이라, supabase로 바꾸면 옮겨진 기능만 새 데이터베이스를 쓴다. 문제가 생기면 sheet로 되돌린다.
+def storage_backend():
+    """Secrets의 STORAGE_BACKEND 값. 'sheet'(기본, 지금 방식) 또는 'supabase'."""
+    v = str(st.secrets.get("STORAGE_BACKEND", "sheet") or "sheet").strip().lower()
+    return v if v in ("sheet", "supabase") else "sheet"
+
+
+@st.cache_resource(show_spinner=False)
+def _db_connect(url):
+    return dbconn.Db(url)
+
+
+def _db_url():
+    return str(st.secrets.get("SUPABASE_DB_URL", "") or "").strip()
+
+
+_DB_MISSING = {"ok": False, "error": "데이터베이스 연결 주소(SUPABASE_DB_URL)가 설정되지 않았습니다."}
+
+
+def _db_write(name, *args, **kwargs):
+    """데이터베이스에 쓰기(계정 등). Apps Script와 같은 {"ok": ..., "error": ...} 모양으로 돌려준다."""
+    url = _db_url()
+    if not url:
+        return dict(_DB_MISSING)
+    result = getattr(_db_connect(url), name)(*args, **kwargs)
+    if name != "login":
+        invalidate_reads()
+    return result
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _db_students(url):
+    return _db_connect(url).list_students()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _db_status(url):
+    return _db_connect(url).get_status()
+
+
 def _post_action(payload):
     """Apps Script에 action 기반 POST 요청을 보내는 공통 헬퍼 (계정/보관함용)."""
     if not sheet_url:
@@ -250,6 +293,8 @@ def _post_action(payload):
 
 def student_signup(student_id, password):
     """학생 회원가입. 반은 아직 배정되지 않은 상태(class_id="")로 생성됨."""
+    if storage_backend() == "supabase":
+        return _db_write("signup", student_id, hash_password(password))
     return _post_action({
         "action": "signup",
         "student_id": student_id.strip(),
@@ -259,6 +304,8 @@ def student_signup(student_id, password):
 
 def student_login(student_id, password):
     """학생 로그인. 성공하면 {'ok': True, 'class_id': ...} 반환."""
+    if storage_backend() == "supabase":
+        return _db_write("login", student_id, hash_password(password))
     return _post_action({
         "action": "login",
         "student_id": student_id.strip(),
@@ -268,6 +315,8 @@ def student_login(student_id, password):
 
 def admin_assign_class(student_id, class_id):
     """관리자가 특정 학생에게 반을 배정."""
+    if storage_backend() == "supabase":
+        return bool(_db_write("assign_class", student_id, class_id).get("ok"))
     result = _post_action({
         "action": "assign_class",
         "student_id": student_id,
@@ -278,6 +327,8 @@ def admin_assign_class(student_id, class_id):
 
 def student_withdraw(student_id, password):
     """학생 본인 탈퇴 - 비밀번호 재확인 필요. 계정+개인보관함이 함께 삭제됨."""
+    if storage_backend() == "supabase":
+        return _db_write("withdraw", student_id, hash_password(password), by_admin=False)
     return _post_action({
         "action": "withdraw",
         "student_id": student_id,
@@ -288,6 +339,8 @@ def student_withdraw(student_id, password):
 
 def admin_withdraw_student(student_id):
     """관리자가 특정 학생을 강제 탈퇴 - 비밀번호 확인 없이 즉시 처리. 계정+개인보관함이 함께 삭제됨."""
+    if storage_backend() == "supabase":
+        return bool(_db_write("withdraw", student_id, "", by_admin=True).get("ok"))
     result = _post_action({
         "action": "withdraw",
         "student_id": student_id,
@@ -298,6 +351,14 @@ def admin_withdraw_student(student_id):
 
 def admin_list_students():
     """관리자용 - 전체 학생 아이디와 배정된 반 목록 (비밀번호 해시는 절대 포함 안 됨)."""
+    if storage_backend() == "supabase":
+        if not _db_url():
+            return []
+        try:
+            return _db_students(_db_url())
+        except Exception as e:
+            safe_error("학생 목록을 불러오지 못했어요.", e)
+            return []
     if not sheet_url:
         return []
     try:
@@ -367,6 +428,14 @@ def get_app_status():
     이제는 Apps Script의 스크립트 속성(구글 쪽)에 저장해서, 서버가 몇 번을
     재시작해도 값이 유지되도록 함.
     """
+    if storage_backend() == "supabase":
+        if not _db_url():
+            return "OFF"
+        try:
+            return _db_status(_db_url())
+        except Exception as e:
+            logging.error("앱 상태를 읽지 못했어요: %s", _mask_secrets(e))
+            return "OFF"
     if not sheet_url:
         if os.path.exists(STATUS_FILE):
             with open(STATUS_FILE, "r") as f:
@@ -381,6 +450,11 @@ def get_app_status():
     return "OFF"
 
 def set_app_status(status):
+    if storage_backend() == "supabase":
+        res = _db_write("set_status", status)
+        if not res.get("ok"):
+            st.error(res.get("error", "앱 상태를 바꾸지 못했어요."))
+        return
     if not sheet_url:
         with open(STATUS_FILE, "w") as f:
             f.write(status)
@@ -2153,13 +2227,7 @@ def backup_panel():
 
 
 # 데이터베이스(Supabase) 이전 작업용: 연결 주소가 등록됐는지, 접속되는지, 표가 다 있는지 확인한다.
-# 아직 어떤 기능도 이 데이터베이스를 쓰지 않는다(다음 단계에서 기능별로 옮긴다).
-def storage_backend():
-    """Secrets의 STORAGE_BACKEND 값. 'sheet'(기본, 지금 방식) 또는 'supabase'."""
-    v = str(st.secrets.get("STORAGE_BACKEND", "sheet") or "sheet").strip().lower()
-    return v if v in ("sheet", "supabase") else "sheet"
-
-
+# 기능별로 하나씩 옮기는 중이다(옮긴 기능은 STORAGE_BACKEND 가 supabase 일 때 이 데이터베이스를 쓴다).
 @st.fragment
 def db_panel():
     with st.expander("🗄️ 데이터베이스 연결 확인 (Supabase)"):
@@ -2167,7 +2235,7 @@ def db_panel():
         if not url:
             st.caption("연결 주소(SUPABASE_DB_URL)가 아직 등록되지 않았어요. Streamlit Secrets에 추가하면 여기서 확인할 수 있어요.")
             return
-        st.caption(f"저장 방식 설정: {storage_backend()} (기능별로 옮기는 동안은 sheet를 그대로 둡니다)")
+        st.caption(f"저장 방식 설정: {storage_backend()} (계정·앱 스위치만 옮겨진 상태. 전체를 옮기기 전까지는 sheet를 그대로 둡니다)")
         if st.button("연결 확인", key="db_ping_btn"):
             with st.spinner("연결하는 중..."):
                 res = dbconn.ping(url)
@@ -2182,6 +2250,8 @@ def db_panel():
                 st.warning(f"표 {len(res['found'])}/{total}개만 있어요. 없는 표: {', '.join(res['missing'])}. db/schema.sql 을 SQL Editor에서 실행해 주세요.")
             else:
                 st.caption(f"표 {total}/{total}개 확인")
+            if not res.get("bypass_rls", True):
+                st.error("이 연결 계정은 접근 제한(RLS)을 건너뛸 수 없어서 앱이 데이터를 읽고 쓸 수 없어요. 연결 주소의 사용자가 postgres 계정인지 확인해 주세요.")
             if res["rls_off"]:
                 st.error(f"접근 제한(RLS)이 꺼진 표가 있어요: {', '.join(res['rls_off'])}. db/schema.sql 을 다시 실행해 주세요.")
 
