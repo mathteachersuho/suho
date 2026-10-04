@@ -1813,7 +1813,7 @@ if "auth_student_id" not in st.session_state:
 # 주소창(?s=...)에 붙여 두고, 새로고침 때 그 표를 확인해서 로그인 상태를 되살린다.
 # 표는 Secrets 값으로 서명하므로 위조할 수 없고, ADMIN_PASSWORD를 바꾸면 모든 표가 무효가 된다.
 # ==========================================
-LOGIN_TTL_ADMIN = 12 * 3600        # 선생님: 12시간
+LOGIN_TTL_ADMIN = 2 * 3600         # 선생님: 2시간 (주소를 공유하거나 화면에 띄워도 피해가 오래가지 않게 짧게)
 LOGIN_TTL_STUDENT = 7 * 24 * 3600  # 학생: 7일
 
 _login_key_src = st.secrets.get("LOGIN_SECRET", "") or (sheet_api_token + "|" + admin_pw + "|" + password_salt)
@@ -1854,8 +1854,22 @@ def restore_login_from_token():
     if int(data.get("e", 0)) < time.time():
         clear_login_token()
         return
-    st.session_state.auth_role = data.get("r") or None
-    st.session_state.auth_student_id = data.get("u") or None
+    role = data.get("r") or None
+    student_id = data.get("u") or None
+    if role == "admin" and int(data.get("e", 0)) > time.time() + LOGIN_TTL_ADMIN:
+        # 예전에 12시간으로 발급된 선생님 표는 새 유효 시간(2시간)을 넘으므로 무효로 한다
+        clear_login_token()
+        return
+    if role != "admin":
+        # 학생은 표만 믿지 않고 지금 계정 상태를 다시 확인한다: 탈퇴했으면 무효, 반이 바뀌었으면 새 반으로.
+        # (목록을 못 불러온 경우에도 안전하게 거부하고 다시 로그인하게 한다)
+        current = {str(x.get("student_id", "")): str(x.get("class_id", "")) for x in admin_list_students()}
+        if not student_id or student_id not in current:
+            clear_login_token()
+            return
+        role = current[student_id] or "미배정"
+    st.session_state.auth_role = role
+    st.session_state.auth_student_id = student_id
 
 
 if not st.session_state.auth_role:
