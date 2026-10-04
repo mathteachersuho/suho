@@ -330,6 +330,128 @@ def set_app_status(status):
     _post_action({"action": "set_status", "status": status})
 
 # ==========================================
+# ★ 선생님 문제 보관함 (Apps Script 'archive' 탭 + 구글 드라이브 사진 폴더)
+# 날짜 / 대상 학생 / 학년 › 단원 › 세부 유형 별로 오래 쌓아두고 검색한다.
+# ==========================================
+def _get_action(params, timeout=30):
+    """Apps Script에 GET 요청을 보내는 공통 헬퍼 (보관함 조회용)."""
+    if not sheet_url:
+        return None
+    try:
+        params = dict(params)
+        params["t"] = int(time.time() * 1000)
+        if sheet_api_token:
+            params["token"] = sheet_api_token
+        res = requests.get(sheet_url, params=params, timeout=timeout)
+        if res.status_code == 200:
+            return res.json()
+    except Exception as e:
+        st.error(f"보관함 조회 오류: {e}")
+    return None
+
+
+def archive_save(data):
+    """보관함에 문제 세트 1개 저장. 사진(image_b64)은 Apps Script가 드라이브에 따로 저장한다."""
+    return _post_action(dict(data, action="archive_save"))
+
+
+def archive_delete(prob_id):
+    result = _post_action({"action": "archive_delete", "id": prob_id})
+    return bool(result.get("ok"))
+
+
+def archive_update_students(prob_id, student_ids):
+    result = _post_action({"action": "archive_update_students", "id": prob_id, "student_ids": ",".join(student_ids)})
+    return bool(result.get("ok"))
+
+
+def archive_search(student="", class_id="", grade="", unit="", subtype="",
+                   date_from="", date_to="", keyword="", offset=0, limit=30):
+    """조건에 맞는 보관 문제를 최신순으로 offset부터 limit개. {'items': [...], 'total': n} 반환."""
+    params = {"action": "archive_search", "offset": offset, "limit": limit}
+    for k, v in (("student", student), ("class_id", class_id), ("grade", grade), ("unit", unit),
+                 ("subtype", subtype), ("date_from", date_from), ("date_to", date_to), ("keyword", keyword)):
+        if v:
+            params[k] = v
+    data = _get_action(params, timeout=60)
+    if isinstance(data, dict) and isinstance(data.get("items"), list):
+        return data
+    return {"items": [], "total": 0}
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def archive_types():
+    """지금까지 보관함에 쓰인 (학년, 단원, 세부 유형) 목록과 개수."""
+    data = _get_action({"action": "archive_types"})
+    return data if isinstance(data, list) else []
+
+
+def archive_stats(date_from="", date_to="", class_id=""):
+    params = {"action": "archive_stats"}
+    if date_from:
+        params["date_from"] = date_from
+    if date_to:
+        params["date_to"] = date_to
+    if class_id:
+        params["class_id"] = class_id
+    data = _get_action(params, timeout=60)
+    return data if isinstance(data, list) else []
+
+
+@st.cache_data(ttl=3600, show_spinner=False, max_entries=200)
+def archive_image(file_id):
+    """드라이브에 보관된 원본 사진(base64). 한 번 불러온 사진은 1시간 동안 다시 받지 않는다."""
+    if not file_id:
+        return ""
+    data = _get_action({"action": "archive_image", "file_id": file_id})
+    if isinstance(data, dict) and data.get("ok"):
+        return data.get("image_b64", "")
+    return ""
+
+
+def type_label(t):
+    parts = [t.get("grade", ""), t.get("unit", ""), t.get("subtype", "")]
+    return " › ".join(x for x in parts if x) or "(유형 미지정)"
+
+
+def classify_problem(ocr_text, existing_types, api_key, model_name):
+    """원본 문제를 보고 학년 › 단원 › 세부 유형을 제안. 기존 유형과 같으면 그 이름을 그대로 쓰게 한다."""
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(model_name)
+    existing_lines = "\n".join(f"- {t.get('grade', '')} | {t.get('unit', '')} | {t.get('subtype', '')}" for t in existing_types[:200])
+    prompt = f"""
+    너는 대한민국 중·고등학교 수학 교육과정 전문가야. 아래 문제의 유형을 분류하라.
+
+    [문제]
+    {ocr_text}
+
+    [분류 규칙]
+    - grade: 학년 (예: 중1, 중2, 중3, 고1, 수학I, 수학II, 미적분, 확률과 통계, 기하)
+    - unit: 교과서 단원 이름 (예: 일차방정식, 정수와 유리수, 이차함수, 수열의 극한)
+    - subtype: 그 단원 안의 자세한 문제 유형 (예: 등식의 성질 찾기, 계수가 분수인 일차방정식 풀기)
+    - 아래 [기존 유형 목록]에 같은 유형이 있으면 반드시 그 글자 그대로 사용하라. 없을 때만 새 이름을 만들어라.
+
+    [기존 유형 목록] (학년 | 단원 | 세부 유형)
+    {existing_lines or "(아직 없음)"}
+
+    [출력] 다른 말 없이 JSON 한 줄만 출력하라:
+    {{"grade": "...", "unit": "...", "subtype": "..."}}
+    """
+    res = model.generate_content(prompt)
+    text = res.text.strip()
+    m = re.search(r"\{[\s\S]*\}", text)
+    try:
+        obj = json.loads(m.group(0)) if m else {}
+    except Exception:
+        obj = {}
+    return {
+        "grade": str(obj.get("grade", "")).strip(),
+        "unit": str(obj.get("unit", "")).strip(),
+        "subtype": str(obj.get("subtype", "")).strip(),
+    }
+
+
+# ==========================================
 # ★ 보안 수정: HTML 살균(sanitize) 엔진
 # 구글 시트에서 온 데이터를 그대로 unsafe_allow_html=True로 렌더링하면
 # 악성 스크립트가 저장되어 있을 경우 그대로 실행되는 위험(저장형 XSS)이 있음.
@@ -1158,13 +1280,12 @@ if current_role == "admin" and sheet_url and not sheet_api_token:
 # ==========================================
 # 메인 화면: 탭 구성 (학생으로 로그인 시에만 '내 보관함' 탭 추가)
 # ==========================================
-if current_student_id:
-    _tabs = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기", "📂 내 보관함"])
-    tab1, tab2, tab3 = _tabs[0], _tabs[1], _tabs[2]
+# ★ 수정: 문제는 선생님만 만든다. 학생은 선생님이 저장해 준 문제를 보기만 한다.
+tab2 = tab3 = tab_archive = tab_stats = tab_mine = None
+if current_role == "admin":
+    tab1, tab2, tab_archive, tab_stats = st.tabs(["📋 반 게시판", "📸 문제 만들기", "🗄️ 문제 보관함", "📊 학생별 유형 현황"])
 else:
-    _tabs = st.tabs(["📋 우리 반 게시판", "📸 스스로 문제 만들기"])
-    tab1, tab2 = _tabs[0], _tabs[1]
-    tab3 = None
+    tab1, tab_mine, tab3 = st.tabs(["📋 우리 반 게시판", "📚 선생님이 준 문제", "📂 예전 보관함"])
 
 # ------------------------------------------
 # [탭 1] 학생 게시판 (인쇄 메뉴 기본 숨김 접이식 적용)
@@ -1337,211 +1458,285 @@ with tab1:
 # ------------------------------------------
 # [탭 2] 개인용 문제 생성기 & 화면 직관적 수정 에디터
 # ------------------------------------------
-with tab2:
-    st.subheader("📸 모르는 문제를 찍어 유사 문제를 만드세요")
+if tab2 is not None:
+    with tab2:
+        st.subheader("📸 모르는 문제를 찍어 유사 문제를 만드세요")
     
-    if "ocr_text" not in st.session_state: st.session_state.ocr_text = ""
-    if "similar_problems" not in st.session_state: st.session_state.similar_problems = None
-    if "current_image_b64" not in st.session_state: st.session_state.current_image_b64 = None
+        if "ocr_text" not in st.session_state: st.session_state.ocr_text = ""
+        if "similar_problems" not in st.session_state: st.session_state.similar_problems = None
+        if "current_image_b64" not in st.session_state: st.session_state.current_image_b64 = None
 
-    uploaded_file = st.file_uploader("문제 사진을 찍거나 업로드하세요", type=["png", "jpg", "jpeg"], key="uploader")
+        uploaded_file = st.file_uploader("문제 사진을 찍거나 업로드하세요", type=["png", "jpg", "jpeg"], key="uploader")
 
-    if uploaded_file and st.button("📸 사진에서 수식 추출하기"):
-        with st.spinner("Mathpix AI가 수식을 인식하는 중..."):
-            try:
-                base64_image = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
-                st.session_state.current_image_b64 = base64_image 
-                image_url = f"data:image/jpeg;base64,{base64_image}"
-                
-                headers = {"app_id": mathpix_app_id, "app_key": mathpix_app_key, "Content-type": "application/json"}
-                data = {"src": image_url, "formats": ["text", "latex_styled"]}
-                
-                res = requests.post("https://api.mathpix.com/v3/text", headers=headers, json=data, timeout=60)
-                result_json = res.json()
-                
-                if "text" in result_json:
-                    math_text = result_json["text"]
-                    math_text = re.sub(r'\\\(\s*', '$', math_text); math_text = re.sub(r'\s*\\\)', '$', math_text); math_text = re.sub(r'\\\[\s*', '$$', math_text); math_text = re.sub(r'\s*\\\]', '$$', math_text)
-                    st.session_state.ocr_text = math_text
-                    st.success("수식 및 표 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
-                else:
-                    st.error("인식에 실패했습니다. 다시 시도해 주세요.")
-            except Exception as e:
-                st.error(f"오류가 발생했습니다: {e}")
-
-    if st.session_state.ocr_text:
-        if st.session_state.current_image_b64:
-            st.image(f"data:image/jpeg;base64,{st.session_state.current_image_b64}", caption="[원본 도형 이미지]", use_container_width=True)
-
-        edited_text = st.text_area("도형 조건이나 수식 중 누락된 부분을 수정하세요:", value=st.session_state.ocr_text, height=150)
-        st.session_state.ocr_text = edited_text
-        st.markdown("**수식 및 표 렌더링 미리보기:**")
-        st.markdown(format_math(edited_text), unsafe_allow_html=True)
-        
-        include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
-        
-        if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
-            with st.spinner("AI가 [1번 기본 다지기]와 [2번 실력 키우기]를 동시에 차별화하여 병렬 생성하고 있습니다 (약 3~5초)..."):
+        if uploaded_file and st.button("📸 사진에서 수식 추출하기"):
+            with st.spinner("Mathpix AI가 수식을 인식하는 중..."):
                 try:
-                    solution_instruction = "단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
-                    fast_model = get_fastest_model_name(gemini_api_key)
-                    
-                    with ThreadPoolExecutor(max_workers=2) as executor:
-                        future_p1 = executor.submit(generate_one_problem_async, "1번 기본 다지기 문제", 1, edited_text, solution_instruction, gemini_api_key, fast_model)
-                        future_p2 = executor.submit(generate_one_problem_async, "2번 실력 키우기 문제", 2, edited_text, solution_instruction, gemini_api_key, fast_model)
-                        
-                        p1_res = future_p1.result()
-                        p2_res = future_p2.result()
-                    
-                    st.session_state.similar_problems = [p1_res, p2_res]
-                    st.session_state.edit_ver = st.session_state.get("edit_ver", 0) + 1
-                    st.success("⚡ 차별화된 유사 문제 2개 초고속 병렬 생성 완료!")
+                    base64_image = base64.b64encode(uploaded_file.getvalue()).decode('utf-8')
+                    st.session_state.current_image_b64 = base64_image 
+                    image_url = f"data:image/jpeg;base64,{base64_image}"
+                
+                    headers = {"app_id": mathpix_app_id, "app_key": mathpix_app_key, "Content-type": "application/json"}
+                    data = {"src": image_url, "formats": ["text", "latex_styled"]}
+                
+                    res = requests.post("https://api.mathpix.com/v3/text", headers=headers, json=data, timeout=60)
+                    result_json = res.json()
+                
+                    if "text" in result_json:
+                        math_text = result_json["text"]
+                        math_text = re.sub(r'\\\(\s*', '$', math_text); math_text = re.sub(r'\s*\\\)', '$', math_text); math_text = re.sub(r'\\\[\s*', '$$', math_text); math_text = re.sub(r'\s*\\\]', '$$', math_text)
+                        st.session_state.ocr_text = math_text
+                        st.success("수식 및 표 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
+                    else:
+                        st.error("인식에 실패했습니다. 다시 시도해 주세요.")
                 except Exception as e:
                     st.error(f"오류가 발생했습니다: {e}")
 
-        # ==========================================
-        # ★ 화면에서 직관적으로 수정하는 실시간 인터페이스
-        # ==========================================
-        if st.session_state.similar_problems:
-            st.divider()
-            st.subheader("🎯 생성된 연습 문제")
-            
-            p1 = st.session_state.similar_problems[0]
-            p2 = st.session_state.similar_problems[1]
-            
-            # 관리자(선생님) 전용 과제 등록 바
-            if current_role == "admin":
-                col_post1, col_post2 = st.columns([1, 2])
-                with col_post1:
-                    target_class = st.selectbox("📢 게시할 반 선택", class_list)
-                with col_post2:
-                    st.write("")
-                    st.write("")
-                    if st.button(f"🚀 [{target_class}] 과제 바로 등록하기", type="primary"):
-                        # ★ 수정: 시트 셀 용량 제한(50,000자)에 안전하게 걸리도록
-                        # 저장용 사진만 별도로 압축 (OCR에는 영향 없음 - 이미 인식 끝난 뒤라서)
-                        compressed_b64 = compress_image_for_storage(st.session_state.current_image_b64)
-                        new_prob = {
-                            "id": str(int(time.time() * 1000)),
-                            "class_id": target_class, 
-                            "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "image_b64": compressed_b64,
-                            "q1": p1["question"],
-                            "a1": p1["answer"],
-                            "s1": p1.get("solution", ""),
-                            "q2": p2["question"],
-                            "a2": p2["answer"],
-                            "s2": p2.get("solution", ""),
-                        }
-                        with st.spinner("과제를 등록하는 중..."):
-                            if save_problem(new_prob):
-                                st.success(f"✅ [{target_class}] 과제 등록 완료!")
-                                time.sleep(0.5)
-                            else:
-                                # ★ 수정: 예전에는 실패해도 아무 표시가 없어서
-                                # "분명 등록했는데 게시판에 안 보인다"는 원인 파악이 어려웠음
-                                st.error("❌ 과제 등록에 실패했습니다. 잠시 후 다시 시도해 주세요.")
-                
-                # 빠른 단어·숫자 1초 교체 도구
-                with st.expander("⚡ [빠른 단어·숫자 바꾸기] 화면을 보면서 오타/숫자만 1초 교체", expanded=False):
-                    st.caption("수식 코드를 건드릴 필요 없이, 문제 화면에 보이는 글자나 숫자를 적어주시면 즉시 바뀝니다.")
-                    col_tgt, col_find, col_replace, col_btn = st.columns([1.2, 1.5, 1.5, 1])
-                    with col_tgt:
-                        replace_target_prob = st.selectbox("수정할 문제", ["1번 문제", "2번 문제", "1번+2번 전체"])
-                    with col_find:
-                        find_str = st.text_input("바꿀 대상 (예: (가) 또는 30)", key="find_str")
-                    with col_replace:
-                        replace_str = st.text_input("새로운 값 (예: (나) 또는 25)", key="replace_str")
-                    with col_btn:
-                        st.write("")
-                        st.write("")
-                        if st.button("🔄 바꾸기"):
-                            if find_str:
-                                if "1번" in replace_target_prob or "전체" in replace_target_prob:
-                                    p1["question"] = p1["question"].replace(find_str, replace_str)
-                                    p1["answer"] = p1["answer"].replace(find_str, replace_str)
-                                    p1["solution"] = p1["solution"].replace(find_str, replace_str)
-                                if "2번" in replace_target_prob or "전체" in replace_target_prob:
-                                    p2["question"] = p2["question"].replace(find_str, replace_str)
-                                    p2["answer"] = p2["answer"].replace(find_str, replace_str)
-                                    p2["solution"] = p2["solution"].replace(find_str, replace_str)
-                                st.session_state.edit_ver = st.session_state.get("edit_ver", 0) + 1
-                                st.success(f"'{find_str}' ➔ '{replace_str}' 교체 완료!")
-                                st.rerun()
+        if st.session_state.ocr_text:
+            if st.session_state.current_image_b64:
+                st.image(f"data:image/jpeg;base64,{st.session_state.current_image_b64}", caption="[원본 도형 이미지]", use_container_width=True)
 
-            # ★ 수정: 학생으로 로그인한 경우, 게시판 등록 대신 개인 보관함에 저장하는 버튼 제공
-            elif current_student_id:
-                if st.button("💾 내 보관함에 저장", type="primary"):
-                    compressed_b64 = compress_image_for_storage(st.session_state.current_image_b64)
-                    payload = build_personal_payload(
-                        student_id=current_student_id,
-                        class_id=current_role if current_role != "미배정" else "",
-                        source="self",
-                        origin_id="",
-                        q1=p1["question"], a1=p1["answer"], s1=p1.get("solution", ""),
-                        q2=p2["question"], a2=p2["answer"], s2=p2.get("solution", ""),
-                        image_b64=compressed_b64,
-                    )
-                    with st.spinner("내 보관함에 저장하는 중..."):
-                        if save_personal_problem(payload):
-                            st.success("✅ 내 보관함에 저장했어요! '내 보관함' 탭에서 다시 볼 수 있어요.")
+            edited_text = st.text_area("도형 조건이나 수식 중 누락된 부분을 수정하세요:", value=st.session_state.ocr_text, height=150)
+            st.session_state.ocr_text = edited_text
+            st.markdown("**수식 및 표 렌더링 미리보기:**")
+            st.markdown(format_math(edited_text), unsafe_allow_html=True)
+        
+            include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
+        
+            if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
+                with st.spinner("AI가 [1번 기본 다지기]와 [2번 실력 키우기]를 동시에 차별화하여 병렬 생성하고 있습니다 (약 3~5초)..."):
+                    try:
+                        solution_instruction = "단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
+                        fast_model = get_fastest_model_name(gemini_api_key)
+                    
+                        existing_types = archive_types()
+                        with ThreadPoolExecutor(max_workers=3) as executor:
+                            future_p1 = executor.submit(generate_one_problem_async, "1번 기본 다지기 문제", 1, edited_text, solution_instruction, gemini_api_key, fast_model)
+                            future_p2 = executor.submit(generate_one_problem_async, "2번 실력 키우기 문제", 2, edited_text, solution_instruction, gemini_api_key, fast_model)
+                            # 보관함 저장용 유형(학년 › 단원 › 세부 유형)도 동시에 AI가 제안
+                            future_type = executor.submit(classify_problem, edited_text, existing_types, gemini_api_key, fast_model)
+                        
+                            p1_res = future_p1.result()
+                            p2_res = future_p2.result()
+                            try:
+                                st.session_state.suggested_type = future_type.result()
+                            except Exception:
+                                # 유형 제안이 실패해도 문제 생성 결과는 그대로 쓴다 (선생님이 직접 입력)
+                                st.session_state.suggested_type = None
+                    
+                        st.session_state.similar_problems = [p1_res, p2_res]
+                        st.session_state.edit_ver = st.session_state.get("edit_ver", 0) + 1
+                        st.success("⚡ 차별화된 유사 문제 2개 초고속 병렬 생성 완료!")
+                    except Exception as e:
+                        st.error(f"오류가 발생했습니다: {e}")
+
+            # ==========================================
+            # ★ 화면에서 직관적으로 수정하는 실시간 인터페이스
+            # ==========================================
+            if st.session_state.similar_problems:
+                st.divider()
+                st.subheader("🎯 생성된 연습 문제")
+            
+                p1 = st.session_state.similar_problems[0]
+                p2 = st.session_state.similar_problems[1]
+            
+                # 관리자(선생님) 전용 과제 등록 바
+                if current_role == "admin":
+                    col_post1, col_post2 = st.columns([1, 2])
+                    with col_post1:
+                        target_class = st.selectbox("📢 게시할 반 선택", class_list)
+                    with col_post2:
+                        st.write("")
+                        st.write("")
+                        if st.button(f"🚀 [{target_class}] 과제 바로 등록하기", type="primary"):
+                            # ★ 수정: 시트 셀 용량 제한(50,000자)에 안전하게 걸리도록
+                            # 저장용 사진만 별도로 압축 (OCR에는 영향 없음 - 이미 인식 끝난 뒤라서)
+                            compressed_b64 = compress_image_for_storage(st.session_state.current_image_b64)
+                            new_prob = {
+                                "id": str(int(time.time() * 1000)),
+                                "class_id": target_class, 
+                                "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                                "image_b64": compressed_b64,
+                                "q1": p1["question"],
+                                "a1": p1["answer"],
+                                "s1": p1.get("solution", ""),
+                                "q2": p2["question"],
+                                "a2": p2["answer"],
+                                "s2": p2.get("solution", ""),
+                            }
+                            with st.spinner("과제를 등록하는 중..."):
+                                if save_problem(new_prob):
+                                    st.success(f"✅ [{target_class}] 과제 등록 완료!")
+                                    time.sleep(0.5)
+                                else:
+                                    # ★ 수정: 예전에는 실패해도 아무 표시가 없어서
+                                    # "분명 등록했는데 게시판에 안 보인다"는 원인 파악이 어려웠음
+                                    st.error("❌ 과제 등록에 실패했습니다. 잠시 후 다시 시도해 주세요.")
+                
+                    # 빠른 단어·숫자 1초 교체 도구
+                    with st.expander("⚡ [빠른 단어·숫자 바꾸기] 화면을 보면서 오타/숫자만 1초 교체", expanded=False):
+                        st.caption("수식 코드를 건드릴 필요 없이, 문제 화면에 보이는 글자나 숫자를 적어주시면 즉시 바뀝니다.")
+                        col_tgt, col_find, col_replace, col_btn = st.columns([1.2, 1.5, 1.5, 1])
+                        with col_tgt:
+                            replace_target_prob = st.selectbox("수정할 문제", ["1번 문제", "2번 문제", "1번+2번 전체"])
+                        with col_find:
+                            find_str = st.text_input("바꿀 대상 (예: (가) 또는 30)", key="find_str")
+                        with col_replace:
+                            replace_str = st.text_input("새로운 값 (예: (나) 또는 25)", key="replace_str")
+                        with col_btn:
+                            st.write("")
+                            st.write("")
+                            if st.button("🔄 바꾸기"):
+                                if find_str:
+                                    if "1번" in replace_target_prob or "전체" in replace_target_prob:
+                                        p1["question"] = p1["question"].replace(find_str, replace_str)
+                                        p1["answer"] = p1["answer"].replace(find_str, replace_str)
+                                        p1["solution"] = p1["solution"].replace(find_str, replace_str)
+                                    if "2번" in replace_target_prob or "전체" in replace_target_prob:
+                                        p2["question"] = p2["question"].replace(find_str, replace_str)
+                                        p2["answer"] = p2["answer"].replace(find_str, replace_str)
+                                        p2["solution"] = p2["solution"].replace(find_str, replace_str)
+                                    st.session_state.edit_ver = st.session_state.get("edit_ver", 0) + 1
+                                    st.success(f"'{find_str}' ➔ '{replace_str}' 교체 완료!")
+                                    st.rerun()
+
+                # 1번 문제 카드
+                with st.container():
+                    st.markdown("### [문제 1] 기본 다지기")
+                    st.markdown(format_math(p1.get("question", "")), unsafe_allow_html=True)
+                
+                    with st.expander("🔍 1번 정답 및 풀이 확인"):
+                        st.markdown(f"**정답:** {format_math(p1.get('answer', ''))}", unsafe_allow_html=True)
+                        if p1.get("solution"):
+                            st.markdown(f"**풀이:**\n\n{format_math(p1.get('solution', ''))}", unsafe_allow_html=True)
+                
+                    if current_role == "admin":
+                        if st.checkbox("✏️ 1번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p1"):
+                            p1_q_new = st.text_area("1번 지문 내용:", value=p1.get("question", ""), key=f"inline_p1_q_{st.session_state.get('edit_ver', 0)}", height=120)
+                            col_a1, col_s1 = st.columns([1, 2])
+                            with col_a1:
+                                p1_a_new = st.text_input("1번 정답:", value=p1.get("answer", ""), key=f"inline_p1_a_{st.session_state.get('edit_ver', 0)}")
+                            with col_s1:
+                                p1_s_new = st.text_area("1번 풀이:", value=p1.get("solution", ""), key=f"inline_p1_s_{st.session_state.get('edit_ver', 0)}", height=120)
+                        
+                            p1["question"] = p1_q_new
+                            p1["answer"] = p1_a_new
+                            p1["solution"] = p1_s_new
+                st.divider()
+
+                # 2번 문제 카드
+                with st.container():
+                    st.markdown("### [문제 2] 실력 키우기")
+                    st.markdown(format_math(p2.get("question", "")), unsafe_allow_html=True)
+                
+                    with st.expander("🔍 2번 정답 및 풀이 확인"):
+                        st.markdown(f"**정답:** {format_math(p2.get('answer', ''))}", unsafe_allow_html=True)
+                        if p2.get("solution"):
+                            st.markdown(f"**풀이:**\n\n{format_math(p2.get('solution', ''))}", unsafe_allow_html=True)
+                
+                    if current_role == "admin":
+                        if st.checkbox("✏️ 2번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p2"):
+                            p2_q_new = st.text_area("2번 지문 내용:", value=p2.get("question", ""), key=f"inline_p2_q_{st.session_state.get('edit_ver', 0)}", height=120)
+                            col_a2, col_s2 = st.columns([1, 2])
+                            with col_a2:
+                                p2_a_new = st.text_input("2번 정답:", value=p2.get("answer", ""), key=f"inline_p2_a_{st.session_state.get('edit_ver', 0)}")
+                            with col_s2:
+                                p2_s_new = st.text_area("2번 풀이:", value=p2.get("solution", ""), key=f"inline_p2_s_{st.session_state.get('edit_ver', 0)}", height=120)
+                        
+                            p2["question"] = p2_q_new
+                            p2["answer"] = p2_a_new
+                            p2["solution"] = p2_s_new
+                st.write("")
+                st.divider()
+                # ==========================================
+                # ★ 선생님 문제 보관함에 저장 (날짜 / 학생 / 유형)
+                # ==========================================
+                st.subheader("🗄️ 문제 보관함에 저장")
+                st.caption("위에서 확인·수정한 문제를 날짜, 대상 학생, 유형과 함께 오래 보관합니다. 원본 사진은 구글 드라이브에 따로 저장돼요.")
+
+                _ver = st.session_state.get("edit_ver", 0)
+                _sug = st.session_state.get("suggested_type") or {}
+                for _k in ("grade", "unit", "subtype"):
+                    _key = f"arch_{_k}_{_ver}"
+                    if _key not in st.session_state:
+                        st.session_state[_key] = _sug.get(_k, "")
+
+                _types = archive_types()
+                _type_options = ["(AI 제안 / 직접 입력)"] + [type_label(t) for t in _types]
+
+                def _apply_existing_type():
+                    choice = st.session_state.get(f"arch_pick_type_{_ver}")
+                    for t in _types:
+                        if type_label(t) == choice:
+                            st.session_state[f"arch_grade_{_ver}"] = t.get("grade", "")
+                            st.session_state[f"arch_unit_{_ver}"] = t.get("unit", "")
+                            st.session_state[f"arch_subtype_{_ver}"] = t.get("subtype", "")
+                            break
+
+                st.selectbox("기존 유형에서 고르기", _type_options, key=f"arch_pick_type_{_ver}", on_change=_apply_existing_type)
+                col_g, col_u, col_s = st.columns([1, 1.4, 2])
+                with col_g:
+                    st.text_input("학년", key=f"arch_grade_{_ver}")
+                with col_u:
+                    st.text_input("단원", key=f"arch_unit_{_ver}")
+                with col_s:
+                    st.text_input("세부 유형", key=f"arch_subtype_{_ver}")
+                if _sug:
+                    st.caption(f"🤖 AI 제안: {type_label(_sug)}")
+
+                _all_students = admin_list_students()
+                col_cls, col_date = st.columns([1, 1])
+                with col_cls:
+                    _cls_filter = st.selectbox("학생 목록 반 필터", ["전체"] + class_list, key="arch_cls_filter")
+                with col_date:
+                    _arch_date = st.date_input("날짜", value=datetime.date.today(), key="arch_date")
+                _student_options = [s.get("student_id", "") for s in _all_students
+                                    if _cls_filter == "전체" or s.get("class_id", "") == _cls_filter]
+                _picked_students = st.multiselect("대상 학생 (여러 명 선택 가능, 비워두면 학생 미지정)", _student_options, key=f"arch_students_{_ver}")
+                _memo = st.text_input("메모 (선택)", key=f"arch_memo_{_ver}", placeholder="예: 3단계 이항에서 부호 실수")
+
+                if st.button("🗄️ 보관함에 저장하기", type="primary", key=f"arch_save_btn_{_ver}"):
+                    _grade = st.session_state.get(f"arch_grade_{_ver}", "").strip()
+                    _unit = st.session_state.get(f"arch_unit_{_ver}", "").strip()
+                    _subtype = st.session_state.get(f"arch_subtype_{_ver}", "").strip()
+                    if not (_unit and _subtype):
+                        st.warning("단원과 세부 유형을 입력해 주세요. 나중에 유형별로 찾을 때 필요해요.")
+                    else:
+                        _class_of = {s.get("student_id", ""): s.get("class_id", "") for s in _all_students}
+                        _classes = {_class_of.get(sid, "") for sid in _picked_students}
+                        if len(_classes) == 1:
+                            _arch_class = _classes.pop()
+                        elif not _picked_students and _cls_filter != "전체":
+                            _arch_class = _cls_filter
                         else:
-                            st.error("❌ 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.")
+                            _arch_class = ""
+                        _payload = {
+                            "id": f"{int(time.time() * 1000)}",
+                            "date": _arch_date.strftime("%Y-%m-%d") + datetime.datetime.now().strftime(" %H:%M"),
+                            "student_ids": ",".join(_picked_students),
+                            "class_id": _arch_class,
+                            "grade": _grade, "unit": _unit, "subtype": _subtype,
+                            "source_text": st.session_state.ocr_text,
+                            "image_b64": compress_image_for_storage(st.session_state.current_image_b64, max_dimension=1400, max_chars=3_000_000),
+                            "q1": p1["question"], "a1": p1["answer"], "s1": p1.get("solution", ""),
+                            "q2": p2["question"], "a2": p2["answer"], "s2": p2.get("solution", ""),
+                            "memo": _memo,
+                        }
+                        with st.spinner("보관함에 저장하는 중..."):
+                            _result = archive_save(_payload)
+                        if _result.get("ok"):
+                            archive_types.clear()
+                            _who = ", ".join(_picked_students) if _picked_students else "학생 미지정"
+                            st.success(f"✅ 보관 완료! ({_payload['date'][:10]} · {_who} · {_grade} › {_unit} › {_subtype})")
+                        else:
+                            st.error(f"❌ 보관에 실패했습니다: {_result.get('error', '알 수 없는 오류')}")
 
-            # 1번 문제 카드
-            with st.container():
-                st.markdown("### [문제 1] 기본 다지기")
-                st.markdown(format_math(p1.get("question", "")), unsafe_allow_html=True)
-                
-                with st.expander("🔍 1번 정답 및 풀이 확인"):
-                    st.markdown(f"**정답:** {format_math(p1.get('answer', ''))}", unsafe_allow_html=True)
-                    if p1.get("solution"):
-                        st.markdown(f"**풀이:**\n\n{format_math(p1.get('solution', ''))}", unsafe_allow_html=True)
-                
-                if current_role == "admin":
-                    if st.checkbox("✏️ 1번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p1"):
-                        p1_q_new = st.text_area("1번 지문 내용:", value=p1.get("question", ""), key=f"inline_p1_q_{st.session_state.get('edit_ver', 0)}", height=120)
-                        col_a1, col_s1 = st.columns([1, 2])
-                        with col_a1:
-                            p1_a_new = st.text_input("1번 정답:", value=p1.get("answer", ""), key=f"inline_p1_a_{st.session_state.get('edit_ver', 0)}")
-                        with col_s1:
-                            p1_s_new = st.text_area("1번 풀이:", value=p1.get("solution", ""), key=f"inline_p1_s_{st.session_state.get('edit_ver', 0)}", height=120)
-                        
-                        p1["question"] = p1_q_new
-                        p1["answer"] = p1_a_new
-                        p1["solution"] = p1_s_new
-            st.divider()
-
-            # 2번 문제 카드
-            with st.container():
-                st.markdown("### [문제 2] 실력 키우기")
-                st.markdown(format_math(p2.get("question", "")), unsafe_allow_html=True)
-                
-                with st.expander("🔍 2번 정답 및 풀이 확인"):
-                    st.markdown(f"**정답:** {format_math(p2.get('answer', ''))}", unsafe_allow_html=True)
-                    if p2.get("solution"):
-                        st.markdown(f"**풀이:**\n\n{format_math(p2.get('solution', ''))}", unsafe_allow_html=True)
-                
-                if current_role == "admin":
-                    if st.checkbox("✏️ 2번 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p2"):
-                        p2_q_new = st.text_area("2번 지문 내용:", value=p2.get("question", ""), key=f"inline_p2_q_{st.session_state.get('edit_ver', 0)}", height=120)
-                        col_a2, col_s2 = st.columns([1, 2])
-                        with col_a2:
-                            p2_a_new = st.text_input("2번 정답:", value=p2.get("answer", ""), key=f"inline_p2_a_{st.session_state.get('edit_ver', 0)}")
-                        with col_s2:
-                            p2_s_new = st.text_area("2번 풀이:", value=p2.get("solution", ""), key=f"inline_p2_s_{st.session_state.get('edit_ver', 0)}", height=120)
-                        
-                        p2["question"] = p2_q_new
-                        p2["answer"] = p2_a_new
-                        p2["solution"] = p2_s_new
-            st.write("")
 
 # ------------------------------------------
 # [탭 3] 내 보관함 (학생으로 로그인한 경우에만 존재)
 # ------------------------------------------
 if tab3:
     with tab3:
-        st.subheader("📂 내 보관함")
+        st.subheader("📂 예전 보관함")
         st.caption("스스로 만들어서 저장한 문제와, 게시판에서 저장해온 문제를 여기서 다시 볼 수 있어요.")
 
         sub_self, sub_board = st.tabs(["🖊️ 내가 만든 문제", "🔖 게시판에서 저장한 문제"])
@@ -1550,7 +1745,7 @@ if tab3:
             with st.spinner("불러오는 중..."):
                 my_self_items = fetch_personal_problems(current_student_id, source="self")
             if not my_self_items:
-                st.info("아직 스스로 만들어서 저장한 문제가 없어요. '스스로 문제 만들기' 탭에서 만들고 저장해보세요!")
+                st.info("아직 스스로 만들어서 저장한 문제가 없어요. 이제는 선생님이 '선생님이 준 문제' 탭에 문제를 저장해 줘요.")
             else:
                 my_self_items = sorted(my_self_items, key=lambda x: x.get("date", ""), reverse=True)
                 for p in my_self_items:
@@ -1565,3 +1760,229 @@ if tab3:
                 my_board_items = sorted(my_board_items, key=lambda x: x.get("date", ""), reverse=True)
                 for p in my_board_items:
                     render_personal_item(p, current_student_id)
+
+
+# ==========================================
+# ★ 보관 문제 화면 공통 부품
+# ==========================================
+def render_archive_problem_body(p, key_prefix):
+    """보관 문제 1개의 원본 사진(요청 시) / 1번 / 2번 / 정답·풀이를 그린다."""
+    if p.get("image_file_id"):
+        if st.checkbox("🖼️ 원본 사진 보기", key=f"{key_prefix}_img_{p.get('id')}"):
+            img = archive_image(p["image_file_id"])
+            if img:
+                st.image(f"data:image/jpeg;base64,{img}", use_container_width=True)
+            else:
+                st.caption("사진을 불러오지 못했습니다.")
+    st.markdown("**[문제 1] 기본 다지기**")
+    st.markdown(format_math(p.get("q1", "")), unsafe_allow_html=True)
+    st.markdown("**[문제 2] 실력 키우기**")
+    st.markdown(format_math(p.get("q2", "")), unsafe_allow_html=True)
+    with st.expander("🔍 정답 및 풀이"):
+        st.markdown(f"**1번 정답:** {format_math(p.get('a1', ''))}", unsafe_allow_html=True)
+        if p.get("s1"):
+            st.markdown(f"**1번 풀이:**\n\n{format_math(p.get('s1', ''))}", unsafe_allow_html=True)
+        st.markdown(f"**2번 정답:** {format_math(p.get('a2', ''))}", unsafe_allow_html=True)
+        if p.get("s2"):
+            st.markdown(f"**2번 풀이:**\n\n{format_math(p.get('s2', ''))}", unsafe_allow_html=True)
+
+
+def _type_filter_widgets(types, key_prefix):
+    """학년 → 단원 → 세부 유형 순서로 좁혀 가는 선택 상자 3개. (grade, unit, subtype) 반환."""
+    col1, col2, col3 = st.columns([1, 1.3, 1.7])
+    with col1:
+        grades = sorted({t.get("grade", "") for t in types if t.get("grade")})
+        grade = st.selectbox("학년", ["전체"] + grades, key=f"{key_prefix}_grade")
+    with col2:
+        units = sorted({t.get("unit", "") for t in types
+                        if t.get("unit") and (grade == "전체" or t.get("grade") == grade)})
+        unit = st.selectbox("단원", ["전체"] + units, key=f"{key_prefix}_unit")
+    with col3:
+        subs = sorted({t.get("subtype", "") for t in types
+                       if t.get("subtype") and (grade == "전체" or t.get("grade") == grade)
+                       and (unit == "전체" or t.get("unit") == unit)})
+        subtype = st.selectbox("세부 유형", ["전체"] + subs, key=f"{key_prefix}_subtype")
+    norm = lambda v: "" if v == "전체" else v
+    return norm(grade), norm(unit), norm(subtype)
+
+
+# ------------------------------------------
+# [선생님] 문제 보관함 검색 / 인쇄 / 관리
+# ------------------------------------------
+if tab_archive is not None:
+    with tab_archive:
+        st.subheader("🗄️ 문제 보관함")
+        _types_all = archive_types()
+        _students_all = admin_list_students()
+
+        col_d, col_c, col_st = st.columns([1.4, 1, 1.2])
+        with col_d:
+            _range = st.date_input(
+                "기간",
+                value=(datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()),
+                key="ab_range",
+            )
+        with col_c:
+            _ab_class = st.selectbox("반", ["전체"] + class_list, key="ab_class")
+        with col_st:
+            _ab_student_opts = [s.get("student_id", "") for s in _students_all
+                                if _ab_class == "전체" or s.get("class_id", "") == _ab_class]
+            _ab_student = st.selectbox("학생", ["전체"] + _ab_student_opts, key="ab_student")
+        _ab_grade, _ab_unit, _ab_subtype = _type_filter_widgets(_types_all, "ab")
+        _ab_keyword = st.text_input("🔎 문제 내용·메모 검색어", key="ab_keyword")
+
+        if isinstance(_range, (tuple, list)) and len(_range) == 2:
+            _ab_from, _ab_to = _range[0].strftime("%Y-%m-%d"), _range[1].strftime("%Y-%m-%d")
+        elif isinstance(_range, (tuple, list)) and len(_range) == 1:
+            _ab_from = _ab_to = _range[0].strftime("%Y-%m-%d")
+        else:
+            _ab_from = _ab_to = ""
+
+        _filters = dict(
+            student="" if _ab_student == "전체" else _ab_student,
+            class_id="" if _ab_class == "전체" else _ab_class,
+            grade=_ab_grade, unit=_ab_unit, subtype=_ab_subtype,
+            date_from=_ab_from, date_to=_ab_to, keyword=_ab_keyword.strip(),
+        )
+        # 조건이 바뀌면 '더 보기' 개수를 처음으로 되돌린다
+        _sig = json.dumps(_filters, sort_keys=True, ensure_ascii=False)
+        if st.session_state.get("ab_sig") != _sig:
+            st.session_state.ab_sig = _sig
+            st.session_state.ab_limit = 20
+
+        with st.spinner("보관함을 검색하는 중..."):
+            _res = archive_search(**_filters, limit=st.session_state.ab_limit)
+        _items = _res["items"]
+        st.caption(f"검색 결과 {_res['total']}개 중 {len(_items)}개 표시")
+
+        if _items:
+            with st.expander("🖨️ 검색 결과 시험지로 인쇄하기", expanded=False):
+                _labels = {f"{p.get('date', '')[:10]} · {p.get('student_ids') or '학생 미지정'} · {type_label(p)}  [{p.get('id')}]": p for p in _items}
+                _sel = st.multiselect("인쇄할 문제", list(_labels.keys()), default=list(_labels.keys()), key="ab_print_sel")
+                _sel_items = [_labels[k] for k in _sel]
+                if _sel_items:
+                    _title = st.text_input("시험지 제목", value=f"수학 유사문제 ({_ab_from} ~ {_ab_to})", key="ab_print_title")
+                    st.download_button(
+                        f"📥 선택한 {len(_sel_items)}개 인쇄용 파일 받기",
+                        data=make_printable_html(_title, _sel_items),
+                        file_name="보관함_시험지.html", mime="text/html", key="ab_print_dl", type="primary",
+                    )
+
+        for p in _items:
+            _head = f"📅 {p.get('date', '')} · 👤 {p.get('student_ids') or '학생 미지정'} · 🏷️ {type_label(p)}"
+            with st.expander(_head):
+                if p.get("memo"):
+                    st.info(f"📝 {p['memo']}")
+                render_archive_problem_body(p, "ab")
+                st.markdown("---")
+                col_e1, col_e2 = st.columns([3, 1])
+                with col_e1:
+                    _cur = [x for x in (p.get("student_ids") or "").split(",") if x]
+                    _opts = sorted(set([s.get("student_id", "") for s in _students_all] + _cur))
+                    _new = st.multiselect("대상 학생 바꾸기", _opts, default=_cur, key=f"ab_stu_{p.get('id')}")
+                    if st.button("저장", key=f"ab_stu_save_{p.get('id')}"):
+                        if archive_update_students(p.get("id"), _new):
+                            st.success("대상 학생을 바꿨습니다.")
+                            st.rerun()
+                        else:
+                            st.error("변경에 실패했습니다.")
+                with col_e2:
+                    _confirm = st.checkbox("삭제 확인", key=f"ab_del_chk_{p.get('id')}")
+                    if st.button("🗑️ 삭제", key=f"ab_del_{p.get('id')}", disabled=not _confirm):
+                        if archive_delete(p.get("id")):
+                            archive_types.clear()
+                            st.success("삭제했습니다.")
+                            st.rerun()
+                        else:
+                            st.error("삭제에 실패했습니다.")
+
+        if len(_items) < _res["total"]:
+            if st.button("⬇️ 더 보기", key="ab_more"):
+                st.session_state.ab_limit += 20
+                st.rerun()
+
+
+# ------------------------------------------
+# [선생님] 학생별 유형 현황
+# ------------------------------------------
+if tab_stats is not None:
+    with tab_stats:
+        import pandas as pd
+        st.subheader("📊 학생별 유형 현황")
+        st.caption("기간 안에 학생마다 어떤 유형의 문제를 몇 세트 받았는지 보여줍니다.")
+        col_sd, col_sc = st.columns([1.4, 1])
+        with col_sd:
+            _srange = st.date_input(
+                "기간",
+                value=(datetime.date.today() - datetime.timedelta(days=90), datetime.date.today()),
+                key="st_range",
+            )
+        with col_sc:
+            _st_class = st.selectbox("반", ["전체"] + class_list, key="st_class")
+        if isinstance(_srange, (tuple, list)) and len(_srange) == 2:
+            _st_from, _st_to = _srange[0].strftime("%Y-%m-%d"), _srange[1].strftime("%Y-%m-%d")
+        else:
+            _st_from = _st_to = ""
+
+        with st.spinner("집계하는 중..."):
+            _rows = archive_stats(_st_from, _st_to, "" if _st_class == "전체" else _st_class)
+
+        if not _rows:
+            st.info("이 기간에 보관된 문제가 없습니다.")
+        else:
+            _df = pd.DataFrame(_rows)
+            _df["유형"] = _df.apply(lambda r: " › ".join(x for x in [r["unit"], r["subtype"]] if x) or "(유형 미지정)", axis=1)
+            _level = st.radio("묶는 단위", ["세부 유형", "단원"], horizontal=True, key="st_level")
+            _col = "유형" if _level == "세부 유형" else "unit"
+            _pivot = _df.pivot_table(index="student_id", columns=_col, values="count", aggfunc="sum", fill_value=0)
+            _pivot["합계"] = _pivot.sum(axis=1)
+            _pivot = _pivot.sort_values("합계", ascending=False)
+            _pivot.index.name = "학생"
+            st.dataframe(_pivot, use_container_width=True)
+
+            st.markdown("##### 👤 학생 한 명 자세히 보기")
+            _one = st.selectbox("학생", sorted(_df["student_id"].unique()), key="st_one")
+            _detail = (_df[_df["student_id"] == _one]
+                       [["grade", "unit", "subtype", "count", "last_date"]]
+                       .rename(columns={"grade": "학년", "unit": "단원", "subtype": "세부 유형",
+                                        "count": "세트 수", "last_date": "마지막 날짜"})
+                       .sort_values("세트 수", ascending=False))
+            st.dataframe(_detail, use_container_width=True, hide_index=True)
+            st.download_button(
+                "📥 현황표 CSV로 받기",
+                data=_pivot.to_csv().encode("utf-8-sig"),
+                file_name=f"학생별_유형현황_{_st_from}_{_st_to}.csv",
+                mime="text/csv",
+                key="st_csv",
+            )
+
+
+# ------------------------------------------
+# [학생] 선생님이 나에게 준 문제
+# ------------------------------------------
+if tab_mine is not None:
+    with tab_mine:
+        st.subheader("📚 선생님이 준 문제")
+        if "mine_limit" not in st.session_state:
+            st.session_state.mine_limit = 30
+        with st.spinner("불러오는 중..."):
+            _mres = archive_search(student=current_student_id, limit=st.session_state.mine_limit)
+        _mitems = _mres["items"]
+        if not _mitems:
+            st.info("아직 선생님이 저장해 준 문제가 없어요.")
+        else:
+            _my_types = sorted({type_label(p) for p in _mitems})
+            _pick = st.selectbox("유형으로 보기", ["전체"] + _my_types, key="mine_type")
+            _shown = [p for p in _mitems if _pick == "전체" or type_label(p) == _pick]
+            _by_date = {}
+            for p in _shown:
+                _by_date.setdefault(p.get("date", "")[:10], []).append(p)
+            for _d, _plist in _by_date.items():
+                st.markdown(f"#### 📅 {_d}")
+                for p in _plist:
+                    with st.expander(f"🏷️ {type_label(p)}"):
+                        render_archive_problem_body(p, "mine")
+            if len(_mitems) < _mres["total"]:
+                if st.button("⬇️ 이전 문제 더 보기", key="mine_more"):
+                    st.session_state.mine_limit += 30
+                    st.rerun()
