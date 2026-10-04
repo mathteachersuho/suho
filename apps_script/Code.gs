@@ -61,6 +61,32 @@ function jsonResponse_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
+// ----- 동시에 여러 요청이 들어와도 시트가 꼬이지 않게 하는 잠금 도구 -----
+function lockBusy_() {
+  return jsonResponse_({ ok: false, error: "다른 작업이 진행 중입니다. 잠시 후 다시 해 주세요." });
+}
+
+// 잠금을 기다린다. 시간 안에 못 잡으면 예외 대신 false (앱에 깨진 응답이 가지 않게 한다)
+function waitLockOk_(lock, ms) {
+  try {
+    lock.waitLock(ms);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+// 읽고-고치고-쓰는 작업을 한 번에 한 요청씩만 하도록 잠금 안에서 실행한다
+function locked_(fn) {
+  var lock = LockService.getScriptLock();
+  if (!waitLockOk_(lock, 25000)) return lockBusy_();
+  try {
+    return fn();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 // 이름으로 시트를 찾고, 없으면 헤더와 함께 새로 만든다 (학생/개인보관함 탭용)
 function getOrCreateSheet_(name, headers) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -102,6 +128,14 @@ function doGet(e) {
     return authError_();
   }
 
+  try {
+    return routeGet_(e);
+  } catch (err) {
+    return jsonResponse_({ error: "server_error", detail: String(err) });
+  }
+}
+
+function routeGet_(e) {
   var action = e.parameter && e.parameter.action;
   var sheetParam = e.parameter && e.parameter.sheet;
 
@@ -141,13 +175,21 @@ function doPost(e) {
     return authError_();
   }
 
+  try {
+    return routePost_(body);
+  } catch (err) {
+    return jsonResponse_({ ok: false, error: String(err) });
+  }
+}
+
+function routePost_(body) {
   var action = body.action;
-  if (action === 'signup') return handleSignup_(body);
+  if (action === 'signup') return locked_(function () { return handleSignup_(body); });
   if (action === 'login') return handleLogin_(body);
-  if (action === 'assign_class') return handleAssignClass_(body);
+  if (action === 'assign_class') return locked_(function () { return handleAssignClass_(body); });
   if (action === 'withdraw') return handleWithdraw_(body);
-  if (action === 'save_personal') return handleSavePersonal_(body);
-  if (action === 'delete_personal') return handleDeletePersonal_(body);
+  if (action === 'save_personal') return locked_(function () { return handleSavePersonal_(body); });
+  if (action === 'delete_personal') return locked_(function () { return handleDeletePersonal_(body); });
   if (action === 'set_status') return handleSetStatus_(body);
   if (action === 'archive_save') return handleArchiveSave_(body);
   if (action === 'archive_delete') return handleArchiveDelete_(body);
@@ -169,8 +211,8 @@ function doPost(e) {
   if (action === 'exam_save') return handleExamSave_(body);
   if (action === 'exam_delete') return handleExamDelete_(body);
   if (action === 'exam_analysis') return handleExamAnalysis_(body);
-  if (action === 'delete') return handleDeleteProblem_(body);
-  return handleInsertProblem_(body); // action 없으면 기존 게시판 등록(기본 동작)
+  if (action === 'delete') return locked_(function () { return handleDeleteProblem_(body); });
+  return locked_(function () { return handleInsertProblem_(body); }); // action 없으면 기존 게시판 등록(기본 동작)
 }
 
 // ==========================================
@@ -377,11 +419,7 @@ function handleWithdraw_(body) {
   var byAdmin = !!body.by_admin;
 
   var lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(30000);
-  } catch (err) {
-    return jsonResponse_({ ok: false, error: "다른 작업이 진행 중입니다. 잠시 후 다시 해 주세요." });
-  }
+  if (!waitLockOk_(lock, 30000)) return lockBusy_();
   try {
     var studentsSheet = getOrCreateSheet_('students', STUDENTS_HEADERS);
     var data = studentsSheet.getDataRange().getValues();
@@ -643,7 +681,7 @@ function archiveRowToObj_(r, includeSource) {
 
 function handleArchiveSave_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var fileId = '';
     if (body.image_b64) {
@@ -672,7 +710,7 @@ function handleArchiveSave_(body) {
 
 function handleArchiveDelete_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var sheet = getArchiveSheet_();
     var row = findRowById_(sheet, ARCHIVE_COL.id, body.id);
@@ -690,7 +728,7 @@ function handleArchiveDelete_(body) {
 // 이미 보관한 문제에 대상 학생을 바꾸거나 추가할 때
 function handleArchiveUpdateStudents_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var sheet = getArchiveSheet_();
     var row = findRowById_(sheet, ARCHIVE_COL.id, body.id);
@@ -705,7 +743,7 @@ function handleArchiveUpdateStudents_(body) {
 // 원본 문제 / 유사문제 1번 / 2번의 구분(중요·틀림·어려워함)을 바꾼다
 function handleArchiveUpdateTags_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var sheet = getArchiveSheet_();
     var row = findRowById_(sheet, ARCHIVE_COL.id, body.id);
@@ -908,7 +946,7 @@ function ensureTaxonomy_(entries) {
 //   question, answer, solution, verified, memo, use_image}], body.image_b64 = 원본 사진(선택)
 function handleBankSave_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var problems = body.problems || [];
     if (!problems.length) return jsonResponse_({ ok: false, error: "저장할 문제가 없습니다." });
@@ -946,7 +984,7 @@ function handleBankSave_(body) {
 // 한 문제의 일부 칸만 고친다 (body.fields = {question: ..., verified: 'Y', ...})
 function handleBankUpdate_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var sheet = getTextSheet_('bank', BANK_HEADERS);
     var editable = ['grade', 'unit', 'type', 'frame', 'difficulty', 'question', 'answer', 'solution', 'verified', 'memo'];
@@ -974,7 +1012,7 @@ function handleBankUpdate_(body) {
 
 function handleBankDelete_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var sheet = getTextSheet_('bank', BANK_HEADERS);
     var row = findRowById_(sheet, BANK_COL.id, body.id);
@@ -1069,7 +1107,7 @@ function handleTaxonomy_() {
 // 문제틀 설명 추가/수정 (없으면 새로 만든다)
 function handleTaxonomyUpsert_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var sheet = getTextSheet_('taxonomy', TAXONOMY_HEADERS);
     var data = sheet.getDataRange().getValues();
@@ -1095,7 +1133,7 @@ function handleTaxonomyUpsert_(body) {
 // 바꾼 이름이 이미 있으면 자연스럽게 합쳐진다.
 function handleTaxonomyRename_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!waitLockOk_(lock, 30000)) return lockBusy_();
   try {
     var depth = TAX_LEVELS.indexOf(body.level || 'frame') + 1;
     if (depth < 1) return jsonResponse_({ ok: false, error: "level이 올바르지 않습니다." });
@@ -1156,7 +1194,7 @@ function handleTaxonomyRename_(body) {
 // 예전 분류(학년 › 단원 › 세부 유형)는 유형과 문제틀에 같은 이름으로 들어가므로 나중에 유형표에서 다듬으면 된다.
 function handleMigrateArchive_() {
   var lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!waitLockOk_(lock, 30000)) return lockBusy_();
   try {
     var bankSheet = getTextSheet_('bank', BANK_HEADERS);
     var bank = readCols_(bankSheet, BANK_COL.legacy_archive_id + 1, 1);
@@ -1224,7 +1262,7 @@ function handleStarSet_(body) {
   var key = String(body.item_key || '');
   if (!student || !key) return jsonResponse_({ ok: false, error: "student_id와 item_key가 필요합니다." });
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var sheet = getTextSheet_('stars', STAR_HEADERS);
     var data = readCols_(sheet, 1, 2);
@@ -1330,7 +1368,7 @@ function handleHwList_(e) {
 
 function handleHwSave_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var pids = (body.problem_ids || []).map(String).filter(function (x) { return x; });
     if (!pids.length) return jsonResponse_({ ok: false, error: "숙제에 넣을 문제가 없습니다." });
@@ -1348,7 +1386,7 @@ function handleHwSave_(body) {
 
 function handleHwDelete_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var sheet = getTextSheet_('homework', HW_HEADERS);
     var row = findRowById_(sheet, 0, body.hw_id);
@@ -1421,7 +1459,7 @@ function upsertResults_(hwId, studentId, items, gradedBy) {
 // 학생 제출: body.answers = [{problem_id, answer, correct}] (채점은 앱에서 해서 보낸다)
 function handleHwSubmit_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     upsertResults_(String(body.hw_id || ''), String(body.student_id || ''), body.answers || [], 'auto');
     return jsonResponse_({ ok: true });
@@ -1433,7 +1471,7 @@ function handleHwSubmit_(body) {
 // 선생님이 O/X를 직접 넣거나 고칠 때: body.marks = [{problem_id, correct}]
 function handleHwMark_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     upsertResults_(String(body.hw_id || ''), String(body.student_id || ''), body.marks || [], 'teacher');
     return jsonResponse_({ ok: true });
@@ -1456,7 +1494,7 @@ function handleExamList_(e) {
 
 function handleExamSave_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var id = 'ex' + new Date().getTime();
     appendTextRows_(getExamSheet_(), [[
@@ -1472,7 +1510,7 @@ function handleExamSave_(body) {
 
 function handleExamDelete_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var sheet = getExamSheet_();
     var row = findRowById_(sheet, 0, body.id);
@@ -1487,7 +1525,7 @@ function handleExamDelete_(body) {
 // 학교 시험지 분석 결과(JSON 글자)를 그 시험 기록에 저장한다. 셀 한 칸 한도(5만 자) 안으로 자른다.
 function handleExamAnalysis_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var sheet = getExamSheet_();
     var row = findRowById_(sheet, 0, body.id);
@@ -1503,7 +1541,7 @@ function handleExamAnalysis_(body) {
 // 선생님이 숙제 문제에 구분(어려워함·중요)을 체크할 때: body.tags = [{problem_id, tags}]
 function handleHwTag_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var items = (body.tags || []).map(function (t) { return { problem_id: t.problem_id, tags: t.tags || '' }; });
     upsertResults_(String(body.hw_id || ''), String(body.student_id || ''), items, 'teacher');
@@ -1525,7 +1563,7 @@ function handleUnitSemesters_() {
 
 function handleUnitSemesterSet_(body) {
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!waitLockOk_(lock, 20000)) return lockBusy_();
   try {
     var grade = String(body.grade || ''), unit = String(body.unit || ''), sem = String(body.semester || '');
     if (!unit) return jsonResponse_({ ok: false, error: "단원이 필요합니다." });
