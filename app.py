@@ -1784,13 +1784,13 @@ if current_role == "admin" and sheet_url and not sheet_api_token:
 # 메인 화면: 탭 구성 (학생으로 로그인 시에만 '내 보관함' 탭 추가)
 # ==========================================
 # ★ 수정: 문제는 선생님만 만든다. 학생은 선생님이 저장해 준 문제를 보기만 한다.
-tab2 = tab3 = tab_archive = tab_stats = tab_mine = tab_star = tab_bank = tab_similar = None
+tab2 = tab_archive = tab_stats = tab_mine = tab_star = tab_bank = tab_similar = None
 if current_role == "admin":
     tab1, tab2, tab_bank, tab_similar, tab_archive, tab_stats = st.tabs(
         ["📋 반 게시판", "📸 문제 만들기", "🏦 문제 은행", "🔍 비슷한 문제 찾기", "🗄️ 학생 보관함", "📊 학생별 유형 현황"])
 else:
-    # 학생: 선생님이 배정해 준 문제(날짜별·단원별) → 중요 문제함 → 반 게시판 → 예전 보관함
-    tab_mine, tab_star, tab1, tab3 = st.tabs(["📚 내 문제", "⭐ 중요 문제함", "📋 우리 반 게시판", "📂 예전 보관함"])
+    # 학생: 선생님이 배정해 준 문제(날짜별·단원별) → 중요 문제함 → 반 게시판
+    tab_mine, tab_star, tab1 = st.tabs(["📚 내 문제", "⭐ 중요 문제함", "📋 우리 반 게시판"])
 
 # ------------------------------------------
 # [탭 1] 학생 게시판 (인쇄 메뉴 기본 숨김 접이식 적용)
@@ -1922,22 +1922,6 @@ def render_class_board(view_class, current_role, current_student_id):
                                     st.success("구글 시트에서 삭제되었습니다!")
                                     time.sleep(0.5)
                                     st.rerun()
-                        elif current_student_id:
-                            if st.button("💾 내 보관함에 저장", key=f"save_personal_{p.get('id')}"):
-                                payload = build_personal_payload(
-                                    student_id=current_student_id,
-                                    class_id=view_class,
-                                    source="board",
-                                    origin_id=str(p.get("id", "")),
-                                    q1=p.get("q1", ""), a1=p.get("a1", ""), s1=p.get("s1", ""),
-                                    q2=p.get("q2", ""), a2=p.get("a2", ""), s2=p.get("s2", ""),
-                                    image_b64=p.get("image_b64", ""),
-                                )
-                                with st.spinner("저장하는 중..."):
-                                    if save_personal_problem(payload):
-                                        st.success("✅ 내 보관함에 저장했어요!")
-                                    else:
-                                        st.error("❌ 저장에 실패했습니다.")
                     st.divider()
 
 
@@ -2315,37 +2299,6 @@ if tab2 is not None:
                                 st.error(f"❌ 보관에 실패했습니다: {_result.get('error', '알 수 없는 오류')}")
 
 
-# ------------------------------------------
-# [탭 3] 내 보관함 (학생으로 로그인한 경우에만 존재)
-# ------------------------------------------
-if tab3:
-    with tab3:
-        st.subheader("📂 예전 보관함")
-        st.caption("스스로 만들어서 저장한 문제와, 게시판에서 저장해온 문제를 여기서 다시 볼 수 있어요.")
-
-        sub_self, sub_board = st.tabs(["🖊️ 내가 만든 문제", "🔖 게시판에서 저장한 문제"])
-
-        with sub_self:
-            with st.spinner("불러오는 중..."):
-                my_self_items = fetch_personal_problems(current_student_id, source="self")
-            if not my_self_items:
-                st.info("아직 스스로 만들어서 저장한 문제가 없어요. 이제는 선생님이 '선생님이 준 문제' 탭에 문제를 저장해 줘요.")
-            else:
-                my_self_items = sorted(my_self_items, key=lambda x: x.get("date", ""), reverse=True)
-                for p in my_self_items:
-                    render_personal_item(p, current_student_id)
-
-        with sub_board:
-            with st.spinner("불러오는 중..."):
-                my_board_items = fetch_personal_problems(current_student_id, source="board")
-            if not my_board_items:
-                st.info("아직 게시판에서 저장한 문제가 없어요. '우리 반 게시판' 탭에서 문제 옆의 저장 버튼을 눌러보세요!")
-            else:
-                my_board_items = sorted(my_board_items, key=lambda x: x.get("date", ""), reverse=True)
-                for p in my_board_items:
-                    render_personal_item(p, current_student_id)
-
-
 # ==========================================
 # ★ 보관 문제 화면 공통 부품
 # ==========================================
@@ -2616,7 +2569,8 @@ if tab_mine is not None:
                     st.session_state.mine_limit = 30
                 with st.spinner("불러오는 중..."):
                     _mres = archive_search(student=current_student_id, limit=st.session_state.mine_limit)
-                _mitems = _mres["items"]
+                _seen_ids = set()
+                _mitems = [p for p in _mres["items"] if not (p.get("id") in _seen_ids or _seen_ids.add(p.get("id")))]
                 if not _mitems:
                     st.info("아직 선생님이 배정해 준 문제가 없어요.")
                 _by_date = {}
@@ -2627,7 +2581,7 @@ if tab_mine is not None:
                     for p in _by_date[_d]:
                         with st.expander(f"📘 {unit_label(p)}"):
                             render_student_item(p, "sd", _keys)
-                if len(_mitems) < _mres["total"]:
+                if len(_mres["items"]) < _mres["total"]:
                     if st.button("⬇️ 이전 문제 더 보기", key="mine_more"):
                         st.session_state.mine_limit += 30
                         st.rerun()
@@ -2650,7 +2604,9 @@ if tab_mine is not None:
                     with st.spinner("불러오는 중..."):
                         _ures = archive_search(student=current_student_id, grade=_upick[0], unit=_upick[1],
                                                limit=st.session_state.mine_unit_limit)
-                    for p in sorted(_ures["items"], key=lambda x: x.get("date", ""), reverse=True):
+                    _seen_ids = set()
+                    _uitems = [p for p in _ures["items"] if not (p.get("id") in _seen_ids or _seen_ids.add(p.get("id")))]
+                    for p in sorted(_uitems, key=lambda x: x.get("date", ""), reverse=True):
                         with st.expander(f"📅 {p.get('date', '')[:10]}"):
                             render_student_item(p, "su", _keys)
                     if len(_ures["items"]) < _ures["total"]:
