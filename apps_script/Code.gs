@@ -26,7 +26,8 @@ var PROBLEMS_HEADERS = ['id', 'class_id', 'date', 'image_b64', 'q1', 'a1', 's1',
 var STUDENTS_HEADERS = ['student_id', 'password_hash', 'class_id', 'created_at'];
 var PERSONAL_HEADERS = ['id', 'student_id', 'class_id', 'source', 'origin_id', 'date', 'image_b64', 'q1', 'a1', 's1', 'q2', 'a2', 's2'];
 // student_ids: 쉼표로 구분한 학생 아이디 목록 (예: "kim01,lee02")
-var ARCHIVE_HEADERS = ['id', 'date', 'student_ids', 'class_id', 'grade', 'unit', 'subtype', 'source_text', 'image_file_id', 'q1', 'a1', 's1', 'q2', 'a2', 's2', 'memo', 'created_at'];
+// tags = 원본 문제의 구분, tags1/tags2 = 유사문제 1번/2번의 구분 (중요,틀림,어려워함 을 쉼표로, 여러 개 가능)
+var ARCHIVE_HEADERS = ['id', 'date', 'student_ids', 'class_id', 'grade', 'unit', 'subtype', 'source_text', 'image_file_id', 'q1', 'a1', 's1', 'q2', 'a2', 's2', 'memo', 'created_at', 'tags', 'tags1', 'tags2'];
 var ARCHIVE_COL = {};
 for (var _c = 0; _c < ARCHIVE_HEADERS.length; _c++) ARCHIVE_COL[ARCHIVE_HEADERS[_c]] = _c;
 
@@ -99,7 +100,7 @@ function doGet(e) {
   if (action === 'taxonomy') return handleTaxonomy_();
   if (action === 'star_list') return handleStarList_(e);
   if (action === 'star_items') return handleStarItems_(e);
-  if (action === 'version') return jsonResponse_({ version: 4 });  // 3 = 숙제·채점·시험 점수, 4 = 학교 시험지 분석 저장
+  if (action === 'version') return jsonResponse_({ version: 5 });  // 3 = 숙제·채점·시험 점수, 4 = 학교 시험지 분석 저장, 5 = 문제 구분(중요·틀림·어려워함)
   if (action === 'hw_list') return handleHwList_(e);
   if (action === 'hw_results') return handleHwResults_(e);
   if (action === 'exam_list') return handleExamList_(e);
@@ -132,6 +133,8 @@ function doPost(e) {
   if (action === 'archive_save') return handleArchiveSave_(body);
   if (action === 'archive_delete') return handleArchiveDelete_(body);
   if (action === 'archive_update_students') return handleArchiveUpdateStudents_(body);
+  if (action === 'archive_update_tags') return handleArchiveUpdateTags_(body);
+  if (action === 'hw_tag') return handleHwTag_(body);
   if (action === 'bank_save') return handleBankSave_(body);
   if (action === 'bank_update') return handleBankUpdate_(body);
   if (action === 'bank_delete') return handleBankDelete_(body);
@@ -398,7 +401,29 @@ function getArchiveSheet_() {
     sheet.getRange(1, 1, 1, ARCHIVE_HEADERS.length).setValues([ARCHIVE_HEADERS]);
     sheet.setFrozenRows(1);
   }
+  ensureHeaders_(sheet, ARCHIVE_HEADERS);
   return sheet;
+}
+
+// 예전에 만든 탭에 새로 생긴 머리글(맨 뒤 칸들)이 없으면 채워 둔다. 같은 실행 안에서는 한 번만 확인한다.
+var headersChecked_ = {};
+function ensureHeaders_(sheet, headers) {
+  var name = sheet.getName();
+  if (headersChecked_[name]) return;
+  headersChecked_[name] = true;
+  var cur = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  for (var k = 0; k < headers.length; k++) {
+    if (String(cur[k]) !== headers[k]) {
+      sheet.getRange(1, k + 1).setNumberFormat('@').setValue(headers[k]);
+    }
+  }
+}
+
+// 구분 글자 정리: 정해진 세 가지만, 중복 없이, 정해진 순서로
+var TAG_NAMES = ['중요', '틀림', '어려워함'];
+function cleanTags_(v) {
+  var parts = (Array.isArray(v) ? v : String(v || '').split(',')).map(function (x) { return String(x).trim(); });
+  return TAG_NAMES.filter(function (t) { return parts.indexOf(t) !== -1; }).join(',');
 }
 
 function getArchiveFolder_() {
@@ -505,7 +530,7 @@ function handleArchiveSave_(body) {
     var row = [
       body.id, body.date, studentIds, body.class_id, body.grade, body.unit, body.subtype,
       body.source_text, fileId, body.q1, body.a1, body.s1, body.q2, body.a2, body.s2,
-      body.memo, new Date().toISOString()
+      body.memo, new Date().toISOString(), cleanTags_(body.tags), cleanTags_(body.tags1), cleanTags_(body.tags2)
     ].map(safeCell_);
     // appendRow 대신 서식을 먼저 "일반 텍스트"로 지정한 뒤 값을 넣는다 (1000행을 넘어가도 날짜/아이디가 변형되지 않게)
     var sheet = getArchiveSheet_();
@@ -546,6 +571,23 @@ function handleArchiveUpdateStudents_(body) {
     var row = findRowById_(sheet, ARCHIVE_COL.id, body.id);
     if (row < 0) return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
     sheet.getRange(row, ARCHIVE_COL.student_ids + 1).setValue(splitIds_(body.student_ids).join(','));
+    return jsonResponse_({ ok: true });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 원본 문제 / 유사문제 1번 / 2번의 구분(중요·틀림·어려워함)을 바꾼다
+function handleArchiveUpdateTags_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = getArchiveSheet_();
+    var row = findRowById_(sheet, ARCHIVE_COL.id, body.id);
+    if (row < 0) return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
+    var rg = sheet.getRange(row, ARCHIVE_COL.tags + 1, 1, 3);
+    rg.setNumberFormat('@');
+    rg.setValues([[cleanTags_(body.tags), cleanTags_(body.tags1), cleanTags_(body.tags2)]]);
     return jsonResponse_({ ok: true });
   } finally {
     lock.releaseLock();
@@ -1104,7 +1146,14 @@ function handleStarItems_(e) {
 // 단원·유형은 리포트를 만들 때 문제 은행에서 붙여 계산한다.
 // ==========================================
 var HW_HEADERS = ['hw_id', 'created_at', 'title', 'due_date', 'class_id', 'student_ids', 'problem_ids', 'memo'];
-var HWR_HEADERS = ['hw_id', 'student_id', 'problem_id', 'answer', 'correct', 'graded_by', 'updated_at'];
+var HWR_HEADERS = ['hw_id', 'student_id', 'problem_id', 'answer', 'correct', 'graded_by', 'updated_at', 'tags'];
+
+// hw_results 탭 (예전에 만든 탭에는 'tags' 머리글이 없으므로 채워 둔다)
+function getHwrSheet_() {
+  var sheet = getTextSheet_('hw_results', HWR_HEADERS);
+  ensureHeaders_(sheet, HWR_HEADERS);
+  return sheet;
+}
 var EXAM_HEADERS = ['id', 'student_id', 'date', 'kind', 'name', 'score', 'max_score', 'memo', 'created_at', 'analysis'];
 
 // exams 탭 (예전에 만든 탭에는 'analysis' 머리글이 없으므로 채워 둔다)
@@ -1176,7 +1225,7 @@ function handleHwDelete_(body) {
     var row = findRowById_(sheet, 0, body.hw_id);
     if (row < 0) return jsonResponse_({ ok: false, error: "숙제를 찾을 수 없습니다." });
     sheet.deleteRow(row);
-    var rs = getTextSheet_('hw_results', HWR_HEADERS);
+    var rs = getHwrSheet_();
     var ids = readCols_(rs, 1, 1);
     for (var i = ids.length - 1; i >= 0; i--) {
       if (String(ids[i][0]) === String(body.hw_id)) rs.deleteRow(i + 2);
@@ -1192,7 +1241,7 @@ function handleHwResults_(e) {
   var p = e.parameter || {};
   var hw = p.hw_id ? String(p.hw_id) : '';
   var student = p.student_id ? String(p.student_id) : '';
-  var rows = readCols_(getTextSheet_('hw_results', HWR_HEADERS), 1, HWR_HEADERS.length);
+  var rows = readCols_(getHwrSheet_(), 1, HWR_HEADERS.length);
   var out = [];
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
@@ -1204,9 +1253,10 @@ function handleHwResults_(e) {
   return jsonResponse_(out);
 }
 
-// 결과 한 줄을 넣거나 고친다 (같은 숙제·학생·문제가 있으면 덮어씀)
+// 결과 한 줄을 넣거나 고친다 (같은 숙제·학생·문제가 있으면 덮어씀).
+// answer / correct / tags 중 보내지 않은 칸(undefined)은 예전 값을 그대로 둔다.
 function upsertResults_(hwId, studentId, items, gradedBy) {
-  var sheet = getTextSheet_('hw_results', HWR_HEADERS);
+  var sheet = getHwrSheet_();
   var rows = readCols_(sheet, 1, 3);
   var where = {};
   for (var i = 0; i < rows.length; i++) {
@@ -1218,16 +1268,22 @@ function upsertResults_(hwId, studentId, items, gradedBy) {
     var it = items[j];
     var pid = String(it.problem_id || '');
     if (!pid) continue;
-    var vals = [hwId, studentId, pid, it.answer === undefined ? null : String(it.answer), String(it.correct || ''), gradedBy, now];
+    var answer = it.answer === undefined || it.answer === null ? null : String(it.answer);
+    var correct = it.correct === undefined || it.correct === null ? null : String(it.correct);
+    var tags = it.tags === undefined || it.tags === null ? null : cleanTags_(it.tags);
     if (where[pid]) {
-      var old = sheet.getRange(where[pid], 1, 1, HWR_HEADERS.length).getValues()[0];
-      if (vals[3] === null) vals[3] = cellStr_(old[3]);  // 선생님이 O/X만 고칠 때는 학생 답을 그대로 둔다
       var rg = sheet.getRange(where[pid], 1, 1, HWR_HEADERS.length);
+      var old = rg.getValues()[0];
+      var vals = [hwId, studentId, pid,
+                  answer === null ? cellStr_(old[3]) : answer,   // 선생님이 O/X만 고칠 때는 학생 답을 그대로 둔다
+                  correct === null ? cellStr_(old[4]) : correct,
+                  correct === null ? cellStr_(old[5]) : gradedBy,
+                  now,
+                  tags === null ? cellStr_(old[7]) : tags];
       rg.setNumberFormat('@');
       rg.setValues([vals.map(safeCell_)]);
     } else {
-      if (vals[3] === null) vals[3] = '';
-      add.push(vals);
+      add.push([hwId, studentId, pid, answer || '', correct || '', correct === null ? '' : gradedBy, now, tags || '']);
     }
   }
   appendTextRows_(sheet, add);
@@ -1309,6 +1365,19 @@ function handleExamAnalysis_(body) {
     if (row < 0) return jsonResponse_({ ok: false, error: "시험 기록을 찾을 수 없습니다." });
     var text = String(body.analysis || '').slice(0, 45000);
     sheet.getRange(row, EXAM_HEADERS.length).setNumberFormat('@').setValue(safeCell_(text));
+    return jsonResponse_({ ok: true });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 선생님이 숙제 문제에 구분(어려워함·중요)을 체크할 때: body.tags = [{problem_id, tags}]
+function handleHwTag_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var items = (body.tags || []).map(function (t) { return { problem_id: t.problem_id, tags: t.tags || '' }; });
+    upsertResults_(String(body.hw_id || ''), String(body.student_id || ''), items, 'teacher');
     return jsonResponse_({ ok: true });
   } finally {
     lock.releaseLock();

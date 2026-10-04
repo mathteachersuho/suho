@@ -395,6 +395,26 @@ def archive_update_students(prob_id, student_ids):
     return bool(result.get("ok"))
 
 
+# 문제 구분: 원본 문제와 유사문제 1번·2번, 숙제 문제마다 여러 개를 함께 고를 수 있다
+TAG_NAMES = ["중요", "틀림", "어려워함"]
+TAG_ICON = {"중요": "⭐", "틀림": "❌", "어려워함": "😣"}
+
+
+def tag_list(v):
+    parts = v if isinstance(v, (list, tuple, set)) else str(v or "").split(",")
+    parts = {str(x).strip() for x in parts}
+    return [t for t in TAG_NAMES if t in parts]
+
+
+def tag_text(v):
+    return " ".join(f"{TAG_ICON[t]}{t}" for t in tag_list(v))
+
+
+def archive_update_tags(prob_id, tags, tags1, tags2):
+    return bool(_post_action({"action": "archive_update_tags", "id": prob_id, "tags": ",".join(tag_list(tags)),
+                              "tags1": ",".join(tag_list(tags1)), "tags2": ",".join(tag_list(tags2))}).get("ok"))
+
+
 def archive_search(student="", class_id="", grade="", unit="", subtype="",
                    date_from="", date_to="", keyword="", offset=0, limit=30):
     """조건에 맞는 보관 문제를 최신순으로 offset부터 limit개. {'items': [...], 'total': n} 반환."""
@@ -515,6 +535,14 @@ def hw_backend_ready():
     return backend_version() >= 3
 
 
+def tags_backend_ready():
+    """문제 구분(중요·틀림·어려워함)을 저장할 수 있는 버전(5 이상)인지 확인."""
+    return backend_version() >= 5
+
+
+TAGS_SETUP_MSG = "문제 구분을 저장하려면 저장소의 apps_script/Code.gs로 Apps Script를 바꾸고 '새 버전'으로 재배포해 주세요."
+
+
 HW_SETUP_MSG = (
     "⚠️ 구글 Apps Script가 아직 숙제·채점 기능이 없는 버전입니다. "
     "저장소의 apps_script/Code.gs 내용으로 바꾸고, [배포 관리]에서 기존 배포를 '새 버전'으로 수정해 주세요."
@@ -558,6 +586,12 @@ def hw_submit(hw_id, student_id, answers):
 def hw_mark(hw_id, student_id, marks):
     return bool(_post_action({"action": "hw_mark", "hw_id": hw_id, "student_id": student_id,
                               "marks": marks}).get("ok"))
+
+
+def hw_tag(hw_id, student_id, tags):
+    """숙제 문제에 구분(어려워함·중요)을 체크. tags = [{problem_id, tags: "어려워함,중요"}]"""
+    return bool(_post_action({"action": "hw_tag", "hw_id": hw_id, "student_id": student_id,
+                              "tags": tags}).get("ok"))
 
 
 def exam_list(student_id=""):
@@ -2431,6 +2465,16 @@ if tab2 is not None:
                     _student_options = [s.get("student_id", "") for s in _all_students
                                         if _cls_filter == "전체" or s.get("class_id", "") == _cls_filter]
                     _picked_students = st.multiselect("대상 학생 (여러 명 선택 가능, 비워두면 학생 미지정)", _student_options, key=f"arch_students_{_ver}")
+                    st.markdown("**문제 구분** (여러 개 고를 수 있어요)")
+                    _tg0, _tg1, _tg2 = st.columns(3)
+                    with _tg0:
+                        st.pills("원본 문제", TAG_NAMES, selection_mode="multi", key=f"arch_tags0_{_ver}")
+                    with _tg1:
+                        st.pills("유사문제 1번", TAG_NAMES, selection_mode="multi", key=f"arch_tags1_{_ver}")
+                    with _tg2:
+                        st.pills("유사문제 2번", TAG_NAMES, selection_mode="multi", key=f"arch_tags2_{_ver}")
+                    if not tags_backend_ready():
+                        st.caption(TAGS_SETUP_MSG)
                     _memo = st.text_input("메모 (선택)", key=f"arch_memo_{_ver}", placeholder="예: 3단계 이항에서 부호 실수")
 
                     _backend_ok = archive_backend_ready()
@@ -2462,6 +2506,9 @@ if tab2 is not None:
                                 "q1": p1["question"], "a1": p1["answer"], "s1": p1.get("solution", ""),
                                 "q2": p2["question"], "a2": p2["answer"], "s2": p2.get("solution", ""),
                                 "memo": _memo,
+                                "tags": ",".join(tag_list(st.session_state.get(f"arch_tags0_{_ver}") or [])),
+                                "tags1": ",".join(tag_list(st.session_state.get(f"arch_tags1_{_ver}") or [])),
+                                "tags2": ",".join(tag_list(st.session_state.get(f"arch_tags2_{_ver}") or [])),
                             }
                             with st.spinner("보관함에 저장하는 중..."):
                                 _result = archive_save(_payload)
@@ -2583,12 +2630,29 @@ if tab_archive is not None:
                         )
 
             for p in _items:
-                _head = f"📅 {p.get('date', '')} · 👤 {p.get('student_ids') or '학생 미지정'} · 🏷️ {type_label(p)}"
+                _tags_head = " / ".join(f"{n} {tag_text(p.get(k))}" for n, k in (("원본", "tags"), ("1번", "tags1"), ("2번", "tags2"))
+                                        if tag_list(p.get(k)))
+                _head = f"📅 {p.get('date', '')} · 👤 {p.get('student_ids') or '학생 미지정'} · 🏷️ {type_label(p)}" + (f" · {_tags_head}" if _tags_head else "")
                 with st.expander(_head):
                     if p.get("memo"):
                         st.info(f"📝 {p['memo']}")
                     render_archive_problem_body(p, "ab")
                     st.markdown("---")
+                    if tags_backend_ready():
+                        _pid_ = p.get("id")
+                        _t0, _t1, _t2, _t3 = st.columns([1, 1, 1, 0.6])
+                        with _t0:
+                            st.pills("원본 문제 구분", TAG_NAMES, selection_mode="multi", default=tag_list(p.get("tags")), key=f"ab_tg0_{_pid_}")
+                        with _t1:
+                            st.pills("유사문제 1번 구분", TAG_NAMES, selection_mode="multi", default=tag_list(p.get("tags1")), key=f"ab_tg1_{_pid_}")
+                        with _t2:
+                            st.pills("유사문제 2번 구분", TAG_NAMES, selection_mode="multi", default=tag_list(p.get("tags2")), key=f"ab_tg2_{_pid_}")
+                        with _t3:
+                            if st.button("구분 저장", key=f"ab_tg_save_{_pid_}"):
+                                if archive_update_tags(_pid_, *(st.session_state.get(f"ab_tg{n}_{_pid_}") or [] for n in range(3))):
+                                    st.rerun()
+                                else:
+                                    st.error("구분을 저장하지 못했어요.")
                     col_e1, col_e2 = st.columns([3, 1])
                     with col_e1:
                         _cur = [x for x in (p.get("student_ids") or "").split(",") if x]
@@ -3151,6 +3215,34 @@ if tab_hw is not None:
                             _ans = pd.DataFrame([{"학생": _sid, **{_c: _cell.get((_sid, _pid), {}).get("answer", "")
                                                                    for _c, _pid in zip(_cols, _pids)}} for _sid in _targets])
                             st.dataframe(_ans, hide_index=True)
+                        with st.expander("🏷️ 어려워한 문제 · 중요 문제 체크"):
+                            if not tags_backend_ready():
+                                st.info(TAGS_SETUP_MSG)
+                            else:
+                                st.caption("틀린 문제(X)는 채점에서 자동으로 '틀림'이 돼요. 여기서는 어려워한 문제와 중요한 문제를 골라 주세요. 둘 다 고를 수 있어요.")
+                                _TOPT = ["", "어려워함", "중요", "어려워함·중요"]
+
+                                def _tcell(v):
+                                    return "·".join(t for t in tag_list(v) if t != "틀림")
+                                _tgrid = [{"학생": _sid, **{_c: _tcell(_cell.get((_sid, _pid), {}).get("tags", ""))
+                                                           for _c, _pid in zip(_cols, _pids)}} for _sid in _targets]
+                                _tedit = st.data_editor(
+                                    pd.DataFrame(_tgrid), hide_index=True, disabled=["학생"], key=f"hw_tgrid_{_hid}",
+                                    column_config={c: st.column_config.SelectboxColumn(c, options=_TOPT, width="small") for c in _cols})
+                                if st.button("💾 구분 저장", key=f"hw_tgrid_save_{_hid}"):
+                                    _fail = 0
+                                    for _, _er in _tedit.iterrows():
+                                        _sid = _er["학생"]
+                                        _orig = next(g for g in _tgrid if g["학생"] == _sid)
+                                        _tg = [{"problem_id": _pid, "tags": ",".join(tag_list(str(_er[_c] or "").replace("·", ",")))}
+                                               for _c, _pid in zip(_cols, _pids) if (_er[_c] or "") != _orig[_c]]
+                                        if _tg and not hw_tag(_hid, _sid, _tg):
+                                            _fail += 1
+                                    if _fail:
+                                        st.error(f"{_fail}명의 구분을 저장하지 못했어요.")
+                                    else:
+                                        st.success("구분을 저장했어요.")
+                                        st.rerun()
                     with st.expander("📄 숙제 문제와 정답 보기"):
                         for _i, _pid in enumerate(_pids, start=1):
                             _p = _pmap.get(_pid)
@@ -3296,14 +3388,53 @@ def student_history(student_id, class_id="", until=""):
         for it in star_items(student_id):
             k = _path(it.get("grade"), it.get("unit"), it.get("subtype"))
             stars[k] = stars.get(k, 0) + 1
-    return {"hw_by_type": by_type, "asked": asked, "stars": stars}
+    _, tag_types = tag_summary(tagged_problems(student_id, date_to=until), top=40)
+    return {"hw_by_type": by_type, "asked": asked, "stars": stars, "tag_types": tag_types}
+
+
+def tagged_problems(student_id, date_from="", date_to="", limit=300):
+    """구분(중요·틀림·어려워함)이 붙은 문제 목록: 보관함의 원본 문제·유사문제 1번·2번 + 숙제 문제.
+    숙제에서 틀린(X) 문제는 따로 체크하지 않아도 '틀림'으로 넣는다."""
+    out = []
+    for a in archive_search(student=student_id, date_from=date_from, date_to=date_to, limit=limit)["items"]:
+        path = _path(a.get("grade"), a.get("unit"), a.get("subtype"))
+        for src, tk, qk in (("원본 문제", "tags", "source_text"), ("유사문제 1번", "tags1", "q1"), ("유사문제 2번", "tags2", "q2")):
+            t = tag_list(a.get(tk))
+            if t:
+                out.append({"kind": "보관함", "src": src, "date": a.get("date", "")[:10], "path": path, "tags": t,
+                            "text": a.get(qk, ""), "answer": "", "right": a.get("a1" if qk == "q1" else "a2" if qk == "q2" else "", "")})
+    hws = {h["hw_id"]: h for h in hw_list(limit=500)}
+    res = [r for r in hw_results(student_id=student_id) if r["hw_id"] in hws
+           and (not date_from or _hw_date(hws[r["hw_id"]]) >= date_from) and (not date_to or _hw_date(hws[r["hw_id"]]) <= date_to)]
+    res = [(r, tag_list(tag_list(r.get("tags")) + (["틀림"] if r.get("correct") == "N" else []))) for r in res]
+    probs = bank_by_ids({r["problem_id"] for r, t in res if t})
+    for r, t in res:
+        p = probs.get(r["problem_id"])
+        if t and p:
+            out.append({"kind": "숙제", "src": hws[r["hw_id"]].get("title", "숙제"), "date": _hw_date(hws[r["hw_id"]]),
+                        "path": _path(p.get("grade"), p.get("unit"), p.get("type")), "tags": t,
+                        "text": p.get("question", ""), "answer": r.get("answer", ""), "right": p.get("answer", "")})
+    return sorted(out, key=lambda e: e["date"], reverse=True)
+
+
+def tag_summary(tagged, top=5):
+    """구분별 개수 {구분: {'보관함': n, '숙제': n}} 와 구분별로 많이 나온 유형 {구분: [(유형, n)]}."""
+    counts = {t: {"보관함": 0, "숙제": 0} for t in TAG_NAMES}
+    types = {t: {} for t in TAG_NAMES}
+    for e in tagged:
+        for t in e["tags"]:
+            counts[t][e["kind"]] += 1
+            types[t][e["path"]] = types[t].get(e["path"], 0) + 1
+    return counts, {t: sorted(d.items(), key=lambda x: -x[1])[:top] for t, d in types.items()}
 
 
 def history_text(hist):
     lines = [f"- 숙제 | {k} | {c}/{n} 맞힘" for k, (n, c) in sorted(hist["hw_by_type"].items())]
     for r in sorted(hist["asked"], key=lambda r: -int(r.get("count") or 0))[:60]:
-        lines.append(f"- 어려워해서 유사문제 받음 | {_path(r.get('grade'), r.get('unit'), r.get('subtype'))} | {r.get('count')}개")
+        lines.append(f"- 유사문제 받음 | {_path(r.get('grade'), r.get('unit'), r.get('subtype'))} | {r.get('count')}개")
     lines += [f"- 학생이 중요 체크 | {k} | {n}문제" for k, n in hist["stars"].items()]
+    for t, rows in hist.get("tag_types", {}).items():
+        lines += [f"- 선생님 구분 '{t}' | {k} | {n}문제" for k, n in rows]
     return "\n".join(lines) or "(아직 기록 없음)"
 
 
@@ -3342,7 +3473,7 @@ def analyze_school_exam(exam, images, wrong_text, hist):
 
 [규칙]
 - 시험지의 문항 번호 그대로, 모든 문항을 빠짐없이 적어라. 서술형은 번호 앞에 "서"를 붙여라 (예: "서1").
-- related: 공부 기록에 같거나 비슷한 유형이 있으면 그 기록을 짧게 (예: "숙제 3/5 맞힘", "어려워해서 유사문제 4개 받음"), 없으면 "기록 없음".
+- related: 공부 기록에 같거나 비슷한 유형이 있으면 그 기록을 짧게 (예: "숙제 3/5 맞힘", "유사문제 4개 받음, 어려워함 2"), 없으면 "기록 없음".
 - note: 이 문항의 핵심 개념이나 실수하기 쉬운 점을 한 줄로.
 - summary: 틀린 문항과 공부 기록을 이어서 어떤 유형이 약했는지, 학원에서 연습한 유형은 잘 풀었는지, 연습하지 않은 유형이 얼마나 나왔는지 4~6문장. 틀린 번호가 없으면 출제 유형과 공부 기록의 빈 곳 위주로.
 - advice: 다음 시험까지 할 공부 3가지, 줄마다 "- "로 시작.
@@ -3404,7 +3535,8 @@ def build_student_report(student_id, date_from, date_to, class_id=""):
     for r in sorted(results, key=lambda r: _hw_date(hws[r["hw_id"]]), reverse=True):
         if r.get("correct") == "N" and probs.get(r["problem_id"]):
             wrong.append({"date": _hw_date(hws[r["hw_id"]]), "problem": probs[r["problem_id"]], "answer": r.get("answer", "")})
-    asked = archive_search(student=student_id, date_from=d_from, date_to=d_to, limit=30)["items"]
+    tagged = tagged_problems(student_id, d_from, d_to)
+    tag_counts, tag_types = tag_summary(tagged)
     starred = star_items(student_id)[:20] if stars_backend_ready() else []
     exams = sorted((e for e in exam_list(student_id) if d_from <= e.get("date", "") <= d_to), key=lambda e: e.get("date", ""))
     return {
@@ -3412,7 +3544,7 @@ def build_student_report(student_id, date_from, date_to, class_id=""):
         "hw_given": len(scores), "hw_done": sum(1 for r in scores if r["submitted"]), "hw_scores": scores,
         "solved": len(graded), "correct": sum(1 for r in graded if r["correct"] == "Y"),
         "by_unit": sorted(by_unit.items()), "weak": weak, "wrong": wrong[:15],
-        "asked": asked, "starred": starred, "exams": exams,
+        "tagged": tagged, "tag_counts": tag_counts, "tag_types": tag_types, "starred": starred, "exams": exams,
     }
 
 
@@ -3426,11 +3558,19 @@ def report_ai_analysis(rep):
     rate = f"{rep['correct'] / rep['solved'] * 100:.0f}%" if rep["solved"] else "기록 없음"
     scores = "\n".join(f"- {r['date']} {r['title']}: {_score_text(r)}" for r in rep["hw_scores"]) or "(없음)"
     weak = ", ".join(f"{k} {c}/{n}" for k, n, c in rep["weak"]) or "뚜렷한 약점 없음"
-    wrong = "\n".join(f"- [{w['date']}] {_path(w['problem'].get('unit'), w['problem'].get('type'))} | 문제: {_short(w['problem'].get('question'))}"
-                      f" | 학생 답: {w['answer'] or '(빈칸)'} | 정답: {_short(w['problem'].get('answer'), 80)}"
-                      for w in rep["wrong"]) or "(없음)"
-    asked = "\n".join(f"- [{a.get('date', '')}] {_path(a.get('grade'), a.get('unit'), a.get('subtype'))} | {_short(a.get('q1'), 150)}"
-                      for a in rep["asked"]) or "(없음)"
+    tagged = []
+    for t in TAG_NAMES:
+        c = rep["tag_counts"][t]
+        es = [e for e in rep["tagged"] if t in e["tags"]]
+        tagged.append(f"- '{t}' 문제 (보관함 {c['보관함']}개, 숙제 {c['숙제']}개):")
+        for e in es[:12]:
+            extra = f" | 학생 답: {e['answer'] or '(빈칸)'} | 정답: {_short(e['right'], 60)}" if e["kind"] == "숙제" else ""
+            also = [x for x in e["tags"] if x != t]
+            tagged.append(f"  · [{e['date']}] {e['kind']}·{e['src']} | {e['path']} | {_short(e['text'], 200)}{extra}"
+                          + (f" | 함께 표시: {', '.join(also)}" if also else ""))
+        if not es:
+            tagged.append("  · (없음)")
+    tagged = "\n".join(tagged)
     starred = "\n".join(f"- {_path(a.get('grade'), a.get('unit'), a.get('subtype'))} | {_short(a.get('q1'), 150)}"
                         for a in rep["starred"]) or "(없음)"
     exams = []
@@ -3449,21 +3589,20 @@ def report_ai_analysis(rep):
 - 날짜별 숙제 점수:
 {scores}
 - 정답률이 낮은 유형 (맞힌 수/푼 수): {weak}
-- 숙제에서 틀린 문제:
-{wrong}
-- 학생이 어려워해서 선생님이 유사문제를 만들어 준 문제:
-{asked}
+- 선생님이 구분한 문제 (한 문제에 여러 구분이 겹칠 수 있음. 숙제에서 틀린 문제는 자동으로 '틀림'):
+{tagged}
 - 학생이 직접 중요 체크한 문제:
 {starred}
 - 시험:
 {chr(10).join(exams) or '(없음)'}
 
 [규칙]
-- analysis: 아래 네 칸을 이 순서로, 칸마다 1~3줄. 칸 제목은 그대로 쓰고 내용 줄은 "- "로 시작.
-  ■ 자주 틀리거나 어려워하는 유형
-  ■ 틀린 원인 (개념 이해 / 계산 실수 / 문제 해석 중 무엇인지, 틀린 답을 근거로)
+- analysis: 아래 다섯 칸을 이 순서로, 칸마다 1~3줄. 칸 제목은 그대로 쓰고 내용 줄은 "- "로 시작.
+  ■ 자주 틀리는 유형 ('틀림' 문제 근거)
+  ■ 어려워하는 유형 ('어려워함' 문제 근거. '틀림'과 겹치면 개념 부족, 맞혔지만 어려워했으면 아직 익숙하지 않은 것으로 구분)
+  ■ 꼭 잡아야 할 중요 문제 ('중요' 문제가 어떤 유형인지, 그중 틀리거나 어려워한 것)
   ■ 시험과 연결해 본 점
-  ■ 앞으로의 지도 계획
+  ■ 앞으로의 지도 계획 (틀린 원인이 개념 이해 / 계산 실수 / 문제 해석 중 무엇인지 학생 답을 근거로)
 - comment: 학부모님께 드리는 존댓말 4~6문장. 잘한 점 → 보완할 점 → 지도 계획 순서.
 - 기록에 없는 내용은 지어내지 말 것. 기록이 없는 칸은 "- 이번 기간에는 기록이 없습니다."
 - 출력은 JSON만: {{"analysis": "...", "comment": "..."}}"""
@@ -3504,6 +3643,8 @@ def make_report_html(rep, comment, analysis=""):
                          f"<div>{format_math(w['problem'].get('question', ''))}</div>"
                          f"<div class='meta'>학생 답: {esc(w['answer']) or '(빈칸)'} · 정답: {format_math(w['problem'].get('answer', ''))}</div></div>"
                          for w in rep["wrong"]) or "<p>틀린 문제가 없습니다.</p>"
+    tag_rows = "".join(f"<tr><td>{TAG_ICON[t]} {t}</td><td>{rep['tag_counts'][t]['보관함']}</td><td>{rep['tag_counts'][t]['숙제']}</td>"
+                       f"<td>{esc(', '.join(f'{k} ({n})' for k, n in rep['tag_types'][t])) or '-'}</td></tr>" for t in TAG_NAMES)
     analysis_html = f"<h2>문제 분석</h2><div class='comment'>{esc(analysis)}</div>" if str(analysis or "").strip() else ""
     return f"""<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>{esc(rep['student_id'])} 학습 리포트</title>
 <script>window.MathJax = {{ tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']] }} }};</script>
@@ -3531,6 +3672,7 @@ th {{ background: #f3f3f3; }}
 <h2>날짜별 숙제 점수</h2><table><tr><th>날짜</th><th>숙제</th><th>점수</th><th>정답률</th></tr>{score_rows}</table>
 <h2>단원별 정답률</h2><table><tr><th>단원</th><th>푼 문제</th><th>맞힌 문제</th><th>정답률</th></tr>{unit_rows}</table>
 <h2>보완이 필요한 유형</h2><table><tr><th>유형</th><th>맞힌/푼</th><th>정답률</th></tr>{weak_rows}</table>
+<h2>문제 구분 현황</h2><table><tr><th>구분</th><th>보관함 문제</th><th>숙제 문제</th><th>많이 나온 유형</th></tr>{tag_rows}</table>
 <h2>시험 성적</h2><table><tr><th>날짜</th><th>구분</th><th>시험</th><th>점수</th><th>메모</th></tr>{exam_rows}</table>
 {exam_an}
 {analysis_html}
@@ -3644,7 +3786,7 @@ if tab_report is not None:
                                     else:
                                         st.error("분석 결과를 저장하지 못했어요.")
                 with sub_rep:
-                    st.caption("'리포트 만들기'를 누를 때만 분석해요. 기간 안의 숙제 점수·틀린 문제, 학생이 어려워한 문제와 중요 체크한 문제, 시험 점수와 시험지 분석을 모아요.")
+                    st.caption("'리포트 만들기'를 누를 때만 분석해요. 기간 안의 숙제 점수, 중요·틀림·어려워함으로 구분한 문제(보관함 원본·유사문제, 숙제), 학생이 중요 체크한 문제, 시험 점수와 시험지 분석을 모아요.")
                     _r1, _r2 = st.columns([2, 1])
                     with _r1:
                         _rrange = st.date_input("기간", value=(datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()),
@@ -3669,7 +3811,11 @@ if tab_report is not None:
                         _k1.metric("낸 숙제", f"{_rep['hw_done']} / {_rep['hw_given']}")
                         _k2.metric("푼 문제", _rep["solved"])
                         _k3.metric("정답률", _rate)
-                        _k4.metric("어려워한 문제", len(_rep["asked"]))
+                        _k4.metric("어려워한 문제", sum(_rep["tag_counts"]["어려워함"].values()))
+                        st.markdown("**문제 구분 현황** (한 문제가 여러 구분에 겹칠 수 있어요)")
+                        st.dataframe([{"구분": f"{TAG_ICON[t]} {t}", "보관함": _rep["tag_counts"][t]["보관함"], "숙제": _rep["tag_counts"][t]["숙제"],
+                                       "많이 나온 유형": ", ".join(f"{k} ({n})" for k, n in _rep["tag_types"][t])} for t in TAG_NAMES],
+                                     hide_index=True, width="stretch")
                         if _rep["weak"]:
                             st.markdown("**보완이 필요한 유형**")
                             for _k, _n, _c in _rep["weak"]:
