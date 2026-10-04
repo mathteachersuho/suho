@@ -1642,47 +1642,49 @@ with st.sidebar:
             set_app_status("OFF"); st.rerun()
 
         st.divider()
-        st.header("👥 학생 반 배정 관리")
-        with st.spinner("학생 목록 불러오는 중..."):
-            student_list = admin_list_students()
-        if student_list:
-            sid_options = [s.get("student_id", "") for s in student_list]
-            pick_sid = st.selectbox("학생 아이디", sid_options, key="assign_pick_sid")
-            picked = next((s for s in student_list if s.get("student_id") == pick_sid), None)
-            current_assigned = picked.get("class_id", "") if picked else ""
-            st.caption(f"현재 배정: {current_assigned or '(미배정)'}")
-            pick_class = st.selectbox("배정할 반", class_list, key="assign_pick_class")
-            if st.button("배정하기", key="assign_btn"):
-                if admin_assign_class(pick_sid, pick_class):
-                    st.success(f"{pick_sid} → {pick_class} 배정 완료!")
-                    st.rerun()
-                else:
-                    st.error("배정에 실패했습니다.")
-        else:
-            st.caption("아직 가입한 학생이 없습니다.")
-
-        st.divider()
-        st.header("🚫 학생 탈퇴 처리")
-        # ★ 수정: 관리자가 특정 학생을 강제 탈퇴시키는 기능. 위에서 이미 불러온
-        # student_list를 재사용해서 목록을 다시 조회하지 않음.
-        if student_list:
-            wd_sid_options = [s.get("student_id", "") for s in student_list]
-            wd_pick_sid = st.selectbox("탈퇴시킬 학생 아이디", wd_sid_options, key="admin_withdraw_pick_sid")
-            st.caption("⚠️ 탈퇴 처리하면 해당 학생의 계정과 개인 보관함 데이터가 모두 삭제되며, 되돌릴 수 없습니다.")
-            wd_admin_confirm = st.checkbox(f"'{wd_pick_sid}' 학생을 정말 탈퇴시키겠습니까?", key="admin_withdraw_confirm")
-            if st.button("탈퇴 처리하기", key="admin_withdraw_btn"):
-                if not wd_admin_confirm:
-                    st.warning("확인 체크박스를 선택해주세요.")
-                else:
-                    with st.spinner("탈퇴 처리 중..."):
-                        ok = admin_withdraw_student(wd_pick_sid)
-                    if ok:
-                        st.success(f"'{wd_pick_sid}' 학생을 탈퇴 처리했습니다.")
+        # 자주 쓰지 않는 학생 계정 관리는 켤 때만 보여 주고, 그때만 학생 목록을 불러옴
+        if st.toggle("🛠️ 학생 계정 관리 (반 배정·탈퇴)", key="show_student_admin"):
+            st.subheader("👥 학생 반 배정")
+            with st.spinner("학생 목록 불러오는 중..."):
+                student_list = admin_list_students()
+            if student_list:
+                sid_options = [s.get("student_id", "") for s in student_list]
+                pick_sid = st.selectbox("학생 아이디", sid_options, key="assign_pick_sid")
+                picked = next((s for s in student_list if s.get("student_id") == pick_sid), None)
+                current_assigned = picked.get("class_id", "") if picked else ""
+                st.caption(f"현재 배정: {current_assigned or '(미배정)'}")
+                pick_class = st.selectbox("배정할 반", class_list, key="assign_pick_class")
+                if st.button("배정하기", key="assign_btn"):
+                    if admin_assign_class(pick_sid, pick_class):
+                        st.success(f"{pick_sid} → {pick_class} 배정 완료!")
                         st.rerun()
                     else:
-                        st.error("탈퇴 처리에 실패했습니다.")
-        else:
-            st.caption("아직 가입한 학생이 없습니다.")
+                        st.error("배정에 실패했습니다.")
+            else:
+                st.caption("아직 가입한 학생이 없습니다.")
+
+            st.divider()
+            st.subheader("🚫 학생 탈퇴 처리")
+            # ★ 수정: 관리자가 특정 학생을 강제 탈퇴시키는 기능. 위에서 이미 불러온
+            # student_list를 재사용해서 목록을 다시 조회하지 않음.
+            if student_list:
+                wd_sid_options = [s.get("student_id", "") for s in student_list]
+                wd_pick_sid = st.selectbox("탈퇴시킬 학생 아이디", wd_sid_options, key="admin_withdraw_pick_sid")
+                st.caption("⚠️ 탈퇴 처리하면 해당 학생의 계정과 개인 보관함 데이터가 모두 삭제되며, 되돌릴 수 없습니다.")
+                wd_admin_confirm = st.checkbox(f"'{wd_pick_sid}' 학생을 정말 탈퇴시키겠습니까?", key="admin_withdraw_confirm")
+                if st.button("탈퇴 처리하기", key="admin_withdraw_btn"):
+                    if not wd_admin_confirm:
+                        st.warning("확인 체크박스를 선택해주세요.")
+                    else:
+                        with st.spinner("탈퇴 처리 중..."):
+                            ok = admin_withdraw_student(wd_pick_sid)
+                        if ok:
+                            st.success(f"'{wd_pick_sid}' 학생을 탈퇴 처리했습니다.")
+                            st.rerun()
+                        else:
+                            st.error("탈퇴 처리에 실패했습니다.")
+            else:
+                st.caption("아직 가입한 학생이 없습니다.")
 
 # ==========================================
 # 화면 차단 로직
