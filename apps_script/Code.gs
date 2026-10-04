@@ -51,10 +51,26 @@ function getOrCreateSheet_(name, headers) {
   return sheet;
 }
 
-// 기존 문제 게시판 시트: 이름 무관하게 항상 "첫 번째/활성 시트"를 그대로 사용
-// (원래 코드와 동일한 방식 - 기존 데이터 위치를 건드리지 않기 위함)
+// 기존 문제 게시판 시트: 처음 쓸 때의 "첫 번째 시트"를 기억해 두고 계속 그 시트를 쓴다.
+// (탭 순서를 바꿔도 게시판 글이 문제 은행 같은 다른 탭에 섞여 들어가지 않게 하기 위함)
+var NON_BOARD_SHEETS = ['students', 'personal_problems', 'archive', 'bank', 'taxonomy'];
 function getProblemsSheet_() {
-  return SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var props = PropertiesService.getScriptProperties();
+  var savedId = props.getProperty('BOARD_SHEET_ID');
+  var sheets = ss.getSheets();
+  if (savedId) {
+    for (var i = 0; i < sheets.length; i++) {
+      if (String(sheets[i].getSheetId()) === savedId) return sheets[i];
+    }
+  }
+  for (var j = 0; j < sheets.length; j++) {
+    if (NON_BOARD_SHEETS.indexOf(sheets[j].getName()) === -1) {
+      props.setProperty('BOARD_SHEET_ID', String(sheets[j].getSheetId()));
+      return sheets[j];
+    }
+  }
+  return ss.getActiveSheet();
 }
 
 // ==========================================
@@ -397,6 +413,52 @@ function splitIds_(s) {
   return String(s || '').split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
 }
 
+// 2번째 줄부터 마지막 줄까지 firstCol부터 numCols개 열만 읽는다.
+// 시트 전체(긴 문제·풀이 글 포함)를 읽지 않아서 문제가 많이 쌓여도 빠르다.
+function readCols_(sheet, firstCol, numCols) {
+  var last = sheet.getLastRow();
+  if (last < 2) return [];
+  return sheet.getRange(2, firstCol, last - 1, numCols).getValues();
+}
+
+// 조건에 맞은 줄(시트 줄 번호 목록)만 전체 열을 읽어 온다. 최신순 순서를 유지한다.
+function readRowsFull_(sheet, rowNums, numCols) {
+  if (!rowNums.length) return [];
+  var lo = Math.min.apply(null, rowNums), hi = Math.max.apply(null, rowNums);
+  var block = sheet.getRange(lo, 1, hi - lo + 1, numCols).getValues();
+  return rowNums.map(function (n) { return block[n - lo]; });
+}
+
+// 사진 파일을 문제 은행이나 예전 보관함의 다른 문제가 아직 쓰고 있는지 확인
+function imageInUse_(fileId) {
+  if (!fileId) return false;
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var checks = [['bank', BANK_COL.image_file_id], ['archive', ARCHIVE_COL.image_file_id]];
+  for (var c = 0; c < checks.length; c++) {
+    var sh = ss.getSheetByName(checks[c][0]);
+    if (!sh) continue;
+    var col = readCols_(sh, checks[c][1] + 1, 1);
+    for (var i = 0; i < col.length; i++) {
+      if (cellStr_(col[i][0]) === fileId) return true;
+    }
+  }
+  return false;
+}
+
+function trashImageIfUnused_(fileId) {
+  if (!fileId || imageInUse_(fileId)) return;
+  try { DriveApp.getFileById(fileId).setTrashed(true); } catch (err) { /* 이미 없는 파일 */ }
+}
+
+// id 열만 읽어서 그 문제의 시트 줄 번호를 찾는다 (없으면 -1)
+function findRowById_(sheet, idCol, id) {
+  var ids = readCols_(sheet, idCol + 1, 1);
+  for (var i = ids.length - 1; i >= 0; i--) {
+    if (String(ids[i][0]) === String(id)) return i + 2;
+  }
+  return -1;
+}
+
 function archiveRowToObj_(r, includeSource) {
   var o = {};
   for (var k = 0; k < ARCHIVE_HEADERS.length; k++) {
@@ -440,18 +502,13 @@ function handleArchiveDelete_(body) {
   lock.waitLock(20000);
   try {
     var sheet = getArchiveSheet_();
-    var data = sheet.getDataRange().getValues();
-    for (var i = data.length - 1; i >= 1; i--) {
-      if (String(data[i][ARCHIVE_COL.id]) === String(body.id)) {
-        var fileId = String(data[i][ARCHIVE_COL.image_file_id] || '');
-        if (fileId) {
-          try { DriveApp.getFileById(fileId).setTrashed(true); } catch (err) { /* 이미 없는 파일 */ }
-        }
-        sheet.deleteRow(i + 1);
-        return jsonResponse_({ ok: true });
-      }
-    }
-    return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
+    var row = findRowById_(sheet, ARCHIVE_COL.id, body.id);
+    if (row < 0) return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
+    var fileId = cellStr_(sheet.getRange(row, ARCHIVE_COL.image_file_id + 1).getValue());
+    sheet.deleteRow(row);
+    // 문제 은행으로 옮긴 문제가 같은 사진을 쓰고 있으면 사진은 남긴다
+    trashImageIfUnused_(fileId);
+    return jsonResponse_({ ok: true });
   } finally {
     lock.releaseLock();
   }
@@ -463,14 +520,10 @@ function handleArchiveUpdateStudents_(body) {
   lock.waitLock(20000);
   try {
     var sheet = getArchiveSheet_();
-    var data = sheet.getDataRange().getValues();
-    for (var i = 1; i < data.length; i++) {
-      if (String(data[i][ARCHIVE_COL.id]) === String(body.id)) {
-        sheet.getRange(i + 1, ARCHIVE_COL.student_ids + 1).setValue(splitIds_(body.student_ids).join(','));
-        return jsonResponse_({ ok: true });
-      }
-    }
-    return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
+    var row = findRowById_(sheet, ARCHIVE_COL.id, body.id);
+    if (row < 0) return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
+    sheet.getRange(row, ARCHIVE_COL.student_ids + 1).setValue(splitIds_(body.student_ids).join(','));
+    return jsonResponse_({ ok: true });
   } finally {
     lock.releaseLock();
   }
@@ -491,11 +544,13 @@ function handleArchiveSearch_(e) {
   var offset = parseInt(p.offset || '0', 10) || 0;
   var limit = Math.min(parseInt(p.limit || '30', 10) || 30, 200);
 
-  var data = getArchiveSheet_().getDataRange().getValues();
-  var items = [];
+  // 짧은 열(id~세부 유형)만 먼저 읽어 거르고, 이번 쪽에 보여줄 줄만 전체를 읽는다
+  var sheet = getArchiveSheet_();
+  var meta = keyword ? readCols_(sheet, 1, ARCHIVE_HEADERS.length) : readCols_(sheet, 1, ARCHIVE_COL.subtype + 1);
+  var pageRows = [];
   var total = 0;
-  for (var i = data.length - 1; i >= 1; i--) {
-    var r = data[i];
+  for (var i = meta.length - 1; i >= 0; i--) {
+    var r = meta[i];
     if (!r[ARCHIVE_COL.id]) continue;
     var d = cellStr_(r[ARCHIVE_COL.date]);
     if (dateFrom && d < dateFrom) continue;
@@ -510,20 +565,19 @@ function handleArchiveSearch_(e) {
                  cellStr_(r[ARCHIVE_COL.source_text]) + ' ' + cellStr_(r[ARCHIVE_COL.memo])).toLowerCase();
       if (hay.indexOf(keyword) === -1) continue;
     }
-    if (total >= offset && items.length < limit) {
-      items.push(archiveRowToObj_(r, true));
-    }
+    if (total >= offset && pageRows.length < limit) pageRows.push(i + 2);
     total++;
   }
+  var items = readRowsFull_(sheet, pageRows, ARCHIVE_HEADERS.length).map(function (r) { return archiveRowToObj_(r, true); });
   return jsonResponse_({ items: items, total: total });
 }
 
 // 지금까지 쓰인 유형 목록 (학년 › 단원 › 세부 유형) 과 각 개수
 function handleArchiveTypes_() {
-  var data = getArchiveSheet_().getDataRange().getValues();
+  var data = readCols_(getArchiveSheet_(), 1, ARCHIVE_COL.subtype + 1);
   var seen = {};
   var list = [];
-  for (var i = 1; i < data.length; i++) {
+  for (var i = 0; i < data.length; i++) {
     var g = cellStr_(data[i][ARCHIVE_COL.grade]);
     var u = cellStr_(data[i][ARCHIVE_COL.unit]);
     var s = cellStr_(data[i][ARCHIVE_COL.subtype]);
@@ -545,10 +599,10 @@ function handleArchiveStats_(e) {
   var dateTo = p.date_to ? String(p.date_to) + '~' : '';
   var classId = p.class_id ? String(p.class_id) : '';
 
-  var data = getArchiveSheet_().getDataRange().getValues();
+  var data = readCols_(getArchiveSheet_(), 1, ARCHIVE_COL.subtype + 1);
   var counts = {};
   var rows = [];
-  for (var i = 1; i < data.length; i++) {
+  for (var i = 0; i < data.length; i++) {
     var r = data[i];
     if (!r[ARCHIVE_COL.id]) continue;
     var d = cellStr_(r[ARCHIVE_COL.date]);
@@ -698,23 +752,24 @@ function handleBankUpdate_(body) {
   lock.waitLock(20000);
   try {
     var sheet = getTextSheet_('bank', BANK_HEADERS);
-    var data = sheet.getDataRange().getValues();
     var editable = ['grade', 'unit', 'type', 'frame', 'difficulty', 'question', 'answer', 'solution', 'verified', 'memo'];
-    for (var i = 1; i < data.length; i++) {
-      if (String(data[i][BANK_COL.id]) !== String(body.id)) continue;
-      var fields = body.fields || {};
-      for (var k = 0; k < editable.length; k++) {
-        var f = editable[k];
-        if (fields.hasOwnProperty(f)) {
-          var cell = sheet.getRange(i + 1, BANK_COL[f] + 1);
-          cell.setNumberFormat('@');
-          cell.setValue(safeCell_(fields[f]));
-        }
+    var row = findRowById_(sheet, BANK_COL.id, body.id);
+    if (row < 0) return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
+    var fields = body.fields || {};
+    for (var k = 0; k < editable.length; k++) {
+      var f = editable[k];
+      if (fields.hasOwnProperty(f)) {
+        var cell = sheet.getRange(row, BANK_COL[f] + 1);
+        cell.setNumberFormat('@');
+        cell.setValue(safeCell_(fields[f]));
       }
-      if (fields.frame) ensureTaxonomy_([{ grade: fields.grade, unit: fields.unit, type: fields.type, frame: fields.frame }]);
-      return jsonResponse_({ ok: true });
     }
-    return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
+    if (fields.frame) {
+      // 문제틀만 바꿔도 유형표에 빈 학년·단원이 생기지 않도록 시트에 저장된 값을 읽어서 쓴다
+      var cls = sheet.getRange(row, BANK_COL.grade + 1, 1, 4).getValues()[0];
+      ensureTaxonomy_([{ grade: cellStr_(cls[0]), unit: cellStr_(cls[1]), type: cellStr_(cls[2]), frame: cellStr_(cls[3]) }]);
+    }
+    return jsonResponse_({ ok: true });
   } finally {
     lock.releaseLock();
   }
@@ -725,22 +780,13 @@ function handleBankDelete_(body) {
   lock.waitLock(20000);
   try {
     var sheet = getTextSheet_('bank', BANK_HEADERS);
-    var data = sheet.getDataRange().getValues();
-    for (var i = data.length - 1; i >= 1; i--) {
-      if (String(data[i][BANK_COL.id]) !== String(body.id)) continue;
-      var fileId = cellStr_(data[i][BANK_COL.image_file_id]);
-      sheet.deleteRow(i + 1);
-      // 같은 사진을 쓰는 다른 문제가 없을 때만 사진도 휴지통으로
-      if (fileId) {
-        var used = false;
-        for (var j = 1; j < data.length; j++) {
-          if (j !== i && cellStr_(data[j][BANK_COL.image_file_id]) === fileId) { used = true; break; }
-        }
-        if (!used) { try { DriveApp.getFileById(fileId).setTrashed(true); } catch (err) { } }
-      }
-      return jsonResponse_({ ok: true });
-    }
-    return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
+    var row = findRowById_(sheet, BANK_COL.id, body.id);
+    if (row < 0) return jsonResponse_({ ok: false, error: "문제를 찾을 수 없습니다." });
+    var fileId = cellStr_(sheet.getRange(row, BANK_COL.image_file_id + 1).getValue());
+    sheet.deleteRow(row);
+    // 같은 사진을 쓰는 다른 문제(문제 은행·예전 보관함)가 없을 때만 사진도 휴지통으로
+    trashImageIfUnused_(fileId);
+    return jsonResponse_({ ok: true });
   } finally {
     lock.releaseLock();
   }
@@ -759,32 +805,42 @@ function handleBankSearch_(e) {
   var offset = parseInt(p.offset || '0', 10) || 0;
   var limit = Math.min(parseInt(p.limit || '50', 10) || 50, 500);
 
-  var data = getTextSheet_('bank', BANK_HEADERS).getDataRange().getValues();
-  var items = [];
+  // 긴 글(문제·정답·풀이)은 빼고 분류 열과 검수 열만 먼저 읽어 거른 뒤, 이번 쪽에 보여줄 줄만 전체를 읽는다.
+  // 키워드 검색일 때만 문제 글 열을 함께 읽는다.
+  var sheet = getTextSheet_('bank', BANK_HEADERS);
+  var data = keyword ? readCols_(sheet, 1, BANK_HEADERS.length) : null;
+  var meta = data || readCols_(sheet, 1, BANK_COL.origin_id + 1);
+  var verCol = data ? null : readCols_(sheet, BANK_COL.verified + 1, 1);
+  var pageRows = [];
   var total = 0;
-  for (var i = data.length - 1; i >= 1; i--) {
-    var r = data[i];
+  for (var i = meta.length - 1; i >= 0; i--) {
+    var r = meta[i];
     if (!r[BANK_COL.id]) continue;
     if (idSet && !idSet[cellStr_(r[BANK_COL.id])]) continue;
     var skip = false;
     for (var f in exact) { if (cellStr_(r[BANK_COL[f]]) !== exact[f]) { skip = true; break; } }
     if (skip) continue;
     if (diffs && diffs.indexOf(cellStr_(r[BANK_COL.difficulty])) === -1) continue;
-    if (verifiedOnly && cellStr_(r[BANK_COL.verified]) !== 'Y') continue;
+    var ver = data ? r[BANK_COL.verified] : verCol[i][0];
+    if (verifiedOnly && cellStr_(ver) !== 'Y') continue;
     if (keyword) {
       var hay = (cellStr_(r[BANK_COL.question]) + ' ' + cellStr_(r[BANK_COL.memo]) + ' ' + cellStr_(r[BANK_COL.frame])).toLowerCase();
       if (hay.indexOf(keyword) === -1) continue;
     }
-    if (total >= offset && items.length < limit) items.push(bankRowToObj_(r));
+    if (total >= offset && pageRows.length < limit) pageRows.push(i + 2);
     total++;
   }
+  var items = readRowsFull_(sheet, pageRows, BANK_HEADERS.length).map(bankRowToObj_);
   return jsonResponse_({ items: items, total: total });
 }
 
 // 유형표 + 문제틀마다 문제 수 / 검수 완료 수 / 난이도별 수
 function handleTaxonomy_() {
   var tax = getTextSheet_('taxonomy', TAXONOMY_HEADERS).getDataRange().getValues();
-  var bank = getTextSheet_('bank', BANK_HEADERS).getDataRange().getValues();
+  // 문제 수를 셀 때는 분류·난이도 열과 검수 열만 읽는다
+  var bankSheet = getTextSheet_('bank', BANK_HEADERS);
+  var bank = readCols_(bankSheet, 1, BANK_COL.difficulty + 1);
+  var bankVer = readCols_(bankSheet, BANK_COL.verified + 1, 1);
   var map = {};
   var list = [];
   function entry(g, u, t, f, d) {
@@ -801,12 +857,12 @@ function handleTaxonomy_() {
     if (!tax[i][3]) continue;
     entry(cellStr_(tax[i][0]), cellStr_(tax[i][1]), cellStr_(tax[i][2]), cellStr_(tax[i][3]), cellStr_(tax[i][4]));
   }
-  for (var j = 1; j < bank.length; j++) {
+  for (var j = 0; j < bank.length; j++) {
     var r = bank[j];
     if (!r[BANK_COL.id]) continue;
     var en = entry(cellStr_(r[BANK_COL.grade]), cellStr_(r[BANK_COL.unit]), cellStr_(r[BANK_COL.type]), cellStr_(r[BANK_COL.frame]), '');
     en.count++;
-    if (cellStr_(r[BANK_COL.verified]) === 'Y') en.verified++;
+    if (cellStr_(bankVer[j][0]) === 'Y') en.verified++;
     var d = cellStr_(r[BANK_COL.difficulty]);
     if (en.hasOwnProperty(d)) en[d]++;
   }
@@ -906,10 +962,10 @@ function handleMigrateArchive_() {
   lock.waitLock(30000);
   try {
     var bankSheet = getTextSheet_('bank', BANK_HEADERS);
-    var bank = bankSheet.getDataRange().getValues();
+    var bank = readCols_(bankSheet, BANK_COL.legacy_archive_id + 1, 1);
     var done = {};
-    for (var i = 1; i < bank.length; i++) {
-      var lid = cellStr_(bank[i][BANK_COL.legacy_archive_id]);
+    for (var i = 0; i < bank.length; i++) {
+      var lid = cellStr_(bank[i][0]);
       if (lid) done[lid] = true;
     }
     var arch = getArchiveSheet_().getDataRange().getValues();

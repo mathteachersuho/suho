@@ -29,6 +29,48 @@ sheet_url = st.secrets.get("GOOGLE_SHEET_URL", "").strip()
 # 토큰이 설정돼 있지 않으면 경고만 띄우고, 기존처럼 인증 없이 동작합니다(하위 호환).
 sheet_api_token = st.secrets.get("SHEET_API_TOKEN", "").strip()
 
+# ★ 읽기 캐시: Streamlit은 버튼을 누를 때마다 모든 탭을 다시 그리므로, 구글 시트에서 읽은 결과를
+# 잠깐(60초) 기억해 두고 다시 쓴다. 저장·삭제·수정 같은 쓰기를 하면 바로 지워서 새 내용이 보이게 한다.
+# 실패한 응답(오류, 인증 실패)은 기억하지 않는다.
+class _UncachedResult(Exception):
+    def __init__(self, data):
+        super().__init__("uncached")
+        self.data = data
+
+
+@st.cache_data(ttl=60, show_spinner=False, max_entries=500)
+def _cached_get_json(params_items, timeout):
+    params = dict(params_items)
+    params["t"] = int(time.time() * 1000)
+    if sheet_api_token:
+        params["token"] = sheet_api_token
+    res = requests.get(sheet_url, params=params, timeout=timeout)
+    if res.status_code != 200:
+        raise RuntimeError(f"서버 오류 (status {res.status_code})")
+    data = res.json()
+    if isinstance(data, dict) and data.get("error"):
+        raise _UncachedResult(data)
+    return data
+
+
+def _get_json(params, timeout=30):
+    """구글 시트 GET 요청 (60초 캐시). 네트워크 오류는 그대로 예외로 올라간다."""
+    key = tuple(sorted((k, str(v)) for k, v in params.items() if v is not None))
+    try:
+        return _cached_get_json(key, timeout)
+    except _UncachedResult as e:
+        return e.data
+
+
+def invalidate_reads():
+    """쓰기 후 호출: 기억해 둔 읽기 결과를 모두 지워 다음 화면에서 새로 읽게 한다."""
+    _cached_get_json.clear()
+    for fn in ("archive_types", "taxonomy_list"):
+        f = globals().get(fn)
+        if f is not None:
+            f.clear()
+
+
 def fetch_problems(class_id=None, since_date=None):
     """구글 시트에서 과제 불러오기 (캐시 방지 적용)
     class_id, since_date를 지정하면 Apps Script가 서버에서 미리 걸러서
@@ -50,28 +92,24 @@ def fetch_problems(class_id=None, since_date=None):
         return all_local
     
     try:
-        params = {"t": int(time.time() * 1000)}
-        if sheet_api_token:
-            params["token"] = sheet_api_token
+        params = {}
         if class_id:
             params["class_id"] = class_id
         if since_date:
             params["since"] = since_date
-        res = requests.get(sheet_url, params=params, timeout=30)
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, list):
-                return data
-            elif isinstance(data, str):
-                return json.loads(data)
-            elif isinstance(data, dict) and data.get("error"):
-                # ★ 보안 수정: 토큰 불일치 등으로 거부된 경우 화면에 바로 표시
-                # (예전에는 이 경우 그냥 빈 목록으로 처리되어 원인을 알기 어려웠음)
-                st.error(
-                    f"⚠️ 구글 시트 인증 실패: '{data.get('error')}'. "
-                    "SHEET_API_TOKEN과 Apps Script의 SECRET_TOKEN 값이 일치하는지, "
-                    "Apps Script가 새 버전으로 재배포됐는지 확인해 주세요."
-                )
+        data = _get_json(params, timeout=30)
+        if isinstance(data, list):
+            return data
+        elif isinstance(data, str):
+            return json.loads(data)
+        elif isinstance(data, dict) and data.get("error"):
+            # ★ 보안 수정: 토큰 불일치 등으로 거부된 경우 화면에 바로 표시
+            # (예전에는 이 경우 그냥 빈 목록으로 처리되어 원인을 알기 어려웠음)
+            st.error(
+                f"⚠️ 구글 시트 인증 실패: '{data.get('error')}'. "
+                "SHEET_API_TOKEN과 Apps Script의 SECRET_TOKEN 값이 일치하는지, "
+                "Apps Script가 새 버전으로 재배포됐는지 확인해 주세요."
+            )
     except Exception as e:
         st.error(f"데이터베이스 연결 오류: {e}")
     return []
@@ -129,6 +167,7 @@ def save_problem(problem_data):
         payload = dict(problem_data)
         payload["_token"] = sheet_api_token
         res = requests.post(sheet_url, json=payload, timeout=10)
+        invalidate_reads()
         return res.status_code == 200
     except Exception as e:
         st.error(f"과제 등록 오류: {e}")
@@ -150,6 +189,7 @@ def delete_problem(prob_id):
             json={"action": "delete", "id": str(prob_id), "_token": sheet_api_token},
             timeout=10,
         )
+        invalidate_reads()
         return res.status_code == 200
     except Exception as e:
         st.error(f"과제 삭제 오류: {e}")
@@ -175,6 +215,8 @@ def _post_action(payload):
         payload = dict(payload)
         payload["_token"] = sheet_api_token
         res = requests.post(sheet_url, json=payload, timeout=15)
+        if payload.get("action") != "login":
+            invalidate_reads()
         if res.status_code == 200:
             return res.json()
         return {"ok": False, "error": f"서버 오류 (status {res.status_code})"}
@@ -235,14 +277,9 @@ def admin_list_students():
     if not sheet_url:
         return []
     try:
-        params = {"action": "list_students", "t": int(time.time() * 1000)}
-        if sheet_api_token:
-            params["token"] = sheet_api_token
-        res = requests.get(sheet_url, params=params, timeout=15)
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, list):
-                return data
+        data = _get_json({"action": "list_students"}, timeout=15)
+        if isinstance(data, list):
+            return data
     except Exception as e:
         st.error(f"학생 목록 조회 오류: {e}")
     return []
@@ -312,12 +349,8 @@ def get_app_status():
                 return f.read().strip()
         return "OFF"
     try:
-        params = {"action": "get_status", "t": int(time.time() * 1000)}
-        if sheet_api_token:
-            params["token"] = sheet_api_token
-        res = requests.get(sheet_url, params=params, timeout=10)
-        if res.status_code == 200:
-            data = res.json()
+        data = _get_json({"action": "get_status"}, timeout=10)
+        if isinstance(data, dict):
             return data.get("status", "OFF")
     except Exception:
         pass
@@ -339,13 +372,7 @@ def _get_action(params, timeout=30):
     if not sheet_url:
         return None
     try:
-        params = dict(params)
-        params["t"] = int(time.time() * 1000)
-        if sheet_api_token:
-            params["token"] = sheet_api_token
-        res = requests.get(sheet_url, params=params, timeout=timeout)
-        if res.status_code == 200:
-            return res.json()
+        return _get_json(params, timeout=timeout)
     except Exception as e:
         st.error(f"보관함 조회 오류: {e}")
     return None
@@ -606,7 +633,7 @@ def classify_frame(problem_text, taxonomy, api_key, model_name):
         key = (t.get("grade", ""), t.get("unit", ""), t.get("type", ""))
         if key not in types:
             types.append(key)
-    type_lines = "\n".join(f"{i}. {g} | {u} | {ty}" for i, (g, u, ty) in enumerate(types[:600]))
+    type_lines = "\n".join(f"{i}. {g} | {u} | {ty}" for i, (g, u, ty) in enumerate(types[:2000]))
     step1 = _ask_json(model, f"""
     너는 대한민국 중·고등학교 수학 교육과정 전문가야. 아래 문제가 어느 학년·단원·유형인지 골라라.
 
@@ -633,7 +660,7 @@ def classify_frame(problem_text, taxonomy, api_key, model_name):
         grade, unit, type_ = (str(step1.get(k, "")).strip() for k in ("grade", "unit", "type"))
 
     frames = [t for t in taxonomy if (t.get("grade"), t.get("unit"), t.get("type")) == (grade, unit, type_)]
-    frame_lines = "\n".join(f"{i}. {t.get('frame', '')} — {t.get('description', '')}" for i, t in enumerate(frames[:300]))
+    frame_lines = "\n".join(f"{i}. {t.get('frame', '')} — {t.get('description', '')}" for i, t in enumerate(frames[:1000]))
     step2 = _ask_json(model, f"""
     너는 수학 문제 분류 전문가야. 아래 문제는 [{grade} › {unit} › {type_}] 유형이다.
     이 유형 안에서 "문제틀"을 골라라. 문제틀은 숫자나 난이도만 다르고 푸는 방법과 구조가 같은 문제들의 묶음이다.
