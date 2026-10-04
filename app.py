@@ -1906,7 +1906,7 @@ def student_admin_panel(class_list):
         if student_list:
             wd_sid_options = [s.get("student_id", "") for s in student_list]
             wd_pick_sid = st.selectbox("탈퇴시킬 학생 아이디", wd_sid_options, key="admin_withdraw_pick_sid")
-            st.caption("⚠️ 탈퇴 처리하면 해당 학생의 계정과 개인 보관함 데이터가 모두 삭제되며, 되돌릴 수 없습니다.")
+            st.caption("⚠️ 탈퇴 처리하면 해당 학생의 계정과 학생 기록(숙제 결과, 시험 점수, 중요 표시, 개인 보관함, 문제 배정)이 삭제되며, 되돌릴 수 없습니다. 문제 은행의 문제는 그대로 남습니다.")
             wd_admin_confirm = st.checkbox(f"'{wd_pick_sid}' 학생을 정말 탈퇴시키겠습니까?", key="admin_withdraw_confirm")
             if st.button("탈퇴 처리하기", key="admin_withdraw_btn"):
                 if not wd_admin_confirm:
@@ -1943,7 +1943,7 @@ with st.sidebar:
         # ★ 수정: 학생 본인 탈퇴 기능 (비밀번호 재확인 + 확인 체크박스 필요)
         if st.session_state.auth_role != "admin":
             with st.expander("⚠️ 회원 탈퇴"):
-                st.caption("탈퇴하면 계정과 내 보관함에 저장한 모든 문제가 삭제되며, 되돌릴 수 없습니다.")
+                st.caption("탈퇴하면 계정과 내 기록(숙제 결과, 시험 점수, 중요 표시, 받은 문제 배정)이 삭제되며, 되돌릴 수 없습니다.")
                 wd_pw = st.text_input("본인 확인을 위해 비밀번호를 입력하세요", type="password", key="withdraw_pw")
                 wd_confirm = st.checkbox("탈퇴 시 모든 데이터가 삭제된다는 것을 이해했습니다", key="withdraw_confirm")
                 if st.button("탈퇴하기", key="withdraw_btn"):
