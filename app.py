@@ -12,6 +12,7 @@ import io
 import hashlib
 import hmac
 import logging
+import ast
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 from google import genai
@@ -674,51 +675,259 @@ def bank_by_ids(ids):
 
 
 # ---------- 자동 채점 ----------
+# 결과: 'Y' 맞음 / 'N' 틀림 / '?' 자동으로 단정하기 어려워 선생님 확인 필요
+# 원칙: 확실히 같으면 Y, 확실히 다르면 N, 식의 꼴만 다르거나 읽을 수 없으면 ?(선생님이 확인)
 _CIRCLED = {"①": "1", "②": "2", "③": "3", "④": "4", "⑤": "5"}
+_NUM = r"[-+]?\d+(?:\.\d+)?"
+_REL_RE = re.compile(r"<=|>=|!=|<|>")
 
 
-def _canon_answer_part(x):
-    for k, v in _CIRCLED.items():
-        x = x.replace(k, v)
-    x = x.strip().strip(".").strip()
-    x = re.sub(r"^(답|정답)[:：]?", "", x)
-    x = re.sub(r"^[a-z]=", "", x)                       # x=3 → 3
-    x = re.sub(r"(?<=\d)(cm|mm|km|kg|ml|[가-힣°%]+)$", "", x)  # 3cm, 5개, 30° → 숫자만
-    m = re.fullmatch(r"([-+]?)\(?([-+]?\d+(?:\.\d+)?)\)?/\(?([-+]?\d+(?:\.\d+)?)\)?", x)
+def _top_split(s, seps=(",",)):
+    """괄호 밖에 있는 구분 글자로만 나눈다. '(1,2)'는 한 덩어리로 둔다."""
+    parts, depth, cur = [], 0, ""
+    for ch in s:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        if depth == 0 and ch in seps:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    return parts
+
+
+def _canon_number(x):
+    """숫자·분수·소수를 같은 꼴(기약분수)로. 숫자가 아니면 None."""
+    m = re.fullmatch(r"([-+]?)\(?(" + _NUM + r")\)?/\(?(" + _NUM + r")\)?", x)
     try:
         if m:
             val = Fraction(m.group(2)) / Fraction(m.group(3))
             return str(-val if m.group(1) == "-" else val)
-        if re.fullmatch(r"[-+]?\d+(?:\.\d+)?", x):
+        if re.fullmatch(_NUM, x):
             return str(Fraction(x))
     except (ValueError, ZeroDivisionError):
         pass
-    return x
+    return None
+
+
+def _canon_expr(x):
+    """식을 항 단위로 나눠 순서 없이 비교할 수 있는 꼴로: 1+2x == 2x+1."""
+    x = x.replace("*", "")
+    terms, depth, cur = [], 0, ""
+    for i, ch in enumerate(x):
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        if depth == 0 and ch in "+-" and cur and cur[-1] not in "^(/*":
+            terms.append(cur)
+            cur = ch
+        else:
+            cur += ch
+    if cur:
+        terms.append(cur)
+    out = []
+    for t in terms:
+        t = t[1:] if t.startswith("+") else t
+        out.append(_canon_number(t) or t)
+    return "+".join(sorted(out))
+
+
+def _canon_value(x):
+    num = _canon_number(x)
+    return num if num is not None else _canon_expr(x)
+
+
+def _canon_part(x):
+    """답 한 덩어리를 비교용 글자로. 앞뒤 군더더기(답:, 단위, x=)와 숫자 꼴을 정리한다."""
+    for k, v in _CIRCLED.items():
+        x = x.replace(k, v)
+    x = x.strip().strip(".").strip()
+    x = re.sub(r"^(답|정답)[:：]?", "", x)
+    x = re.sub(r"(?<=\d)(cm|mm|km)\^?[23]?$", "", x)
+    x = re.sub(r"(?<=\d)[가-힣°%]+$", "", x)               # 5개, 30° → 숫자만
+    if x.startswith("(") and x.endswith(")") and len(_top_split(x[1:-1])) > 1:
+        return "(" + ",".join(_canon_value(p) for p in _top_split(x[1:-1])) + ")"   # 좌표 (1,2): 순서 있음
+    rels = _REL_RE.findall(x)
+    if len(rels) == 1:                                       # 부등식: 3<x 와 x>3 은 같다
+        left, right = _REL_RE.split(x)
+        rel = rels[0]
+        if rel in (">", ">="):
+            left, right, rel = right, left, rel.replace(">", "<")
+        return f"{_canon_value(left)}{rel}{_canon_value(right)}"
+    return _canon_value(x)
 
 
 def norm_answer(s):
-    """답을 비교하기 좋은 꼴로: $·띄어쓰기 제거, \\frac{a}{b} → a/b, x=3 → 3, 여러 답은 순서 무관."""
+    """답을 비교하기 좋은 꼴(글자 목록)로.
+    $·띄어쓰기 제거, \\frac{a}{b} → a/b, 천 단위 쉼표 제거, 괄호 밖 쉼표로 여러 답 나누기(순서 무관),
+    좌표 (1,2)는 한 덩어리, 변수가 둘 이상인 연립 답(x=3, y=2)은 변수 이름을 남긴다."""
     s = str(s or "")
     for a, b in (("$", ""), ("\\left", ""), ("\\right", ""), ("\\,", ""), ("\\ ", ""), ("−", "-"),
-                 ("×", "*"), ("÷", "/"), ("\\times", "*"), ("\\div", "/"), ("\\cdot", "*")):
+                 ("×", "*"), ("÷", "/"), ("\\times", "*"), ("\\div", "/"), ("\\cdot", "*"),
+                 ("≤", "<="), ("≥", ">="), ("≠", "!="), ("²", "^2"), ("³", "^3"), ("\\pi", "pi"), ("π", "pi")):
         s = s.replace(a, b)
+    s = re.sub(r"\\leq?(?![a-z])", "<=", s)
+    s = re.sub(r"\\geq?(?![a-z])", ">=", s)
+    s = re.sub(r"\\sqrt\{([^{}]*)\}", r"sqrt(\1)", s)
+    s = re.sub(r"\^\{([^{}]*)\}", r"^(\1)", s)
     s = re.sub(r"\\[dt]frac", r"\\frac", s)
     prev = None
     while prev != s:
         prev = s
         s = re.sub(r"\\frac\{([^{}]*)\}\{([^{}]*)\}", r"(\1)/(\2)", s)
-    s = re.sub(r"\s+", "", s).lower()
-    parts = re.split(r",|또는|or|;|그리고", s)
-    return sorted({_canon_answer_part(p) for p in parts if p})
+    s = s.lower()
+    s = re.sub(r"(?<![\d.])\d{1,3}(?:,\d{3})+(?!\d)", lambda m: m.group(0).replace(",", ""), s)  # 1,000 → 1000
+    s = re.sub(r"\s+or\s+|또는|그리고|;", ",", s)
+    s = re.sub(r"\s+", "", s)
+    raw = [p for p in _top_split(s) if p]
+    assigned = [re.fullmatch(r"([a-z])=(.+)", p) for p in raw]
+    keep_vars = all(assigned) and len({m.group(1) for m in assigned}) > 1
+    items = []
+    for p, m in zip(raw, assigned):
+        if m and not keep_vars:
+            p = m.group(2)                                   # x=3 → 3
+        elif m:
+            p = m.group(1) + "=" + _canon_part(m.group(2))
+            items.append(p)
+            continue
+        items.append(_canon_part(p))
+    return sorted(set(items))
+
+
+# 식의 값을 직접 계산해서 "꼴은 다르지만 같은 식"인지 확인한다 (곱셈 생략 2x, 거듭제곱 ^, sqrt, pi 지원)
+_EVAL_POINTS = [{"base": 1.7}, {"base": -2.3}, {"base": 0.6}]
+
+
+def _eval_expr(expr, env):
+    e = expr.replace("sqrt", "§").replace("pi", "π")
+    e = re.sub(r"(?<=[\d)a-zπ])(?=[a-zπ(])", "*", e)
+    e = re.sub(r"§\*\(", "§(", e).replace("§", "sqrt").replace("^", "**")
+
+    def ev(n):
+        if isinstance(n, ast.Expression):
+            return ev(n.body)
+        if isinstance(n, ast.Constant) and isinstance(n.value, (int, float)):
+            return float(n.value)
+        if isinstance(n, ast.Name):
+            if n.id == "π":
+                return 3.141592653589793
+            if n.id in env:
+                return env[n.id]
+            raise ValueError(n.id)
+        if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.UAdd, ast.USub)):
+            v = ev(n.operand)
+            return v if isinstance(n.op, ast.UAdd) else -v
+        if isinstance(n, ast.BinOp):
+            a, b = ev(n.left), ev(n.right)
+            if isinstance(n.op, ast.Add):
+                return a + b
+            if isinstance(n.op, ast.Sub):
+                return a - b
+            if isinstance(n.op, ast.Mult):
+                return a * b
+            if isinstance(n.op, ast.Div):
+                return a / b
+            if isinstance(n.op, ast.Pow) and abs(b) <= 12 and abs(a) <= 1e6:
+                r = a ** b
+                if isinstance(r, complex):
+                    raise ValueError("complex")
+                return r
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "sqrt" and len(n.args) == 1:
+            v = ev(n.args[0])
+            if v < 0:
+                raise ValueError("neg sqrt")
+            return v ** 0.5
+        raise ValueError("unsupported")
+
+    try:
+        return ev(ast.parse(e, mode="eval"))
+    except (ValueError, SyntaxError, ZeroDivisionError, OverflowError, TypeError, RecursionError):
+        return None
+
+
+def _same_value(a, b):
+    """두 식이 값으로 같으면 True, 다르면 False, 계산할 수 없으면 None."""
+    names = sorted(set(re.findall(r"[a-z]", a.replace("sqrt", "").replace("pi", ""))) |
+                   set(re.findall(r"[a-z]", b.replace("sqrt", "").replace("pi", ""))))
+    for k, pt in enumerate(_EVAL_POINTS):
+        env = {nm: pt["base"] + (ord(nm) % 7) * 0.31 + k * 0.17 for nm in names}
+        va, vb = _eval_expr(a, env), _eval_expr(b, env)
+        if va is None or vb is None:
+            return None
+        if abs(va - vb) > 1e-7 * max(1.0, abs(va), abs(vb)):
+            return False
+    return True
+
+
+def _compare_item(g, c):
+    """답 한 개씩 비교: 'Y' / 'N' / '?'."""
+    if g == c:
+        return "Y"
+    gn, cn = _canon_number(g), _canon_number(c)
+    if gn is not None and cn is not None:
+        return "N"
+    if g.startswith("(") and c.startswith("("):                  # 좌표: 원소별로
+        gp, cp = _top_split(g[1:-1]), _top_split(c[1:-1])
+        if len(gp) != len(cp):
+            return "N"
+        res = {_compare_item(x, y) for x, y in zip(gp, cp)}
+        return "Y" if res == {"Y"} else ("N" if "N" in res else "?")
+    gr, cr = _REL_RE.findall(g), _REL_RE.findall(c)
+    if gr or cr:
+        if gr != cr or len(gr) != 1:
+            return "N" if gr != cr else "?"
+        res = {_compare_item(x, y) for x, y in zip(_REL_RE.split(g), _REL_RE.split(c))}
+        return "?" if res == {"Y"} or "?" in res and "N" not in res else "N"
+    if re.search(r"[^\x00-\x7f]", g + c):                      # 글자(ㄱ, 참/거짓 등)가 든 답은 식이 아니므로 다르면 틀림
+        return "N"
+    eq = _same_value(g, c)
+    if eq is None:
+        return "?"
+    return "?" if eq else "N"                                  # 값은 같고 꼴만 다름(예: 2(x+1) 과 2x+2) → 선생님 확인
 
 
 def grade_answer(given, correct):
-    """'Y' 맞음 / 'N' 틀림 / '?' 정답이 없어 선생님 확인 필요."""
+    """'Y' 맞음 / 'N' 틀림 / '?' 정답이 없거나 자동으로 단정하기 어려워 선생님 확인 필요.
+    채점 중 예상치 못한 오류가 나도 제출이 막히지 않게 '?'(선생님 확인)로 돌려준다."""
+    try:
+        return _grade_answer(given, correct)
+    except Exception:
+        return "?"
+
+
+def _grade_answer(given, correct):
     if not str(correct or "").strip():
         return "?"
     if not str(given or "").strip():
         return "N"
-    return "Y" if norm_answer(given) == norm_answer(correct) else "N"
+    g, c = norm_answer(given), norm_answer(correct)
+    if g == c:
+        return "Y"
+    # 연립 답은 변수 이름을 남겨 비교한다. 학생이 변수 없이 쓰면 어느 값이 어느 변수인지 알 수 없어 선생님 확인
+    plain = lambda items: sorted(i.split("=", 1)[1] if re.fullmatch(r"[a-z]=.+", i) else i for i in items)
+    if not any("=" in i for i in g) and plain(g) == plain(c):
+        return "?"
+    rg = [i for i in g if i not in c]
+    rc = [i for i in c if i not in g]
+    if len(rg) != len(rc):
+        return "N"
+    if all(re.fullmatch(r"[a-z]=.+", i) for i in rg + rc):      # 변수별로 값을 비교
+        gv = dict(i.split("=", 1) for i in rg)
+        cv = dict(i.split("=", 1) for i in rc)
+        if set(gv) != set(cv):
+            return "N"
+        res = {_compare_item(gv[k], cv[k]) for k in cv}
+        return "N" if "N" in res else ("?" if "?" in res else "Y")
+    if len(rg) == 1:
+        return _compare_item(rg[0], rc[0])
+    # 여러 개가 남으면: 하나라도 식이면 선생님 확인, 모두 숫자면 틀림
+    if all(_canon_number(i) is not None for i in rg + rc):
+        return "N"
+    return "?"
 
 
 # ==========================================
@@ -2978,7 +3187,7 @@ if tab_hw is not None:
                         with _d1:
                             _hd = st.pills("난이도", DIFFICULTIES, selection_mode="multi", default=DIFFICULTIES, key="hwu_diff") or DIFFICULTIES
                         with _d2:
-                            _hvonly = st.checkbox("검수 완료 문제만", key="hwu_ver")
+                            _hvonly = st.checkbox("검수 완료 문제만", value=True, key="hwu_ver", help="AI가 만든 정답이 틀렸을 수 있어서, 숙제에는 검수한 문제만 쓰는 것을 권해요.")
                         if not _hu:
                             st.caption("이 학년·학기에 단원이 없어요.")
                         else:
