@@ -13,7 +13,7 @@ import hashlib
 import hmac
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
-import google.generativeai as genai
+from google import genai
 
 # 페이지 기본 설정
 st.set_page_config(page_title="수학 유사 문제 클래스룸", layout="centered")
@@ -887,8 +887,7 @@ def classify_frame(problem_text, taxonomy, api_key, model_name):
     """문제를 학년 › 단원 › 유형 › 문제틀로 분류하고 난이도를 매긴다.
     유형표가 커져도 동작하도록 두 번에 나눠 고른다: ① 학년·단원·유형 ② 그 유형 안의 문제틀.
     기존 이름이 맞으면 그 글자 그대로 쓰고, 없으면 새 이름(+문제틀 설명)을 제안한다."""
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(model_name)
+    model = GeminiModel(api_key, model_name)
 
     types = []
     for t in taxonomy:
@@ -1098,8 +1097,7 @@ def type_label(t):
 
 def classify_problem(ocr_text, existing_types, api_key, model_name):
     """원본 문제를 보고 학년 › 단원 › 세부 유형을 제안. 기존 유형과 같으면 그 이름을 그대로 쓰게 한다."""
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(model_name)
+    model = GeminiModel(api_key, model_name)
     existing_lines = "\n".join(f"- {t.get('grade', '')} | {t.get('unit', '')} | {t.get('subtype', '')}" for t in existing_types[:200])
     prompt = f"""
     너는 대한민국 중·고등학교 수학 교육과정 전문가야. 아래 문제의 유형을 분류하라.
@@ -1429,8 +1427,7 @@ def parse_single_problem(res_text, prob_num):
 # ★ 병렬 단일 문제 생성기 (방정식 옆 곡선 화살표 지원)
 # ==========================================
 def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instruction, api_key, model_name):
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(model_name)
+    model = GeminiModel(api_key, model_name)
     
     if prob_num == 1:
         type_instruction = """
@@ -1754,18 +1751,24 @@ def render_personal_item(p, student_id):
 # ==========================================
 # ★ 모델 설정
 # ==========================================
-@st.cache_data(show_spinner=False)
-def get_fastest_model_name(api_key):
-    try:
-        genai.configure(api_key=api_key)
-        available = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        flash_models = [m for m in available if 'flash' in m and '2.5-flash' not in m]
-        if flash_models:
-            return flash_models[0]
-        safe_models = [m for m in available if '2.5-flash' not in m]
-        return safe_models[0] if safe_models else "gemini-1.5-pro"
-    except Exception:
-        return "gemini-1.5-flash"
+# Secrets에 GEMINI_MODEL을 넣으면 그 모델로 고정된다(예: gemini-3.7-flash).
+# 비워 두면 gemini-flash-latest를 써서, 구글이 새 Flash를 내놓을 때마다 자동으로 최신 모델을 쓴다.
+DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
+
+
+def get_gemini_model_name():
+    return (st.secrets.get("GEMINI_MODEL", "") or DEFAULT_GEMINI_MODEL).strip()
+
+
+class GeminiModel:
+    """google-genai SDK를 예전 GenerativeModel처럼 쓰기 위한 얇은 감싸개."""
+
+    def __init__(self, api_key, model_name):
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = model_name
+
+    def generate_content(self, prompt):
+        return self.client.models.generate_content(model=self.model_name, contents=prompt)
 
 # ==========================================
 # ★ 반 이름 설정 (1M2, 1M3, 2M1, 2M3, 3M1, 3M3)
@@ -2093,7 +2096,7 @@ if tab2 is not None:
                 with st.spinner("AI가 [1번 기본 다지기]와 [2번 실력 키우기]를 동시에 차별화하여 병렬 생성하고 있습니다 (약 3~5초)..."):
                     try:
                         solution_instruction = "단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
-                        fast_model = get_fastest_model_name(gemini_api_key)
+                        fast_model = get_gemini_model_name()
                     
                         existing_tax = taxonomy_list() if bank_backend_ready() else []
                         with ThreadPoolExecutor(max_workers=3) as executor:
@@ -2842,7 +2845,7 @@ if tab_similar is not None:
                 else:
                     with st.spinner("AI가 같은 문제틀을 찾는 중..."):
                         try:
-                            st.session_state.sim_result = classify_frame(_stext, _stax, gemini_api_key, get_fastest_model_name(gemini_api_key))
+                            st.session_state.sim_result = classify_frame(_stext, _stax, gemini_api_key, get_gemini_model_name())
                             st.session_state.sim_ver = st.session_state.get("sim_ver", 0) + 1
                         except Exception as e:
                             st.error(f"AI 분류에 실패했습니다: {e}")
@@ -3302,8 +3305,7 @@ def history_text(hist):
 
 
 def _gemini_json(prompt):
-    genai.configure(api_key=gemini_api_key)
-    model = genai.GenerativeModel(get_fastest_model_name(gemini_api_key))
+    model = GeminiModel(gemini_api_key, get_gemini_model_name())
     text = model.generate_content(prompt).text
     m = re.search(r"\{.*\}", text, re.S)
     return json.loads(m.group(0)) if m else {}
