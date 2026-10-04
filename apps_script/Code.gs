@@ -17,7 +17,8 @@
  *
  * [설치 방법]
  * 1. 기존 코드를 전부 지우고 이 파일 내용을 붙여넣기
- * 2. 스크립트 속성의 SECRET_TOKEN은 그대로 두면 됨 (Streamlit Secrets의 SHEET_API_TOKEN과 동일한 값)
+ * 2. 스크립트 속성의 SECRET_TOKEN은 반드시 있어야 함 (Streamlit Secrets의 SHEET_API_TOKEN과 동일한 값).
+ *    비어 있으면 보안을 위해 모든 요청을 거부한다.
  * 3. [배포] > [배포 관리] > 연필 아이콘 > 새 버전으로 재배포
  *    이번 버전은 구글 드라이브를 사용하므로, 재배포할 때 "드라이브 접근 권한"을 묻는 창이 뜨면 허용해 주세요.
  */
@@ -36,6 +37,24 @@ var ARCHIVE_FOLDER_NAME = '수학클래스룸_원본사진';
 
 function getSecretToken_() {
   return PropertiesService.getScriptProperties().getProperty('SECRET_TOKEN') || '';
+}
+
+// 토큰이 맞는지 확인한다. SECRET_TOKEN 속성이 비어 있으면 (설정을 빼먹은 경우) 모든 요청을 거부한다.
+// 글자 하나씩 끝까지 비교해서 비교 시간으로 값을 추측하기 어렵게 한다.
+function tokenOk_(given) {
+  var secret = getSecretToken_();
+  if (!secret) return false;
+  given = String(given || '');
+  var diff = secret.length ^ given.length;
+  for (var i = 0; i < secret.length; i++) {
+    diff |= secret.charCodeAt(i) ^ (i < given.length ? given.charCodeAt(i) : 0);
+  }
+  return diff === 0;
+}
+
+function authError_() {
+  var msg = getSecretToken_() ? "unauthorized" : "token_not_configured";
+  return jsonResponse_({ error: msg });
 }
 
 function jsonResponse_(obj) {
@@ -79,9 +98,8 @@ function getProblemsSheet_() {
 // 진입점
 // ==========================================
 function doGet(e) {
-  var secret = getSecretToken_();
-  if (secret && (!e.parameter || e.parameter.token !== secret)) {
-    return jsonResponse_({ error: "unauthorized" });
+  if (!tokenOk_(e.parameter && e.parameter.token)) {
+    return authError_();
   }
 
   var action = e.parameter && e.parameter.action;
@@ -113,15 +131,14 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  var secret = getSecretToken_();
   var body;
   try {
     body = JSON.parse(e.postData.contents);
   } catch (err) {
     return jsonResponse_({ error: "invalid_json" });
   }
-  if (secret && body._token !== secret) {
-    return jsonResponse_({ error: "unauthorized" });
+  if (!tokenOk_(body && body._token)) {
+    return authError_();
   }
 
   var action = body.action;
