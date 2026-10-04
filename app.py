@@ -91,6 +91,7 @@ def invalidate_reads():
     _cached_get_json.clear()
     _db_students.clear()
     _db_status.clear()
+    _db_bank_search.clear()
     for fn in ("archive_types", "taxonomy_list"):
         f = globals().get(fn)
         if f is not None:
@@ -272,6 +273,52 @@ def _db_students(url):
 @st.cache_data(ttl=60, show_spinner=False)
 def _db_status(url):
     return _db_connect(url).get_status()
+
+
+@st.cache_data(ttl=60, show_spinner=False, max_entries=300)
+def _db_bank_search(url, args_json):
+    return _db_connect(url).bank_search(**json.loads(args_json))
+
+
+def _db_image_upload(image_b64, name):
+    """원본 사진은 구글 드라이브에 둔다(Apps Script 버전 9의 image_save). (파일 id, 오류 문장)을 돌려준다."""
+    if backend_version() < 9:
+        return None, "사진을 저장하려면 Apps Script를 최신 버전(9)으로 재배포해 주세요."
+    res = _post_action({"action": "image_save", "image_b64": image_b64, "name": name})
+    if res.get("ok") and res.get("file_id"):
+        return res["file_id"], None
+    return None, res.get("error") or "사진을 올리지 못했어요."
+
+
+def _db_image_discard(file_id):
+    """저장하지 못한 문제의 사진을 드라이브에서 치운다(실패해도 무시)."""
+    if file_id:
+        _post_action({"action": "image_trash", "file_id": file_id})
+
+
+def _db_bank_save(problems, image_b64, group_id):
+    """문제 은행 저장(데이터베이스). 사진은 드라이브에 올리고 문제에는 파일 id만 저장한다.
+    저장이 안 되면 올린 사진도 치운다."""
+    url = _db_url()
+    if not url:
+        return dict(_DB_MISSING)
+    db = _db_connect(url)
+    file_id = ""
+    try:
+        already = bool(problems) and db.bank_search(ids=db.bank_ids_for(group_id, 1))["total"] > 0
+        if image_b64 and any(p.get("use_image") for p in problems) and not already:
+            file_id, err = _db_image_upload(image_b64, group_id)
+            if err:
+                return {"ok": False, "error": err}
+        res = db.bank_save(group_id, problems, file_id or "")
+    except Exception as e:
+        _db_image_discard(file_id)
+        logging.error("문제 은행 저장 실패: %s", _mask_secrets(e))
+        return {"ok": False, "error": "데이터베이스 오류가 발생했어요. 잠시 후 다시 시도해 주세요."}
+    if file_id and (not res.get("ok") or res.get("duplicate")):
+        _db_image_discard(file_id)
+    invalidate_reads()
+    return res
 
 
 def _post_action(payload):
@@ -1034,6 +1081,20 @@ NEW_OPTION = "＋ 새로 입력"
 
 def bank_search(limit=50, offset=0, **filters):
     """문제 은행 검색. filters: grade, unit, type, frame, difficulty(list), verified(bool), source, keyword, ids(list)."""
+    if storage_backend() == "supabase":
+        if not _db_url():
+            return {"items": [], "total": 0}
+        args = {"offset": offset, "limit": limit, "type_": filters.get("type", "") or ""}
+        for k in ("grade", "unit", "frame", "source", "keyword"):
+            args[k] = filters.get(k, "") or ""
+        args["difficulty"] = list(filters.get("difficulty") or [])
+        args["verified"] = bool(filters.get("verified"))
+        args["ids"] = [str(i) for i in (filters.get("ids") or [])]
+        try:
+            return _db_bank_search(_db_url(), json.dumps(args, sort_keys=True, ensure_ascii=False))
+        except Exception as e:
+            safe_error("문제 은행을 불러오지 못했어요.", e)
+            return {"items": [], "total": 0}
     params = {"action": "bank_search", "limit": limit, "offset": offset}
     for k in ("grade", "unit", "type", "frame", "source", "keyword"):
         if filters.get(k):
@@ -1053,6 +1114,14 @@ def bank_search(limit=50, offset=0, **filters):
 @st.cache_data(ttl=60, show_spinner=False)
 def taxonomy_list():
     """유형표 전체 + 문제틀마다 문제 수(count), 검수 완료 수(verified), 난이도별 수."""
+    if storage_backend() == "supabase":
+        if not _db_url():
+            return []
+        try:
+            return _db_connect(_db_url()).taxonomy_list()
+        except Exception as e:
+            logging.error("유형표를 읽지 못했어요: %s", _mask_secrets(e))
+            return []
     data = _get_action({"action": "taxonomy"})
     if not isinstance(data, list):
         return []
@@ -1062,6 +1131,8 @@ def taxonomy_list():
 @st.cache_data(ttl=60, show_spinner=False)
 def bank_backend_ready():
     """Apps Script가 문제 은행 기능이 있는 버전인지 확인."""
+    if storage_backend() == "supabase":
+        return bool(_db_url())
     if not sheet_url:
         return False
     data = _get_action({"action": "bank_search", "limit": 1})
@@ -1080,6 +1151,11 @@ def _bank_changed():
 
 def bank_save(problems, image_b64="", group_id=""):
     """group_id를 주면 같은 group_id로 다시 저장해도 중복되지 않는다(서버가 이미 있으면 건너뜀)."""
+    if storage_backend() == "supabase":
+        res = _db_bank_save(problems, image_b64, group_id or str(int(time.time() * 1000)))
+        if res.get("ok"):
+            _bank_changed()
+        return res
     result = _post_action({"action": "bank_save", "group_id": group_id or str(int(time.time() * 1000)),
                            "problems": problems, "image_b64": image_b64 or ""})
     if result.get("ok"):
@@ -1089,12 +1165,29 @@ def bank_save(problems, image_b64="", group_id=""):
 
 def save_assign_ready():
     """문제 은행 저장 + 학생 배정을 한 번에 하는 기능이 있는 Apps Script(버전 7 이상)인지 확인."""
+    if storage_backend() == "supabase":
+        return True
     return backend_version() >= 7
 
 
 def save_and_assign(request_id, problems, image_b64, archive_payload):
     """문제 은행 저장과 학생 배정을 한 요청으로 처리한다. 둘 중 하나만 저장되고 끊기는 일이 없고,
     같은 request_id로 다시 보내도(두 번 클릭, 재시도) 중복 저장되지 않는다."""
+    if storage_backend() == "supabase":
+        # 문제 은행은 데이터베이스에 저장하고, 학생 배정은 5단계에서 옮기기 전까지 구글 시트(보관함)에 저장한다.
+        # (옮기는 동안만 이렇게 두 곳에 나눠 저장하므로 한쪽만 저장될 수 있다. 5단계에서 한 번에 처리한다.)
+        res = {"ok": True, "ids": []}
+        if problems:
+            res = _db_bank_save(problems, image_b64, request_id)
+            if not res.get("ok"):
+                return res
+            _bank_changed()
+        if archive_payload:
+            arch = _post_action(dict(archive_payload, action="archive_save", id=request_id))
+            if not arch.get("ok"):
+                return {"ok": False, "error": arch.get("error", "학생 배정을 저장하지 못했어요.")}
+            return {"ok": True, "ids": res.get("ids", []), "duplicate": False}
+        return res
     body = {"action": "save_assign", "image_b64": image_b64 or ""}
     if problems:
         body["bank"] = {"group_id": request_id, "problems": problems}
@@ -1107,6 +1200,14 @@ def save_and_assign(request_id, problems, image_b64, archive_payload):
 
 
 def bank_update(prob_id, **fields):
+    if storage_backend() == "supabase":
+        if not _db_url():
+            return False
+        result = _db_connect(_db_url()).bank_update(prob_id, fields)
+        invalidate_reads()
+        if result.get("ok"):
+            _bank_changed()
+        return bool(result.get("ok"))
     result = _post_action({"action": "bank_update", "id": prob_id, "fields": fields})
     if result.get("ok"):
         _bank_changed()
@@ -1114,6 +1215,17 @@ def bank_update(prob_id, **fields):
 
 
 def bank_delete(prob_id):
+    if storage_backend() == "supabase":
+        if not _db_url():
+            return False
+        result = _db_connect(_db_url()).bank_delete(prob_id)
+        invalidate_reads()
+        if result.get("ok"):
+            _db_image_discard(result.get("orphan_image", ""))
+            _bank_changed()
+            return True
+        st.session_state["bank_err"] = result.get("error", "삭제하지 못했어요.")
+        return False
     result = _post_action({"action": "bank_delete", "id": prob_id})
     if result.get("ok"):
         _bank_changed()
@@ -1121,6 +1233,13 @@ def bank_delete(prob_id):
 
 
 def taxonomy_upsert(grade, unit, type_, frame, description):
+    if storage_backend() == "supabase":
+        if not _db_url():
+            return False
+        result = _db_connect(_db_url()).taxonomy_upsert(grade, unit, type_, frame, description)
+        invalidate_reads()
+        _bank_changed()
+        return bool(result.get("ok"))
     result = _post_action({"action": "taxonomy_upsert", "grade": grade, "unit": unit, "type": type_,
                            "frame": frame, "description": description})
     _bank_changed()
@@ -1128,6 +1247,13 @@ def taxonomy_upsert(grade, unit, type_, frame, description):
 
 
 def taxonomy_rename(level, old, new):
+    if storage_backend() == "supabase":
+        if not _db_url():
+            return dict(_DB_MISSING)
+        result = _db_connect(_db_url()).taxonomy_rename(level, old, new)
+        invalidate_reads()
+        _bank_changed()
+        return result
     payload = {"action": "taxonomy_rename", "level": level}
     for lv in TAX_LEVELS[:TAX_LEVELS.index(level) + 1]:
         payload["old_" + lv] = old.get(lv, "")
@@ -1140,9 +1266,18 @@ def taxonomy_rename(level, old, new):
 @st.cache_data(ttl=300, show_spinner=False)
 def unit_semesters():
     """단원별 학기 {(학년, 단원): '1학기'/'2학기'/'공통'}."""
-    if backend_version() < 6:
+    if storage_backend() == "supabase":
+        if not _db_url():
+            return {}
+        try:
+            data = _db_connect(_db_url()).unit_semesters()
+        except Exception as e:
+            logging.error("단원 학기를 읽지 못했어요: %s", _mask_secrets(e))
+            return {}
+    elif backend_version() < 6:
         return {}
-    data = _get_action({"action": "unit_semesters"})
+    else:
+        data = _get_action({"action": "unit_semesters"})
     if not isinstance(data, list):
         return {}
     return {(r.get("grade", ""), r.get("unit", "")): r.get("semester", "") for r in data if isinstance(r, dict) and r.get("unit")}
@@ -1151,7 +1286,10 @@ def unit_semesters():
 def unit_semester_set(grade, unit, semester):
     if not (unit and semester) or unit_semesters().get((grade, unit)) == semester:
         return True
-    ok = bool(_post_action({"action": "unit_semester_set", "grade": grade, "unit": unit, "semester": semester}).get("ok"))
+    if storage_backend() == "supabase":
+        ok = bool(_db_url()) and bool(_db_connect(_db_url()).unit_semester_set(grade, unit, semester).get("ok"))
+    else:
+        ok = bool(_post_action({"action": "unit_semester_set", "grade": grade, "unit": unit, "semester": semester}).get("ok"))
     unit_semesters.clear()
     return ok
 
@@ -1409,6 +1547,8 @@ def render_bank_problem(p, key_prefix, editable=True):
             if st.button("🗑️ 삭제", key=f"{key_prefix}_del_{pid}"):
                 if bank_delete(pid):
                     st.rerun()
+                else:
+                    st.error(st.session_state.pop("bank_err", "삭제하지 못했어요."))
     if edit:
         q = st.text_area("문제", value=p.get("question", ""), key=f"{key_prefix}_q_{pid}", height=120)
         a = st.text_input("정답", value=p.get("answer", ""), key=f"{key_prefix}_a_{pid}")
@@ -2235,7 +2375,7 @@ def db_panel():
         if not url:
             st.caption("연결 주소(SUPABASE_DB_URL)가 아직 등록되지 않았어요. Streamlit Secrets에 추가하면 여기서 확인할 수 있어요.")
             return
-        st.caption(f"저장 방식 설정: {storage_backend()} (계정·앱 스위치만 옮겨진 상태. 전체를 옮기기 전까지는 sheet를 그대로 둡니다)")
+        st.caption(f"저장 방식 설정: {storage_backend()} (계정·앱 스위치·문제 은행·유형표만 옮겨진 상태. 전체를 옮기기 전까지는 sheet를 그대로 둡니다)")
         if st.button("연결 확인", key="db_ping_btn"):
             with st.spinner("연결하는 중..."):
                 res = dbconn.ping(url)

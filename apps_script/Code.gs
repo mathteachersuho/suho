@@ -154,7 +154,7 @@ function routeGet_(e) {
   if (action === 'star_list') return handleStarList_(e);
   if (action === 'star_items') return handleStarItems_(e);
   if (action === 'backup_info') return handleBackupInfo_();
-  if (action === 'version') return jsonResponse_({ version: 8 });  // 3 = 숙제·채점·시험 점수, 4 = 학교 시험지 분석, 5 = 문제 구분, 6 = 학생별 구분·단원 학기, 7 = 은행 저장+학생 배정 한 번에, 8 = 백업
+  if (action === 'version') return jsonResponse_({ version: 9 });  // 3 = 숙제·채점·시험 점수, 4 = 학교 시험지 분석, 5 = 문제 구분, 6 = 학생별 구분·단원 학기, 7 = 은행 저장+학생 배정 한 번에, 8 = 백업, 9 = 사진만 올리기·지우기(문제는 Supabase에 저장하는 방식)
   if (action === 'hw_list') return handleHwList_(e);
   if (action === 'hw_results') return handleHwResults_(e);
   if (action === 'exam_list') return handleExamList_(e);
@@ -201,6 +201,8 @@ function routePost_(body) {
   if (action === 'bank_save') return handleBankSave_(body);
   if (action === 'save_assign') return handleSaveAssign_(body);
   if (action === 'backup_now') return handleBackupNow_();
+  if (action === 'image_save') return handleImageSave_(body);
+  if (action === 'image_trash') return handleImageTrash_(body);
   if (action === 'bank_update') return handleBankUpdate_(body);
   if (action === 'bank_delete') return handleBankDelete_(body);
   if (action === 'taxonomy_upsert') return handleTaxonomyUpsert_(body);
@@ -884,6 +886,38 @@ function handleArchiveStats_(e) {
 }
 
 // 보관된 원본 사진을 base64로 돌려준다. 보관함 폴더 안의 파일만 허용한다.
+// 사진만 드라이브 보관함 폴더에 올린다 (문제 글은 Supabase에 저장하고 사진만 드라이브에 두는 방식에서 쓴다).
+function handleImageSave_(body) {
+  if (!body.image_b64) return jsonResponse_({ ok: false, error: "image_b64가 필요합니다." });
+  try {
+    var name = 'img_' + String(body.name || new Date().getTime()).replace(/[^A-Za-z0-9_-]/g, '') + '.jpg';
+    return jsonResponse_({ ok: true, file_id: saveImageFile_(body.image_b64, name) });
+  } catch (err) {
+    return jsonResponse_({ ok: false, error: String(err) });
+  }
+}
+
+// 보관함 폴더에 있는 사진만, 시트(예전 방식)에서 쓰고 있지 않을 때 휴지통으로 보낸다.
+// (Supabase 쪽에서 쓰고 있는지는 앱이 확인한 뒤에 요청한다)
+function handleImageTrash_(body) {
+  var fileId = String(body.file_id || '');
+  if (!fileId) return jsonResponse_({ ok: false, error: "file_id가 필요합니다." });
+  try {
+    var file = DriveApp.getFileById(fileId);
+    var folderId = getArchiveFolder_().getId();
+    var parents = file.getParents();
+    var inFolder = false;
+    while (parents.hasNext()) {
+      if (parents.next().getId() === folderId) { inFolder = true; break; }
+    }
+    if (!inFolder) return jsonResponse_({ ok: false, error: "보관함 사진이 아닙니다." });
+    trashImageIfUnused_(fileId);
+    return jsonResponse_({ ok: true });
+  } catch (err) {
+    return jsonResponse_({ ok: false, error: String(err) });
+  }
+}
+
 function handleArchiveImage_(e) {
   var fileId = (e.parameter && e.parameter.file_id) ? String(e.parameter.file_id) : '';
   if (!fileId) return jsonResponse_({ ok: false, error: "file_id가 필요합니다." });
