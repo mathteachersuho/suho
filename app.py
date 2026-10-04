@@ -17,6 +17,8 @@ from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 from google import genai
 
+import dbconn
+
 # 페이지 기본 설정
 st.set_page_config(page_title="수학 유사 문제 클래스룸", layout="centered")
 
@@ -37,7 +39,7 @@ def _mask_secrets(text):
     """오류 문장에 섞여 들어올 수 있는 비밀값(주소·토큰·API 키)을 *** 로 가린다."""
     text = str(text)
     for key in ("GOOGLE_SHEET_URL", "SHEET_API_TOKEN", "GEMINI_API_KEY", "MATHPIX_APP_KEY", "MATHPIX_APP_ID",
-                "ADMIN_PASSWORD", "PASSWORD_SALT", "LOGIN_SECRET"):
+                "ADMIN_PASSWORD", "PASSWORD_SALT", "LOGIN_SECRET", "SUPABASE_DB_URL"):
         v = str(st.secrets.get(key, "") or "").strip()
         if v:
             text = text.replace(v, "***")
@@ -2150,6 +2152,40 @@ def backup_panel():
                 safe_error("백업하지 못했어요.", res.get("error", ""))
 
 
+# 데이터베이스(Supabase) 이전 작업용: 연결 주소가 등록됐는지, 접속되는지, 표가 다 있는지 확인한다.
+# 아직 어떤 기능도 이 데이터베이스를 쓰지 않는다(다음 단계에서 기능별로 옮긴다).
+def storage_backend():
+    """Secrets의 STORAGE_BACKEND 값. 'sheet'(기본, 지금 방식) 또는 'supabase'."""
+    v = str(st.secrets.get("STORAGE_BACKEND", "sheet") or "sheet").strip().lower()
+    return v if v in ("sheet", "supabase") else "sheet"
+
+
+@st.fragment
+def db_panel():
+    with st.expander("🗄️ 데이터베이스 연결 확인 (Supabase)"):
+        url = str(st.secrets.get("SUPABASE_DB_URL", "") or "").strip()
+        if not url:
+            st.caption("연결 주소(SUPABASE_DB_URL)가 아직 등록되지 않았어요. Streamlit Secrets에 추가하면 여기서 확인할 수 있어요.")
+            return
+        st.caption(f"저장 방식 설정: {storage_backend()} (기능별로 옮기는 동안은 sheet를 그대로 둡니다)")
+        if st.button("연결 확인", key="db_ping_btn"):
+            with st.spinner("연결하는 중..."):
+                res = dbconn.ping(url)
+            if not res["ok"]:
+                logging.error("DB 연결 확인 실패: %s", _mask_secrets(res["error"]))
+                st.error("연결하지 못했어요. 연결 주소(비밀번호 포함)와 Supabase 프로젝트가 켜져 있는지 확인해 주세요.")
+                st.caption(res["error"])
+                return
+            st.success(f"연결됐어요 ({res['ms']}ms, Postgres {res['version']})")
+            total = len(dbconn.EXPECTED_TABLES)
+            if res["missing"]:
+                st.warning(f"표 {len(res['found'])}/{total}개만 있어요. 없는 표: {', '.join(res['missing'])}. db/schema.sql 을 SQL Editor에서 실행해 주세요.")
+            else:
+                st.caption(f"표 {total}/{total}개 확인")
+            if res["rls_off"]:
+                st.error(f"접근 제한(RLS)이 꺼진 표가 있어요: {', '.join(res['rls_off'])}. db/schema.sql 을 다시 실행해 주세요.")
+
+
 # 학생 계정 관리는 따로 새로고침되는 조각(fragment)으로 만들어,
 # 스위치나 선택을 바꿔도 앱 전체가 다시 실행되지 않게 함
 @st.fragment
@@ -2308,6 +2344,7 @@ with st.sidebar:
         st.divider()
         student_admin_panel(class_list)
         backup_panel()
+        db_panel()
 
 # ==========================================
 # 화면 차단 로직
