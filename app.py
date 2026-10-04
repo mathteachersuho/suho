@@ -988,9 +988,29 @@ def _bank_changed():
     taxonomy_list.clear()
 
 
-def bank_save(problems, image_b64=""):
-    result = _post_action({"action": "bank_save", "group_id": str(int(time.time() * 1000)),
+def bank_save(problems, image_b64="", group_id=""):
+    """group_id를 주면 같은 group_id로 다시 저장해도 중복되지 않는다(서버가 이미 있으면 건너뜀)."""
+    result = _post_action({"action": "bank_save", "group_id": group_id or str(int(time.time() * 1000)),
                            "problems": problems, "image_b64": image_b64 or ""})
+    if result.get("ok"):
+        _bank_changed()
+    return result
+
+
+def save_assign_ready():
+    """문제 은행 저장 + 학생 배정을 한 번에 하는 기능이 있는 Apps Script(버전 7 이상)인지 확인."""
+    return backend_version() >= 7
+
+
+def save_and_assign(request_id, problems, image_b64, archive_payload):
+    """문제 은행 저장과 학생 배정을 한 요청으로 처리한다. 둘 중 하나만 저장되고 끊기는 일이 없고,
+    같은 request_id로 다시 보내도(두 번 클릭, 재시도) 중복 저장되지 않는다."""
+    body = {"action": "save_assign", "image_b64": image_b64 or ""}
+    if problems:
+        body["bank"] = {"group_id": request_id, "problems": problems}
+    if archive_payload:
+        body["archive"] = dict({k: v for k, v in archive_payload.items() if k != "image_b64"}, id=request_id)  # 사진은 한 번만 보낸다
+    result = _post_action(body)
     if result.get("ok"):
         _bank_changed()
     return result
@@ -2548,18 +2568,11 @@ if tab2 is not None:
                             _img_full = compress_image_for_storage(st.session_state.current_image_b64, max_dimension=1400, max_chars=3_000_000)
                             if _main.get("semester"):
                                 unit_semester_set(_main.get("grade", ""), _main.get("unit", ""), _main["semester"])
-                            if _rows:
-                                with st.spinner("문제 은행에 저장하는 중..."):
-                                    _res = bank_save(_rows, _img_full if any(r["use_image"] for r in _rows) else "")
-                                if _res.get("ok"):
-                                    _msgs.append(f"문제 은행 {len(_rows)}문제")
-                                else:
-                                    st.error(f"❌ 문제 은행 저장에 실패했습니다: {_res.get('error', '알 수 없는 오류')}")
+                            _payload = None
                             if _picked_students:
                                 _class_of = {s.get("student_id", ""): s.get("class_id", "") for s in _all_students}
                                 _classes = {_class_of.get(sid, "") for sid in _picked_students}
                                 _payload = {
-                                    "id": f"{int(time.time() * 1000)}",
                                     "date": _arch_date.strftime("%Y-%m-%d") + datetime.datetime.now().strftime(" %H:%M"),
                                     "student_ids": ",".join(_picked_students),
                                     "class_id": _classes.pop() if len(_classes) == 1 else "",
@@ -2571,13 +2584,44 @@ if tab2 is not None:
                                     "memo": _memo,
                                     "student_tags": student_tags_json(_per_tags),
                                 }
-                                with st.spinner("학생 보관함에 배정하는 중..."):
-                                    _result = archive_save(_payload)
-                                if _result.get("ok"):
-                                    archive_types.clear()
-                                    _msgs.append(f"학생 배정 ({', '.join(_picked_students)})")
+                            # 저장 요청 번호: 같은 문제 세트를 같은 내용으로 다시 저장하면(두 번 클릭, 재시도) 같은 번호가 되어
+                            # 서버가 중복 저장하지 않는다. 고르는 문제·학생·구분·메모를 바꾸면 새 번호가 되어 새로 저장된다.
+                            _gid = st.session_state.setdefault(f"save_gid_{_bver}", str(int(time.time() * 1000)))
+                            _core = json.dumps({"rows": _rows, "payload": {k: v for k, v in (_payload or {}).items() if k not in ("date", "image_b64")}},
+                                               sort_keys=True, ensure_ascii=False)
+                            _rid = f"{_gid}x{hashlib.sha1(_core.encode('utf-8')).hexdigest()[:6]}"
+                            if save_assign_ready():
+                                with st.spinner("저장하는 중..."):
+                                    _res = save_and_assign(_rid, _rows, _img_full if any(r["use_image"] for r in _rows) or _payload else "", _payload)
+                                if _res.get("ok"):
+                                    if _payload:
+                                        archive_types.clear()
+                                    if _res.get("duplicate"):
+                                        _msgs.append("이미 저장되어 있어서 다시 저장하지 않았어요")
+                                    else:
+                                        if _rows:
+                                            _msgs.append(f"문제 은행 {len(_rows)}문제")
+                                        if _payload:
+                                            _msgs.append(f"학생 배정 ({', '.join(_picked_students)})")
                                 else:
-                                    st.error(f"❌ 학생 배정에 실패했습니다: {_result.get('error', '알 수 없는 오류')}")
+                                    st.error(f"❌ 저장에 실패했습니다. 아무것도 저장되지 않았어요. 다시 눌러 주세요. ({_res.get('error', '알 수 없는 오류')})")
+                            else:
+                                # 예전 Apps Script(버전 6 이하): 두 번에 나눠 저장하되, 같은 번호로 다시 저장해도 서버가 중복을 막는다
+                                if _rows:
+                                    with st.spinner("문제 은행에 저장하는 중..."):
+                                        _res = bank_save(_rows, _img_full if any(r["use_image"] for r in _rows) else "", group_id=_rid)
+                                    if _res.get("ok"):
+                                        _msgs.append(f"문제 은행 {len(_rows)}문제")
+                                    else:
+                                        st.error(f"❌ 문제 은행 저장에 실패했습니다: {_res.get('error', '알 수 없는 오류')}")
+                                if _payload:
+                                    with st.spinner("학생 보관함에 배정하는 중..."):
+                                        _result = archive_save(dict(_payload, id=_rid))
+                                    if _result.get("ok"):
+                                        archive_types.clear()
+                                        _msgs.append(f"학생 배정 ({', '.join(_picked_students)})")
+                                    else:
+                                        st.error(f"❌ 학생 배정에 실패했습니다: {_result.get('error', '알 수 없는 오류')}")
                             if _msgs:
                                 st.success(f"✅ 저장 완료 · {' · '.join(_msgs)} · {frame_path(_main)}"
                                            + (f" · {_main['semester']}" if _main.get("semester") else ""))
