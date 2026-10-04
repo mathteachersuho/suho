@@ -8,6 +8,7 @@ import time
 import datetime
 import io
 import hashlib
+import hmac
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 import google.generativeai as genai
@@ -1125,6 +1126,60 @@ if "auth_role" not in st.session_state:
 if "auth_student_id" not in st.session_state:
     st.session_state.auth_student_id = None  # 학생일 때만 값이 있음 (관리자는 None)
 
+# ==========================================
+# ★ 새로고침해도 로그인 유지
+# Streamlit은 새로고침하면 세션이 새로 시작되므로, 로그인할 때 서명된 "로그인 표"를
+# 주소창(?s=...)에 붙여 두고, 새로고침 때 그 표를 확인해서 로그인 상태를 되살린다.
+# 표는 Secrets 값으로 서명하므로 위조할 수 없고, ADMIN_PASSWORD를 바꾸면 모든 표가 무효가 된다.
+# ==========================================
+LOGIN_TTL_ADMIN = 12 * 3600        # 선생님: 12시간
+LOGIN_TTL_STUDENT = 7 * 24 * 3600  # 학생: 7일
+
+_login_key_src = st.secrets.get("LOGIN_SECRET", "") or (sheet_api_token + "|" + admin_pw + "|" + password_salt)
+_login_key = hashlib.sha256(("login|" + _login_key_src).encode("utf-8")).digest() if _login_key_src.strip("|") else b""
+
+
+def _sign_login(payload_b64):
+    return hmac.new(_login_key, payload_b64.encode("ascii"), hashlib.sha256).hexdigest()[:32]
+
+
+def save_login_token(role, student_id):
+    if not _login_key:
+        return
+    ttl = LOGIN_TTL_ADMIN if role == "admin" else LOGIN_TTL_STUDENT
+    payload = json.dumps({"r": role, "u": student_id or "", "e": int(time.time()) + ttl}, ensure_ascii=False)
+    payload_b64 = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+    st.query_params["s"] = f"{payload_b64}.{_sign_login(payload_b64)}"
+
+
+def clear_login_token():
+    if "s" in st.query_params:
+        del st.query_params["s"]
+
+
+def restore_login_from_token():
+    token = st.query_params.get("s", "")
+    if not token or not _login_key or "." not in token:
+        return
+    payload_b64, sig = token.rsplit(".", 1)
+    if not hmac.compare_digest(sig, _sign_login(payload_b64)):
+        clear_login_token()
+        return
+    try:
+        data = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * (-len(payload_b64) % 4)).decode("utf-8"))
+    except Exception:
+        clear_login_token()
+        return
+    if int(data.get("e", 0)) < time.time():
+        clear_login_token()
+        return
+    st.session_state.auth_role = data.get("r") or None
+    st.session_state.auth_student_id = data.get("u") or None
+
+
+if not st.session_state.auth_role:
+    restore_login_from_token()
+
 with st.sidebar:
     st.header("🔑 클래스룸 입장하기")
 
@@ -1139,6 +1194,7 @@ with st.sidebar:
         if st.button("로그아웃"):
             st.session_state.auth_role = None
             st.session_state.auth_student_id = None
+            clear_login_token()
             st.rerun()
 
         # ★ 수정: 학생 본인 탈퇴 기능 (비밀번호 재확인 + 확인 체크박스 필요)
@@ -1158,6 +1214,7 @@ with st.sidebar:
                         if result.get("ok"):
                             st.session_state.auth_role = None
                             st.session_state.auth_student_id = None
+                            clear_login_token()
                             st.success("탈퇴 처리되었습니다.")
                             st.rerun()
                         else:
@@ -1172,6 +1229,7 @@ with st.sidebar:
                     st.error("Secrets에 ADMIN_PASSWORD가 설정되지 않아 선생님 로그인을 할 수 없습니다.")
                 elif entered_pw == admin_pw:
                     st.session_state.auth_role = "admin"
+                    save_login_token("admin", None)
                     st.rerun()
                 else:
                     st.error("비밀번호가 틀렸습니다.")
@@ -1186,6 +1244,7 @@ with st.sidebar:
                     if result.get("ok"):
                         st.session_state.auth_role = result.get("class_id") or "미배정"
                         st.session_state.auth_student_id = sid.strip()
+                        save_login_token(st.session_state.auth_role, sid.strip())
                         st.rerun()
                     else:
                         st.error(result.get("error", "로그인에 실패했습니다."))
@@ -1209,6 +1268,7 @@ with st.sidebar:
                         if result.get("ok"):
                             st.session_state.auth_role = "미배정"
                             st.session_state.auth_student_id = new_sid.strip()
+                            save_login_token("미배정", new_sid.strip())
                             st.success("가입 완료! 선생님이 반을 배정해주시면 게시판을 볼 수 있어요.")
                             st.rerun()
                         else:
