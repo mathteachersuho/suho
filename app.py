@@ -499,15 +499,20 @@ def star_items(student_id):
 # 숙제는 문제 은행의 문제 id 목록만 저장한다. 채점 결과는 학생·숙제·문제 id·낸 답·O/X만 남긴다.
 # ==========================================
 @st.cache_data(ttl=60, show_spinner=False)
-def hw_backend_ready():
-    """Apps Script가 숙제·채점 기능이 있는 버전(3 이상)인지 확인."""
+def backend_version():
+    """Apps Script 버전 (3 = 숙제·채점·시험 점수, 4 = 학교 시험지 분석 저장). 모르면 0."""
     if not sheet_url:
-        return False
+        return 0
     data = _get_action({"action": "version"})
     try:
-        return isinstance(data, dict) and int(data.get("version", 0)) >= 3
+        return int(data.get("version", 0)) if isinstance(data, dict) else 0
     except (TypeError, ValueError):
-        return False
+        return 0
+
+
+def hw_backend_ready():
+    """Apps Script가 숙제·채점 기능이 있는 버전(3 이상)인지 확인."""
+    return backend_version() >= 3
 
 
 HW_SETUP_MSG = (
@@ -570,6 +575,20 @@ def exam_save(student_id, date, kind, name, score, max_score, memo=""):
 
 def exam_delete(exam_id):
     return bool(_post_action({"action": "exam_delete", "id": exam_id}).get("ok"))
+
+
+def exam_set_analysis(exam_id, analysis):
+    return bool(_post_action({"action": "exam_analysis", "id": exam_id,
+                              "analysis": json.dumps(analysis, ensure_ascii=False)}).get("ok"))
+
+
+def exam_analysis_of(exam):
+    """시험 기록에 저장된 시험지 분석(JSON). 없으면 빈 dict."""
+    try:
+        a = json.loads(exam.get("analysis") or "{}")
+        return a if isinstance(a, dict) else {}
+    except (TypeError, ValueError):
+        return {}
 
 
 def bank_by_ids(ids):
@@ -3222,19 +3241,147 @@ if tab_my_hw is not None:
 
 
 # ------------------------------------------
-# [선생님] 📈 성적·리포트: 시험 점수 입력, 리포트는 '만들기'를 누를 때만 분석
+# [선생님] 📈 성적·리포트: 날짜별 점수(숙제는 자동), 학교 시험지 분석, 리포트 분석은 '만들기'를 누를 때만
 # ------------------------------------------
+def _hw_date(h):
+    return h.get("due_date") or h.get("created_at", "")[:10]
+
+
+def hw_scores(student_id, class_id=""):
+    """학생이 받은 숙제별 점수 (날짜순). 학생이 제출하거나 선생님이 O/X를 저장하면 자동으로 잡힌다."""
+    by_hw = {}
+    for r in hw_results(student_id=student_id):
+        by_hw.setdefault(r["hw_id"], []).append(r)
+    rows = []
+    for h in hw_list(student_id=student_id, class_id=class_id, limit=500):
+        pids = [x for x in str(h.get("problem_ids", "")).split(",") if x]
+        rs = by_hw.get(h["hw_id"], [])
+        rows.append({"hw_id": h["hw_id"], "date": _hw_date(h), "title": h.get("title", ""), "total": len(pids),
+                     "correct": sum(1 for r in rs if r.get("correct") == "Y"),
+                     "pending": sum(1 for r in rs if r.get("correct") == "?"), "submitted": bool(rs)})
+    return sorted(rows, key=lambda r: r["date"])
+
+
+def _score_text(r):
+    if not r["submitted"]:
+        return "미제출"
+    return f"{r['correct']} / {r['total']}" + (f" (❔{r['pending']})" if r["pending"] else "")
+
+
+def _pct_text(r):
+    return f"{r['correct'] / r['total'] * 100:.0f}%" if r["submitted"] and r["total"] else "-"
+
+
+def _path(*parts):
+    return " › ".join(str(x) for x in parts if x)
+
+
+def student_history(student_id, class_id="", until=""):
+    """학생이 지금까지 한 공부: 숙제 유형별 정답률, 받은 유사문제(어려워한 문제) 유형, 중요 체크한 유형."""
+    hws = {h["hw_id"]: h for h in hw_list(limit=500)}
+    res = [r for r in hw_results(student_id=student_id)
+           if r["hw_id"] in hws and (not until or _hw_date(hws[r["hw_id"]]) <= until)]
+    probs = bank_by_ids({r["problem_id"] for r in res})
+    by_type = {}
+    for r in res:
+        p = probs.get(r["problem_id"])
+        if r.get("correct") not in ("Y", "N") or not p:
+            continue
+        a = by_type.setdefault(_path(p.get("grade"), p.get("unit"), p.get("type")), [0, 0])
+        a[0] += 1
+        a[1] += r["correct"] == "Y"
+    asked = [r for r in archive_stats(date_to=until) if r.get("student_id") == student_id]
+    stars = {}
+    if stars_backend_ready():
+        for it in star_items(student_id):
+            k = _path(it.get("grade"), it.get("unit"), it.get("subtype"))
+            stars[k] = stars.get(k, 0) + 1
+    return {"hw_by_type": by_type, "asked": asked, "stars": stars}
+
+
+def history_text(hist):
+    lines = [f"- 숙제 | {k} | {c}/{n} 맞힘" for k, (n, c) in sorted(hist["hw_by_type"].items())]
+    for r in sorted(hist["asked"], key=lambda r: -int(r.get("count") or 0))[:60]:
+        lines.append(f"- 어려워해서 유사문제 받음 | {_path(r.get('grade'), r.get('unit'), r.get('subtype'))} | {r.get('count')}개")
+    lines += [f"- 학생이 중요 체크 | {k} | {n}문제" for k, n in hist["stars"].items()]
+    return "\n".join(lines) or "(아직 기록 없음)"
+
+
+def _gemini_json(prompt):
+    genai.configure(api_key=gemini_api_key)
+    model = genai.GenerativeModel(get_fastest_model_name(gemini_api_key))
+    text = model.generate_content(prompt).text
+    m = re.search(r"\{.*\}", text, re.S)
+    return json.loads(m.group(0)) if m else {}
+
+
+def analyze_school_exam(exam, images, wrong_text, hist):
+    """학교 시험지 사진 → 문항별 단원·유형 분류 → 학원에서 한 공부 기록과 비교해 분석."""
+    pages = []
+    for i, b in enumerate(images, start=1):
+        try:
+            t = mathpix_ocr(b)
+        except Exception:
+            t = ""
+        if t.strip():
+            pages.append(f"[{i}쪽]\n{t}")
+    if not pages:
+        return {"error": "사진에서 글자를 읽지 못했어요. 시험지가 잘 보이게 다시 찍어 주세요."}
+    wrong = sorted(set(re.findall(r"\d+", wrong_text or "")), key=int)
+    prompt = f"""너는 대한민국 중·고등학교 수학 선생님이다. 아래는 학생이 본 학교 시험지를 글자로 읽은 것이다.
+문항마다 단원·유형·난이도를 정하고, 이 학생이 학원에서 지금까지 한 공부 기록과 비교해 시험 결과를 분석해라.
+
+[시험] {exam.get('date')} {exam.get('name')} · 점수 {exam.get('score')} / {exam.get('max_score')}
+[틀린 문항 번호] {', '.join(wrong) if wrong else '(입력 안 함)'}
+
+[학생의 지금까지 공부 기록] (구분 | 학년 › 단원 › 유형 | 결과)
+{history_text(hist)}
+
+[시험지]
+{chr(10).join(pages)[:30000]}
+
+[규칙]
+- 시험지의 문항 번호 그대로, 모든 문항을 빠짐없이 적어라. 서술형은 번호 앞에 "서"를 붙여라 (예: "서1").
+- related: 공부 기록에 같거나 비슷한 유형이 있으면 그 기록을 짧게 (예: "숙제 3/5 맞힘", "어려워해서 유사문제 4개 받음"), 없으면 "기록 없음".
+- note: 이 문항의 핵심 개념이나 실수하기 쉬운 점을 한 줄로.
+- summary: 틀린 문항과 공부 기록을 이어서 어떤 유형이 약했는지, 학원에서 연습한 유형은 잘 풀었는지, 연습하지 않은 유형이 얼마나 나왔는지 4~6문장. 틀린 번호가 없으면 출제 유형과 공부 기록의 빈 곳 위주로.
+- advice: 다음 시험까지 할 공부 3가지, 줄마다 "- "로 시작.
+- 기록에 없는 사실은 지어내지 말 것.
+- 출력은 JSON만: {{"problems": [{{"no": "1", "unit": "...", "type": "...", "difficulty": "하|중|상", "related": "...", "note": "..."}}], "summary": "...", "advice": "..."}}"""
+    try:
+        out = _gemini_json(prompt)
+    except Exception as e:
+        return {"error": f"AI 분석을 하지 못했어요: {e}"}
+    probs = [p for p in out.get("problems", []) if isinstance(p, dict)]
+    if not probs:
+        return {"error": "시험지에서 문항을 찾지 못했어요. 사진을 다시 확인해 주세요."}
+    for p in probs:
+        no = re.sub(r"\D", "", str(p.get("no", "")))
+        p["result"] = ("틀림" if no in wrong else "맞음") if wrong else ""
+    return {"problems": probs, "summary": str(out.get("summary", "")), "advice": str(out.get("advice", "")),
+            "wrong": wrong, "analyzed_at": datetime.date.today().isoformat()}
+
+
+def show_exam_analysis(a):
+    st.dataframe([{"번호": p.get("no", ""), "결과": p.get("result") or "-", "단원": p.get("unit", ""),
+                   "유형": p.get("type", ""), "난이도": p.get("difficulty", ""),
+                   "학원 공부 기록": p.get("related", ""), "메모": p.get("note", "")} for p in a.get("problems", [])],
+                 hide_index=True, width="stretch")
+    if a.get("summary"):
+        st.markdown("**분석**")
+        st.write(a["summary"])
+    if a.get("advice"):
+        st.markdown("**앞으로 할 공부**")
+        st.markdown(a["advice"])
+
+
 def build_student_report(student_id, date_from, date_to, class_id=""):
-    """기간 안의 숙제 채점 결과 + 시험 점수로 리포트 데이터를 만든다 (버튼을 눌렀을 때만 호출)."""
+    """기간 안의 숙제 채점 결과 · 어려워한 문제 · 중요 체크 · 시험(시험지 분석 포함)으로 리포트 데이터를 만든다 (버튼을 눌렀을 때만)."""
     d_from, d_to = date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d")
     hws = {h["hw_id"]: h for h in hw_list(limit=500)}
-
-    def hw_date(h):
-        return h.get("due_date") or h.get("created_at", "")[:10]
-
     results = [r for r in hw_results(student_id=student_id)
-               if r["hw_id"] in hws and d_from <= hw_date(hws[r["hw_id"]]) <= d_to]
-    my_hws = [h for h in hw_list(student_id=student_id, class_id=class_id, limit=500) if d_from <= hw_date(h) <= d_to]
+               if r["hw_id"] in hws and d_from <= _hw_date(hws[r["hw_id"]]) <= d_to]
+    scores = [r for r in hw_scores(student_id, class_id) if d_from <= r["date"] <= d_to]
     probs = bank_by_ids({r["problem_id"] for r in results})
     graded = [r for r in results if r.get("correct") in ("Y", "N")]
 
@@ -3244,55 +3391,96 @@ def build_student_report(student_id, date_from, date_to, class_id=""):
             p = probs.get(r["problem_id"])
             if not p:
                 continue
-            k = keyfn(p)
-            a = t.setdefault(k, [0, 0])
+            a = t.setdefault(keyfn(p), [0, 0])
             a[0] += 1
             a[1] += r["correct"] == "Y"
         return t
 
-    by_unit = tally(lambda p: " › ".join(x for x in (p.get("grade", ""), p.get("unit", "")) if x))
-    by_type = tally(lambda p: " › ".join(x for x in (p.get("unit", ""), p.get("type", "")) if x))
+    by_unit = tally(lambda p: _path(p.get("grade"), p.get("unit")))
+    by_type = tally(lambda p: _path(p.get("unit"), p.get("type")))
     weak = sorted(((k, n, c) for k, (n, c) in by_type.items() if n >= 2 and c / n < 0.8),
                   key=lambda x: (x[2] / x[1], -x[1]))[:5]
     wrong = []
-    for r in sorted(results, key=lambda r: hw_date(hws[r["hw_id"]]), reverse=True):
+    for r in sorted(results, key=lambda r: _hw_date(hws[r["hw_id"]]), reverse=True):
         if r.get("correct") == "N" and probs.get(r["problem_id"]):
-            wrong.append({"date": hw_date(hws[r["hw_id"]]), "problem": probs[r["problem_id"]], "answer": r.get("answer", "")})
+            wrong.append({"date": _hw_date(hws[r["hw_id"]]), "problem": probs[r["problem_id"]], "answer": r.get("answer", "")})
+    asked = archive_search(student=student_id, date_from=d_from, date_to=d_to, limit=30)["items"]
+    starred = star_items(student_id)[:20] if stars_backend_ready() else []
     exams = sorted((e for e in exam_list(student_id) if d_from <= e.get("date", "") <= d_to), key=lambda e: e.get("date", ""))
-    submitted = {r["hw_id"] for r in results}
     return {
         "student_id": student_id, "from": d_from, "to": d_to,
-        "hw_given": len(my_hws), "hw_done": len([h for h in my_hws if h["hw_id"] in submitted]),
+        "hw_given": len(scores), "hw_done": sum(1 for r in scores if r["submitted"]), "hw_scores": scores,
         "solved": len(graded), "correct": sum(1 for r in graded if r["correct"] == "Y"),
-        "by_unit": sorted(by_unit.items()), "weak": weak, "wrong": wrong[:15], "exams": exams,
+        "by_unit": sorted(by_unit.items()), "weak": weak, "wrong": wrong[:15],
+        "asked": asked, "starred": starred, "exams": exams,
     }
 
 
-def report_ai_comment(rep):
-    """리포트 숫자를 바탕으로 학부모님께 드릴 종합 의견 초안 (선생님이 고쳐서 씀)."""
+def _short(text, n=250):
+    t = re.sub(r"\s+", " ", str(text or "")).strip()
+    return t if len(t) <= n else t[:n] + "…"
+
+
+def report_ai_analysis(rep):
+    """틀린 숙제 문제 · 어려워한 문제 · 중요 체크 · 숙제 점수 · 시험 분석을 읽고 '문제 분석'과 '종합 의견' 초안을 만든다."""
     rate = f"{rep['correct'] / rep['solved'] * 100:.0f}%" if rep["solved"] else "기록 없음"
-    units = ", ".join(f"{k} {c}/{n}" for k, (n, c) in rep["by_unit"]) or "없음"
+    scores = "\n".join(f"- {r['date']} {r['title']}: {_score_text(r)}" for r in rep["hw_scores"]) or "(없음)"
     weak = ", ".join(f"{k} {c}/{n}" for k, n, c in rep["weak"]) or "뚜렷한 약점 없음"
-    exams = ", ".join(f"{e.get('date')} {e.get('kind')} {e.get('name')} {e.get('score')}/{e.get('max_score')}" for e in rep["exams"]) or "없음"
-    prompt = f"""너는 수학 학원 선생님이다. 아래 기록으로 학부모님께 보낼 학습 리포트의 '선생님 종합 의견'을 써라.
+    wrong = "\n".join(f"- [{w['date']}] {_path(w['problem'].get('unit'), w['problem'].get('type'))} | 문제: {_short(w['problem'].get('question'))}"
+                      f" | 학생 답: {w['answer'] or '(빈칸)'} | 정답: {_short(w['problem'].get('answer'), 80)}"
+                      for w in rep["wrong"]) or "(없음)"
+    asked = "\n".join(f"- [{a.get('date', '')}] {_path(a.get('grade'), a.get('unit'), a.get('subtype'))} | {_short(a.get('q1'), 150)}"
+                      for a in rep["asked"]) or "(없음)"
+    starred = "\n".join(f"- {_path(a.get('grade'), a.get('unit'), a.get('subtype'))} | {_short(a.get('q1'), 150)}"
+                        for a in rep["starred"]) or "(없음)"
+    exams = []
+    for e in rep["exams"]:
+        line = f"- {e.get('date')} {e.get('kind')} {e.get('name')} {e.get('score')}/{e.get('max_score')}"
+        an = exam_analysis_of(e)
+        if an.get("summary"):
+            line += f"\n  시험지 분석: {_short(an['summary'], 600)}"
+            bad = [f"{p.get('no')}번 {p.get('type', '')}" for p in an.get("problems", []) if p.get("result") == "틀림"]
+            if bad:
+                line += f"\n  틀린 문항: {', '.join(bad)}"
+        exams.append(line)
+    prompt = f"""너는 수학 학원 선생님이다. 아래 기록을 읽고 학부모님께 보낼 학습 리포트의 '문제 분석'과 '선생님 종합 의견'을 써라.
 - 기간: {rep['from']} ~ {rep['to']}
 - 숙제: {rep['hw_given']}번 중 {rep['hw_done']}번 제출, 채점된 문제 {rep['solved']}개, 정답률 {rate}
-- 단원별 (맞힌 수/푼 수): {units}
-- 약점 유형 (맞힌 수/푼 수): {weak}
-- 시험 성적: {exams}
-[규칙] 존댓말, 4~6문장, 잘한 점 → 보완할 점 → 앞으로의 지도 계획 순서. 기록에 없는 내용은 지어내지 말 것. 제목·머리말 없이 본문만."""
+- 날짜별 숙제 점수:
+{scores}
+- 정답률이 낮은 유형 (맞힌 수/푼 수): {weak}
+- 숙제에서 틀린 문제:
+{wrong}
+- 학생이 어려워해서 선생님이 유사문제를 만들어 준 문제:
+{asked}
+- 학생이 직접 중요 체크한 문제:
+{starred}
+- 시험:
+{chr(10).join(exams) or '(없음)'}
+
+[규칙]
+- analysis: 아래 네 칸을 이 순서로, 칸마다 1~3줄. 칸 제목은 그대로 쓰고 내용 줄은 "- "로 시작.
+  ■ 자주 틀리거나 어려워하는 유형
+  ■ 틀린 원인 (개념 이해 / 계산 실수 / 문제 해석 중 무엇인지, 틀린 답을 근거로)
+  ■ 시험과 연결해 본 점
+  ■ 앞으로의 지도 계획
+- comment: 학부모님께 드리는 존댓말 4~6문장. 잘한 점 → 보완할 점 → 지도 계획 순서.
+- 기록에 없는 내용은 지어내지 말 것. 기록이 없는 칸은 "- 이번 기간에는 기록이 없습니다."
+- 출력은 JSON만: {{"analysis": "...", "comment": "..."}}"""
     try:
-        genai.configure(api_key=gemini_api_key)
-        model = genai.GenerativeModel(get_fastest_model_name(gemini_api_key))
-        return model.generate_content(prompt).text.strip()
+        out = _gemini_json(prompt)
+        return {"analysis": str(out.get("analysis", "")).strip(), "comment": str(out.get("comment", "")).strip()}
     except Exception as e:
-        return f"(AI 의견을 만들지 못했어요: {e})"
+        return {"analysis": f"(AI 분석을 만들지 못했어요: {e})", "comment": ""}
 
 
-def make_report_html(rep, comment):
+def make_report_html(rep, comment, analysis=""):
     def esc(x):
         return html.escape(str(x or ""))
     rate = f"{rep['correct'] / rep['solved'] * 100:.0f}%" if rep["solved"] else "-"
+    score_rows = "".join(f"<tr><td>{esc(r['date'])}</td><td>{esc(r['title'])}</td><td>{esc(_score_text(r))}</td>"
+                         f"<td>{_pct_text(r)}</td></tr>"
+                         for r in rep["hw_scores"]) or "<tr><td colspan=4>기간 안의 숙제가 없습니다.</td></tr>"
     unit_rows = "".join(f"<tr><td>{esc(k)}</td><td>{n}</td><td>{c}</td><td>{c / n * 100:.0f}%</td></tr>"
                         for k, (n, c) in rep["by_unit"]) or "<tr><td colspan=4>기록 없음</td></tr>"
     weak_rows = "".join(f"<tr><td>{esc(k)}</td><td>{c}/{n}</td><td>{c / n * 100:.0f}%</td></tr>"
@@ -3300,10 +3488,23 @@ def make_report_html(rep, comment):
     exam_rows = "".join(f"<tr><td>{esc(e.get('date'))}</td><td>{esc(e.get('kind'))}</td><td>{esc(e.get('name'))}</td>"
                         f"<td>{esc(e.get('score'))} / {esc(e.get('max_score'))}</td><td>{esc(e.get('memo'))}</td></tr>"
                         for e in rep["exams"]) or "<tr><td colspan=5>기간 안의 시험 기록이 없습니다.</td></tr>"
+    exam_an = ""
+    for e in rep["exams"]:
+        an = exam_analysis_of(e)
+        if not an.get("problems"):
+            continue
+        rows = "".join(f"<tr><td>{esc(p.get('no'))}</td><td>{esc(p.get('result') or '-')}</td><td>{esc(_path(p.get('unit'), p.get('type')))}</td>"
+                       f"<td>{esc(p.get('difficulty'))}</td><td>{esc(p.get('related'))}</td></tr>" for p in an["problems"])
+        exam_an += (f"<h3>{esc(e.get('date'))} {esc(e.get('name'))} ({esc(e.get('score'))} / {esc(e.get('max_score'))})</h3>"
+                    f"<table><tr><th>번호</th><th>결과</th><th>단원 › 유형</th><th>난이도</th><th>학원 공부 기록</th></tr>{rows}</table>"
+                    f"<div class='comment'>{esc(an.get('summary'))}\n\n{esc(an.get('advice'))}</div>")
+    if exam_an:
+        exam_an = "<h2>학교 시험 분석</h2>" + exam_an
     wrong_rows = "".join(f"<div class='wrong'><div class='meta'>{esc(w['date'])} · {esc(w['problem'].get('unit', ''))}</div>"
                          f"<div>{format_math(w['problem'].get('question', ''))}</div>"
                          f"<div class='meta'>학생 답: {esc(w['answer']) or '(빈칸)'} · 정답: {format_math(w['problem'].get('answer', ''))}</div></div>"
                          for w in rep["wrong"]) or "<p>틀린 문제가 없습니다.</p>"
+    analysis_html = f"<h2>문제 분석</h2><div class='comment'>{esc(analysis)}</div>" if str(analysis or "").strip() else ""
     return f"""<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>{esc(rep['student_id'])} 학습 리포트</title>
 <script>window.MathJax = {{ tex: {{ inlineMath: [['$', '$'], ['\\\\(', '\\\\)']] }} }};</script>
 <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
@@ -3312,13 +3513,14 @@ def make_report_html(rep, comment):
 body {{ font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; color: #111; max-width: 820px; margin: 0 auto; padding: 10px; font-size: 13.5px; }}
 h1 {{ font-size: 20px; border-bottom: 2px solid #000; padding-bottom: 6px; }}
 h2 {{ font-size: 15px; margin-top: 22px; border-left: 4px solid #333; padding-left: 8px; }}
+h3 {{ font-size: 13.5px; margin: 14px 0 4px; }}
 table {{ width: 100%; border-collapse: collapse; margin-top: 6px; }}
 th, td {{ border: 1px solid #ccc; padding: 5px 8px; text-align: left; }}
 th {{ background: #f3f3f3; }}
 .kpi {{ display: flex; gap: 12px; }} .kpi div {{ flex: 1; border: 1px solid #ccc; border-radius: 6px; padding: 8px; text-align: center; }}
 .kpi b {{ display: block; font-size: 20px; }}
 .wrong {{ border-bottom: 1px dashed #bbb; padding: 6px 0; }} .meta {{ color: #666; font-size: 12px; }}
-.comment {{ white-space: pre-wrap; line-height: 1.7; border: 1px solid #ccc; border-radius: 6px; padding: 10px; }}
+.comment {{ white-space: pre-wrap; line-height: 1.7; border: 1px solid #ccc; border-radius: 6px; padding: 10px; margin-top: 6px; }}
 .bar {{ text-align: center; margin-bottom: 12px; }} @media print {{ .bar {{ display: none; }} }}
 </style></head><body>
 <div class="bar"><button onclick="window.print()" style="padding:8px 20px;">🖨️ 인쇄 / PDF로 저장</button></div>
@@ -3326,9 +3528,12 @@ th {{ background: #f3f3f3; }}
 <div class="meta">기간: {esc(rep['from'])} ~ {esc(rep['to'])}</div>
 <h2>숙제</h2>
 <div class="kpi"><div>낸 숙제<b>{rep['hw_done']} / {rep['hw_given']}</b></div><div>푼 문제<b>{rep['solved']}</b></div><div>정답률<b>{rate}</b></div></div>
+<h2>날짜별 숙제 점수</h2><table><tr><th>날짜</th><th>숙제</th><th>점수</th><th>정답률</th></tr>{score_rows}</table>
 <h2>단원별 정답률</h2><table><tr><th>단원</th><th>푼 문제</th><th>맞힌 문제</th><th>정답률</th></tr>{unit_rows}</table>
 <h2>보완이 필요한 유형</h2><table><tr><th>유형</th><th>맞힌/푼</th><th>정답률</th></tr>{weak_rows}</table>
 <h2>시험 성적</h2><table><tr><th>날짜</th><th>구분</th><th>시험</th><th>점수</th><th>메모</th></tr>{exam_rows}</table>
+{exam_an}
+{analysis_html}
 <h2>선생님 종합 의견</h2><div class="comment">{esc(comment)}</div>
 <h2>최근 틀린 문제</h2>{wrong_rows}
 </body></html>"""
@@ -3340,12 +3545,38 @@ if tab_report is not None:
         if not hw_backend_ready():
             st.warning(HW_SETUP_MSG)
         else:
-            _stu_ids = [s.get("student_id", "") for s in admin_list_students()]
+            _students = admin_list_students()
+            _stu_ids = [s.get("student_id", "") for s in _students]
             if not _stu_ids:
                 st.info("아직 가입한 학생이 없어요.")
             else:
                 _rs = st.selectbox("학생", _stu_ids, key="rp_student")
-                sub_exam, sub_rep = st.tabs(["📝 시험 점수", "📄 학부모 리포트"])
+                _rcls = next((s.get("class_id", "") for s in _students if s.get("student_id") == _rs), "")
+                sub_score, sub_exam, sub_rep = st.tabs(["📅 날짜별 점수", "📝 시험 점수·시험지 분석", "📄 학부모 리포트"])
+                with sub_score:
+                    st.caption("숙제 점수는 학생이 답을 제출하거나 선생님이 O/X를 저장하면 자동으로 들어와요. ❔는 선생님 확인이 필요한 문제 수예요.")
+                    _scores = hw_scores(_rs, _rcls)
+                    _exs_all = exam_list(_rs)
+                    _table = [{"날짜": r["date"], "구분": "숙제", "이름": r["title"], "점수": _score_text(r),
+                               "정답률(%)": round(r["correct"] / r["total"] * 100) if r["submitted"] and r["total"] else None}
+                              for r in _scores]
+                    for _e in _exs_all:
+                        try:
+                            _pct = round(float(_e.get("score")) / float(_e.get("max_score")) * 100)
+                        except (TypeError, ValueError, ZeroDivisionError):
+                            _pct = None
+                        _table.append({"날짜": _e.get("date", ""), "구분": f"{_e.get('kind', '')} 시험", "이름": _e.get("name", ""),
+                                       "점수": f"{_e.get('score')} / {_e.get('max_score')}", "정답률(%)": _pct})
+                    if not _table:
+                        st.info("아직 숙제나 시험 기록이 없어요.")
+                    else:
+                        import pandas as pd
+                        _df = pd.DataFrame(_table).sort_values("날짜")
+                        _chart = _df.dropna(subset=["정답률(%)"])
+                        if not _chart.empty:
+                            st.line_chart(_chart.pivot_table(index="날짜", columns="구분", values="정답률(%)", aggfunc="mean"),
+                                          y_label="정답률(%)")
+                        st.dataframe(_df.iloc[::-1], hide_index=True, width="stretch")
                 with sub_exam:
                     _ev = st.session_state.get("ex_ver", 0)
                     with st.form(f"exam_form_{_ev}"):
@@ -3371,49 +3602,81 @@ if tab_report is not None:
                                 st.rerun()
                             else:
                                 st.error("저장하지 못했어요.")
+                    st.caption("학교 시험은 점수를 저장한 뒤, 아래 목록에서 시험지 사진을 올리면 지금까지 공부한 문제와 비교해 분석해요.")
                     _exs = sorted(exam_list(_rs), key=lambda e: e.get("date", ""), reverse=True)
                     if not _exs:
                         st.caption("아직 입력한 시험 점수가 없어요.")
                     for _e in _exs:
+                        _eid = _e.get("id")
                         _x1, _x2 = st.columns([6, 1])
                         with _x1:
                             st.markdown(f"**{_e.get('date')}** · {_e.get('kind')} · {_e.get('name')} · **{_e.get('score')} / {_e.get('max_score')}**"
                                         + (f" · {_e.get('memo')}" if _e.get("memo") else ""))
                         with _x2:
-                            if st.button("삭제", key=f"ex_del_{_e.get('id')}"):
-                                exam_delete(_e.get("id"))
+                            if st.button("삭제", key=f"ex_del_{_eid}"):
+                                exam_delete(_eid)
                                 st.rerun()
+                        if _e.get("kind") != "학교":
+                            continue
+                        _an = exam_analysis_of(_e)
+                        with st.expander("🔎 시험지 분석 보기" if _an.get("problems") else "📸 시험지 사진 올려 분석하기"):
+                            if _an.get("problems"):
+                                show_exam_analysis(_an)
+                                st.caption(f"{_an.get('analyzed_at', '')} 분석 · 다시 분석하려면 아래에 사진을 다시 올리세요.")
+                            if backend_version() < 4:
+                                st.info("시험지 분석을 저장하려면 저장소의 apps_script/Code.gs로 Apps Script를 바꾸고 '새 버전'으로 재배포해 주세요.")
+                                continue
+                            _imgs = st.file_uploader("시험지 사진 (여러 장 올릴 수 있어요)", type=["png", "jpg", "jpeg"],
+                                                     accept_multiple_files=True, key=f"ex_up_{_eid}")
+                            _wn = st.text_input("틀린 문항 번호 (예: 3, 7, 12 · 비워 두면 문항 분류만)",
+                                                value=", ".join(_an.get("wrong", [])), key=f"ex_wrong_{_eid}")
+                            if st.button("🔎 분석하기", type="primary", key=f"ex_an_{_eid}"):
+                                if not _imgs:
+                                    st.warning("시험지 사진을 올려 주세요.")
+                                else:
+                                    with st.spinner("시험지를 읽고 지금까지 공부한 문제와 비교하는 중..."):
+                                        _hist = student_history(_rs, _rcls, until=_e.get("date", ""))
+                                        _res = analyze_school_exam(_e, [f.getvalue() for f in _imgs], _wn, _hist)
+                                    if _res.get("error"):
+                                        st.error(_res["error"])
+                                    elif exam_set_analysis(_eid, _res):
+                                        st.rerun()
+                                    else:
+                                        st.error("분석 결과를 저장하지 못했어요.")
                 with sub_rep:
-                    st.caption("약점 유형 분석은 '리포트 만들기'를 누를 때만 합니다. 기간 안의 숙제 채점 결과와 시험 점수를 모아요.")
+                    st.caption("'리포트 만들기'를 누를 때만 분석해요. 기간 안의 숙제 점수·틀린 문제, 학생이 어려워한 문제와 중요 체크한 문제, 시험 점수와 시험지 분석을 모아요.")
                     _r1, _r2 = st.columns([2, 1])
                     with _r1:
                         _rrange = st.date_input("기간", value=(datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()),
                                                 key="rp_range")
                     with _r2:
-                        _rai = st.checkbox("AI 종합 의견 초안 넣기", value=True, key="rp_ai")
+                        _rai = st.checkbox("AI 문제 분석·종합 의견 넣기", value=True, key="rp_ai")
                     if st.button("📄 리포트 만들기", type="primary", key="rp_make"):
                         if not (isinstance(_rrange, (tuple, list)) and len(_rrange) == 2):
                             st.warning("기간의 시작일과 끝일을 모두 골라 주세요.")
                         else:
-                            with st.spinner("숙제·시험 기록을 분석하는 중..."):
-                                _rcls = next((s.get("class_id", "") for s in admin_list_students() if s.get("student_id") == _rs), "")
+                            with st.spinner("숙제·어려워한 문제·시험 기록을 분석하는 중..."):
                                 _rep = build_student_report(_rs, _rrange[0], _rrange[1], _rcls)
-                                _cm = report_ai_comment(_rep) if _rai else ""
+                                _ai = report_ai_analysis(_rep) if _rai else {"analysis": "", "comment": ""}
                             st.session_state.rp_data = _rep
-                            st.session_state[f"rp_comment_{_rs}_{_rep['from']}_{_rep['to']}"] = _cm
+                            _sfx = f"{_rs}_{_rep['from']}_{_rep['to']}"
+                            st.session_state[f"rp_analysis_{_sfx}"] = _ai["analysis"]
+                            st.session_state[f"rp_comment_{_sfx}"] = _ai["comment"]
                     _rep = st.session_state.get("rp_data")
                     if _rep and _rep["student_id"] == _rs:
                         _rate = f"{_rep['correct'] / _rep['solved'] * 100:.0f}%" if _rep["solved"] else "-"
-                        _k1, _k2, _k3 = st.columns(3)
+                        _k1, _k2, _k3, _k4 = st.columns(4)
                         _k1.metric("낸 숙제", f"{_rep['hw_done']} / {_rep['hw_given']}")
                         _k2.metric("푼 문제", _rep["solved"])
                         _k3.metric("정답률", _rate)
+                        _k4.metric("어려워한 문제", len(_rep["asked"]))
                         if _rep["weak"]:
                             st.markdown("**보완이 필요한 유형**")
                             for _k, _n, _c in _rep["weak"]:
                                 st.markdown(f"- {_k}: {_c}/{_n} ({_c / _n * 100:.0f}%)")
-                        _ckey = f"rp_comment_{_rs}_{_rep['from']}_{_rep['to']}"
-                        _comment = st.text_area("선생님 종합 의견 (고쳐서 쓰세요)", key=_ckey, height=160)
-                        st.download_button("📥 학부모 리포트 받기 (인쇄·PDF 저장)", data=make_report_html(_rep, _comment),
+                        _sfx = f"{_rs}_{_rep['from']}_{_rep['to']}"
+                        _analysis = st.text_area("문제 분석 (고쳐서 쓰세요)", key=f"rp_analysis_{_sfx}", height=220)
+                        _comment = st.text_area("선생님 종합 의견 (고쳐서 쓰세요)", key=f"rp_comment_{_sfx}", height=160)
+                        st.download_button("📥 학부모 리포트 받기 (인쇄·PDF 저장)", data=make_report_html(_rep, _comment, _analysis),
                                            file_name=f"{_rs}_학습리포트_{_rep['to']}.html", mime="text/html",
                                            type="primary", key="rp_dl")

@@ -99,7 +99,7 @@ function doGet(e) {
   if (action === 'taxonomy') return handleTaxonomy_();
   if (action === 'star_list') return handleStarList_(e);
   if (action === 'star_items') return handleStarItems_(e);
-  if (action === 'version') return jsonResponse_({ version: 3 });  // 3 = 숙제·채점·시험 점수 기능이 있는 버전
+  if (action === 'version') return jsonResponse_({ version: 4 });  // 3 = 숙제·채점·시험 점수, 4 = 학교 시험지 분석 저장
   if (action === 'hw_list') return handleHwList_(e);
   if (action === 'hw_results') return handleHwResults_(e);
   if (action === 'exam_list') return handleExamList_(e);
@@ -145,6 +145,7 @@ function doPost(e) {
   if (action === 'hw_mark') return handleHwMark_(body);
   if (action === 'exam_save') return handleExamSave_(body);
   if (action === 'exam_delete') return handleExamDelete_(body);
+  if (action === 'exam_analysis') return handleExamAnalysis_(body);
   if (action === 'delete') return handleDeleteProblem_(body);
   return handleInsertProblem_(body); // action 없으면 기존 게시판 등록(기본 동작)
 }
@@ -1104,7 +1105,17 @@ function handleStarItems_(e) {
 // ==========================================
 var HW_HEADERS = ['hw_id', 'created_at', 'title', 'due_date', 'class_id', 'student_ids', 'problem_ids', 'memo'];
 var HWR_HEADERS = ['hw_id', 'student_id', 'problem_id', 'answer', 'correct', 'graded_by', 'updated_at'];
-var EXAM_HEADERS = ['id', 'student_id', 'date', 'kind', 'name', 'score', 'max_score', 'memo', 'created_at'];
+var EXAM_HEADERS = ['id', 'student_id', 'date', 'kind', 'name', 'score', 'max_score', 'memo', 'created_at', 'analysis'];
+
+// exams 탭 (예전에 만든 탭에는 'analysis' 머리글이 없으므로 채워 둔다)
+function getExamSheet_() {
+  var sheet = getTextSheet_('exams', EXAM_HEADERS);
+  var col = EXAM_HEADERS.length;
+  if (String(sheet.getRange(1, col).getValue()) !== EXAM_HEADERS[col - 1]) {
+    sheet.getRange(1, col).setNumberFormat('@').setValue(EXAM_HEADERS[col - 1]);
+  }
+  return sheet;
+}
 
 function rowsToObjs_(rows, headers) {
   return rows.map(function (r) {
@@ -1248,7 +1259,7 @@ function handleHwMark_(body) {
 
 function handleExamList_(e) {
   var student = (e.parameter && e.parameter.student_id) ? String(e.parameter.student_id) : '';
-  var rows = readCols_(getTextSheet_('exams', EXAM_HEADERS), 1, EXAM_HEADERS.length);
+  var rows = readCols_(getExamSheet_(), 1, EXAM_HEADERS.length);
   var out = [];
   for (var i = 0; i < rows.length; i++) {
     if (!rows[i][0]) continue;
@@ -1263,10 +1274,10 @@ function handleExamSave_(body) {
   lock.waitLock(20000);
   try {
     var id = 'ex' + new Date().getTime();
-    appendTextRows_(getTextSheet_('exams', EXAM_HEADERS), [[
+    appendTextRows_(getExamSheet_(), [[
       id, body.student_id || '', body.date || '', body.kind || '', body.name || '',
       String(body.score === undefined ? '' : body.score), String(body.max_score === undefined ? '' : body.max_score),
-      body.memo || '', new Date().toISOString()
+      body.memo || '', new Date().toISOString(), ''
     ]]);
     return jsonResponse_({ ok: true, id: id });
   } finally {
@@ -1278,10 +1289,26 @@ function handleExamDelete_(body) {
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
-    var sheet = getTextSheet_('exams', EXAM_HEADERS);
+    var sheet = getExamSheet_();
     var row = findRowById_(sheet, 0, body.id);
     if (row < 0) return jsonResponse_({ ok: false, error: "시험 기록을 찾을 수 없습니다." });
     sheet.deleteRow(row);
+    return jsonResponse_({ ok: true });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 학교 시험지 분석 결과(JSON 글자)를 그 시험 기록에 저장한다. 셀 한 칸 한도(5만 자) 안으로 자른다.
+function handleExamAnalysis_(body) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = getExamSheet_();
+    var row = findRowById_(sheet, 0, body.id);
+    if (row < 0) return jsonResponse_({ ok: false, error: "시험 기록을 찾을 수 없습니다." });
+    var text = String(body.analysis || '').slice(0, 45000);
+    sheet.getRange(row, EXAM_HEADERS.length).setNumberFormat('@').setValue(safeCell_(text));
     return jsonResponse_({ ok: true });
   } finally {
     lock.releaseLock();
