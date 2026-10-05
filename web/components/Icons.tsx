@@ -32,3 +32,5 @@ export const IconSearch = ({ className }: P) => base(<><circle cx="11" cy="11" r
 export const IconX = ({ className }: P) => base(<path d="M6 6l12 12M18 6 6 18" />, className);
 export const IconUp = ({ className }: P) => base(<path d="m6 15 6-6 6 6" />, className);
 export const IconDown = ({ className }: P) => base(<path d="m6 9 6 6 6-6" />, className);
+export const IconSparkle = ({ className }: P) =>
+  base(<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6" />, className);
