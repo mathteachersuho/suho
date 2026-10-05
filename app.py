@@ -16,6 +16,7 @@ import ast
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor
 from google import genai
+from google.genai import types as genai_types
 
 import dbconn
 
@@ -1912,10 +1913,19 @@ def parse_single_problem(res_text, prob_num):
 # ==========================================
 # ★ 병렬 단일 문제 생성기 (방정식 옆 곡선 화살표 지원)
 # ==========================================
-def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instruction, api_key, model_name):
+def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instruction, api_key, model_name, image_b64=None):
     model = GeminiModel(api_key, model_name)
     
-    if prob_num == 1:
+    if prob_num == 0:
+        type_instruction = """
+        [원본 문제 다시 쓰기 원칙 (새 문제를 만들지 마라!)]
+        - 원본 문제의 지문, 숫자, 조건, 보기, 묻는 것을 **하나도 바꾸지 말고 그대로** 옮겨 적어라. 숫자를 바꾸거나 문제를 쉽게/어렵게 고치지 마라.
+        - 글자 인식(OCR) 과정에서 깨진 수식, 빠진 기호, 잘못 읽힌 글자는 문맥(과 함께 보낸 사진)에 맞게 바로잡아라.
+        - 사진이 함께 왔다면 사진을 기준으로 삼아라. 사진 속 도형, 그래프, 수직선, 표는 아래 규칙대로 SVG나 표로 **사진과 같게** 다시 그려라 (점 이름, 표시된 길이·각도, 위치 관계를 그대로). 정확하게 그리는 것이 줄 수보다 중요하다.
+        - 원본에 그림이 없으면 그림을 새로 넣지 마라.
+        - 정답과 풀이도 작성하라.
+        """
+    elif prob_num == 1:
         type_instruction = """
         [1번 기본 다지기 출제 원칙]
         - 원본 문제의 형태와 구조를 그대로 유지하되, **반드시 원본에 주어진 숫자(예: 계수, 상수 등)를 다른 수치로 확실하게 변경**하여 1문제를 출제하라.
@@ -1928,7 +1938,7 @@ def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instructi
         """
 
     prompt = f"""
-    너는 대한민국 중학교/고등학교 수학 출제 위원이야. 원본 문제를 바탕으로 [{prob_type}]를 1개만 제작하라.
+    너는 대한민국 중학교/고등학교 수학 출제 위원이야. {"원본 문제를 실제 시험지처럼 깔끔하게 다시 써라." if prob_num == 0 else f"원본 문제를 바탕으로 [{prob_type}]를 1개만 제작하라."}
 
     [원본 문제]
     {ocr_text}
@@ -1984,7 +1994,7 @@ def generate_one_problem_async(prob_type, prob_num, ocr_text, solution_instructi
     ({solution_instruction})
     """
     
-    res = model.generate_content(prompt)
+    res = model.generate_content(prompt, image_b64=image_b64 if prob_num == 0 else None)
     return parse_single_problem(res.text.strip(), prob_num)
 
 # ==========================================
@@ -2253,8 +2263,14 @@ class GeminiModel:
         self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
 
-    def generate_content(self, prompt):
-        return self.client.models.generate_content(model=self.model_name, contents=prompt)
+    def generate_content(self, prompt, image_b64=None):
+        contents = prompt
+        if image_b64:
+            # 사진을 함께 보낸다 (원본 문제 재구성 때 도형을 사진 그대로 다시 그리게)
+            data = base64.b64decode(image_b64)
+            mime = "image/png" if data[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
+            contents = [genai_types.Part.from_bytes(data=data, mime_type=mime), prompt]
+        return self.client.models.generate_content(model=self.model_name, contents=contents)
 
 # ==========================================
 # ★ 반 이름 설정 (1M2, 1M3, 2M1, 2M3, 3M1, 3M3)
@@ -2640,6 +2656,9 @@ if tab2 is not None:
                         math_text = result_json["text"]
                         math_text = re.sub(r'\\\(\s*', '$', math_text); math_text = re.sub(r'\s*\\\)', '$', math_text); math_text = re.sub(r'\\\[\s*', '$$', math_text); math_text = re.sub(r'\s*\\\]', '$$', math_text)
                         st.session_state.ocr_text = math_text
+                        # 새 사진이면 앞 사진으로 만든 원본·유사문제는 지운다 (다른 문제에 잘못 저장되지 않게)
+                        st.session_state.similar_problems = None
+                        st.session_state.original_problem = None
                         st.success("수식 및 표 추출 성공! 내용을 확인하고 필요시 수정해 주세요.")
                     else:
                         st.error("인식에 실패했습니다. 다시 시도해 주세요.")
@@ -2657,14 +2676,17 @@ if tab2 is not None:
         
             include_detailed = st.checkbox("📖 상세 단계별 해설 포함하기 (체크 해제 시 핵심 풀이만 생성)", value=False)
         
-            if st.button("✨ 유사 문제 2개 초고속 생성 (기본1 + 응용1)", type="primary"):
+            if st.button("✨ 원본 다시 쓰기 + 유사 문제 2개 생성 (기본1 + 응용1)", type="primary"):
                 with st.spinner("AI가 [1번 기본 다지기]와 [2번 실력 키우기]를 동시에 차별화하여 병렬 생성하고 있습니다 (약 3~5초)..."):
                     try:
                         solution_instruction = "단계별 상세 풀이와 해설 작성" if include_detailed else "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성"
                         fast_model = get_gemini_model_name()
                     
                         existing_tax = taxonomy_list() if bank_backend_ready() else []
-                        with ThreadPoolExecutor(max_workers=3) as executor:
+                        with ThreadPoolExecutor(max_workers=4) as executor:
+                            # 원본 문제도 유사문제와 같은 형태(수식·표·그림 + 정답·풀이)로 다시 쓴다
+                            future_p0 = executor.submit(generate_one_problem_async, "원본 문제 다시 쓰기", 0, edited_text, solution_instruction, gemini_api_key, fast_model,
+                                                        st.session_state.get("current_image_b64"))
                             future_p1 = executor.submit(generate_one_problem_async, "1번 기본 다지기 문제", 1, edited_text, solution_instruction, gemini_api_key, fast_model)
                             future_p2 = executor.submit(generate_one_problem_async, "2번 실력 키우기 문제", 2, edited_text, solution_instruction, gemini_api_key, fast_model)
                             # 보관함 저장용 유형(학년 › 단원 › 세부 유형)도 동시에 AI가 제안
@@ -2672,6 +2694,13 @@ if tab2 is not None:
                         
                             p1_res = future_p1.result()
                             p2_res = future_p2.result()
+                            try:
+                                p0_res = future_p0.result()
+                                if not p0_res.get("question", "").strip():
+                                    raise ValueError("빈 결과")
+                            except Exception:
+                                # 다시 쓰기가 실패하면 인식한 글자를 그대로 원본으로 쓴다
+                                p0_res = {"problem_num": 0, "question": edited_text, "answer": "", "solution": ""}
                             try:
                                 st.session_state.suggested_frame = future_type.result()
                                 # 학생 보관함 저장 칸(학년 › 단원 › 세부 유형)에도 같은 분류를 채워 둔다
@@ -2686,6 +2715,7 @@ if tab2 is not None:
                                 st.session_state.suggested_frame = None
                     
                         st.session_state.similar_problems = [p1_res, p2_res]
+                        st.session_state.original_problem = p0_res
                         st.session_state.edit_ver = st.session_state.get("edit_ver", 0) + 1
                         st.success("⚡ 차별화된 유사 문제 2개 초고속 병렬 생성 완료!")
                     except Exception as e:
@@ -2700,6 +2730,8 @@ if tab2 is not None:
             
                 p1 = st.session_state.similar_problems[0]
                 p2 = st.session_state.similar_problems[1]
+                # 예전 세션(다시 쓰기 전에 만든 결과)이면 인식한 글자를 원본으로 쓴다
+                p0 = st.session_state.get("original_problem") or {"question": st.session_state.ocr_text, "answer": "", "solution": ""}
             
                 # 관리자(선생님) 전용 과제 등록 바
                 if current_role == "admin":
@@ -2729,6 +2761,33 @@ if tab2 is not None:
                                     st.session_state.edit_ver = st.session_state.get("edit_ver", 0) + 1
                                     st.success(f"'{find_str}' ➔ '{replace_str}' 교체 완료!")
                                     st.rerun()
+
+                # 원본 문제 카드 (사진의 문제를 그대로 다시 쓴 것)
+                with st.container():
+                    st.markdown("### [원본] 다시 쓴 원본 문제")
+                    st.caption("사진의 문제를 숫자 그대로 시험지처럼 다시 쓴 거예요. 문제 은행에는 이 내용이 저장돼요. 사진과 다른 곳이 있으면 고쳐 주세요.")
+                    st.markdown(format_math(p0.get("question", "")), unsafe_allow_html=True)
+
+                    if p0.get("answer") or p0.get("solution"):
+                        with st.expander("🔍 원본 정답 및 풀이 확인"):
+                            st.markdown(f"**정답:** {format_math(p0.get('answer', ''))}", unsafe_allow_html=True)
+                            if p0.get("solution"):
+                                st.markdown(f"**풀이:**\n\n{format_math(p0.get('solution', ''))}", unsafe_allow_html=True)
+
+                    if current_role == "admin":
+                        if st.checkbox("✏️ 원본 문제/정답/풀이 화면에서 직접 수정하기", key="chk_edit_p0"):
+                            p0_q_new = st.text_area("원본 지문 내용:", value=p0.get("question", ""), key=f"inline_p0_q_{st.session_state.get('edit_ver', 0)}", height=120)
+                            col_a0, col_s0 = st.columns([1, 2])
+                            with col_a0:
+                                p0_a_new = st.text_input("원본 정답:", value=p0.get("answer", ""), key=f"inline_p0_a_{st.session_state.get('edit_ver', 0)}")
+                            with col_s0:
+                                p0_s_new = st.text_area("원본 풀이:", value=p0.get("solution", ""), key=f"inline_p0_s_{st.session_state.get('edit_ver', 0)}", height=120)
+
+                            p0["question"] = p0_q_new
+                            p0["answer"] = p0_a_new
+                            p0["solution"] = p0_s_new
+                            st.session_state.original_problem = p0
+                st.divider()
 
                 # 1번 문제 카드
                 with st.container():
@@ -2802,7 +2861,7 @@ if tab2 is not None:
                     _rows = []
                     _orig_diff = _bsug.get("difficulty", "중") if _bsug.get("difficulty") in DIFFICULTIES else "중"
                     _candidates = [
-                        ("원본", "📷 원본 문제", st.session_state.ocr_text, "", "", _orig_diff),
+                        ("원본", "📷 원본 문제", p0.get("question", ""), p0.get("answer", ""), p0.get("solution", ""), _orig_diff),
                         ("AI 기본", "[유사문제 1] 기본 다지기", p1["question"], p1["answer"], p1.get("solution", ""), _orig_diff),
                         ("AI 실력", "[유사문제 2] 실력 키우기", p2["question"], p2["answer"], p2.get("solution", ""),
                          DIFFICULTIES[min(DIFFICULTIES.index(_orig_diff) + 1, 2)]),
@@ -2880,7 +2939,7 @@ if tab2 is not None:
                                     "student_ids": ",".join(_picked_students),
                                     "class_id": _classes.pop() if len(_classes) == 1 else "",
                                     "grade": _main.get("grade", ""), "unit": _main.get("unit", ""), "subtype": _main.get("frame", ""),
-                                    "source_text": st.session_state.ocr_text,
+                                    "source_text": p0.get("question", "") or st.session_state.ocr_text,
                                     "image_b64": _img_full,
                                     "q1": p1["question"], "a1": p1["answer"], "s1": p1.get("solution", ""),
                                     "q2": p2["question"], "a2": p2["answer"], "s2": p2.get("solution", ""),
