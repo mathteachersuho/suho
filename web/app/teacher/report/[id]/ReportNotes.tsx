@@ -89,7 +89,7 @@ export default function ReportNotes({ studentId, from, to }: { studentId: string
 
 function Note({ title, value, onChange, rows, placeholder }: { title: string; value: string; onChange: (v: string) => void; rows: number; placeholder: string }) {
   return (
-    <section className={`space-y-2 ${value ? "" : "print:hidden"}`}>
+    <section className={`space-y-2 print:space-y-1 ${value ? "" : "print:hidden"}`}>
       <h3 className="report-h">{title}</h3>
       <textarea
         value={value}
@@ -98,7 +98,7 @@ function Note({ title, value, onChange, rows, placeholder }: { title: string; va
         placeholder={placeholder}
         className="field leading-relaxed print:hidden"
       />
-      <div className="hidden whitespace-pre-wrap rounded-xl border border-line p-4 leading-relaxed print:block">{value}</div>
+      <div className="report-note hidden whitespace-pre-wrap rounded-xl border border-line p-4 leading-relaxed print:block">{value}</div>
     </section>
   );
 }
