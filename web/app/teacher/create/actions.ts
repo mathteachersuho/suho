@@ -69,6 +69,7 @@ export async function aiEditAction(input: {
   solution: string;
   instruction: string;
   imageB64?: string;
+  target?: "problem" | "solution";
 }): Promise<CardResult> {
   await requireTeacher();
   try {
@@ -76,7 +77,7 @@ export async function aiEditAction(input: {
     if (!instruction) return { ok: false, error: "어떻게 고칠지 적어 주세요." };
     const current = { question: cleanText(input.question), answer: cleanText(input.answer, 2000), solution: cleanText(input.solution) };
     if (!current.question.trim()) return { ok: false, error: "고칠 문제가 비어 있어요." };
-    return { ok: true, data: await editOne(current, instruction, cleanImage(input.imageB64)) };
+    return { ok: true, data: await editOne(current, instruction, cleanImage(input.imageB64), input.target === "solution" ? "solution" : "problem") };
   } catch (e) {
     return { ok: false, error: fail(e) };
   }

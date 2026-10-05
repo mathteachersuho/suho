@@ -289,3 +289,58 @@ body {
     display: none;
   }
 }
+
+/* 바로 고치기 편집 칸 (app/teacher/create/RichEditor.tsx) */
+.re-editor {
+  white-space: pre-wrap;
+  line-height: 1.7;
+  cursor: text;
+  overflow-wrap: anywhere;
+}
+.re-math {
+  display: inline-block;
+  padding: 0 3px;
+  margin: 0 1px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  cursor: pointer;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.re-math:hover {
+  outline: 1.5px solid var(--accent);
+}
+.re-math-block {
+  display: block;
+  width: fit-content;
+  margin: 4px auto;
+  padding: 2px 8px;
+}
+.re-math-block .katex-display {
+  margin: 0;
+}
+.re-math-empty {
+  color: var(--ink-faint);
+  font-size: 13px;
+  padding: 1px 8px;
+}
+.re-raw {
+  display: inline-block;
+  margin: 2px 0;
+  padding: 3px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  user-select: none;
+}
+.re-field {
+  display: block;
+  width: 100%;
+  font-size: 20px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+}
