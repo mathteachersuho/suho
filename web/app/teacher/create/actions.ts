@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { AiError, mathpixText } from "@/lib/ai/clients";
 import type { GenKind } from "@/lib/ai/prompts";
-import { editOne, generateAll, generateOne, SEMESTERS, type CardResult } from "@/lib/create";
+import { editOne, generateAll, generateOne, MAX_PER_KIND, SEMESTERS, type CardResult } from "@/lib/create";
 import { db } from "@/lib/db";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import { renderProblemHtml } from "@/lib/mathText";
@@ -40,25 +40,32 @@ export async function ocrAction(imageB64: string): Promise<{ text: string } | { 
   }
 }
 
-/** 2) 원본 다시 쓰기 + 유사문제 2개 + 분류를 동시에 */
-export async function generateAction(input: { text: string; imageB64?: string; detailed: boolean }) {
+const count = (v: unknown, fallback: number) => {
+  const n = Number(v);
+  return Number.isInteger(n) ? Math.min(Math.max(n, 0), MAX_PER_KIND) : fallback;
+};
+
+/** 2) 원본 다시 쓰기 + 기본 다지기 n개 + 실력 키우기 m개 + 분류를 동시에 */
+export async function generateAction(input: { text: string; imageB64?: string; detailed: boolean; basic?: number; advanced?: number }) {
   await requireTeacher();
   try {
     const text = cleanText(input.text).trim();
     if (!text) return { error: "문제 글자가 비어 있어요." } as const;
     const taxonomy = await listTaxonomy();
-    return { result: await generateAll(text, !!input.detailed, cleanImage(input.imageB64), taxonomy) } as const;
+    const counts = { basic: count(input.basic, 1), advanced: count(input.advanced, 1) };
+    return { result: await generateAll(text, !!input.detailed, cleanImage(input.imageB64), taxonomy, counts) } as const;
   } catch (e) {
     return { error: fail(e) } as const;
   }
 }
 
-/** 한 문제만 다시 만들기 */
-export async function regenerateAction(input: { kind: GenKind; text: string; imageB64?: string; detailed: boolean }): Promise<CardResult> {
+/** 한 문제만 다시 만들기. avoid = 같은 종류로 이미 만든 다른 문제들 (겹치지 않게) */
+export async function regenerateAction(input: { kind: GenKind; text: string; imageB64?: string; detailed: boolean; avoid?: string[] }): Promise<CardResult> {
   await requireTeacher();
   try {
     const kind = ([0, 1, 2] as const).includes(input.kind) ? input.kind : 1;
-    return { ok: true, data: await generateOne(kind, cleanText(input.text), !!input.detailed, cleanImage(input.imageB64)) };
+    const avoid = (Array.isArray(input.avoid) ? input.avoid : []).slice(0, MAX_PER_KIND).map((q) => cleanText(q, 3000)).filter((q) => q.trim());
+    return { ok: true, data: await generateOne(kind, cleanText(input.text), !!input.detailed, cleanImage(input.imageB64), { avoid }) };
   } catch (e) {
     return { ok: false, error: fail(e) };
   }
@@ -99,7 +106,7 @@ const s = (v: unknown, max = 100) => cleanText(v, max).trim();
 export async function saveAction(p: SavePayload): Promise<SaveResult> {
   await requireTeacher();
   if (!GROUP_ID.test(p?.groupId || "")) return { ok: false, error: "저장 번호가 잘못됐어요. 새로고침 후 다시 해 주세요." };
-  const items = (p.items || []).filter((it) => it && it.source in POSITION).slice(0, 3);
+  const items = (p.items || []).filter((it) => it && it.source in POSITION).slice(0, 1 + 2 * MAX_PER_KIND);
   if (!items.length) return { ok: false, error: "저장할 문제를 하나 이상 체크해 주세요." };
   const rows = items.map((it) => ({
     source: it.source,

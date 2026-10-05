@@ -1,6 +1,6 @@
 import "server-only";
 import { AiError, gemini, geminiJson } from "./ai/clients";
-import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, type EditTarget, type GenKind, type Generated } from "./ai/prompts";
+import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, type EditTarget, type GenKind, type Generated, type Variation } from "./ai/prompts";
 import { DIFFICULTIES } from "./difficulty";
 import type { TaxRow } from "./taxonomy";
 
@@ -19,8 +19,8 @@ export type Suggestion = {
 
 export type CardResult = { ok: true; data: Generated } | { ok: false; error: string };
 
-export async function generateOne(kind: GenKind, text: string, detailed: boolean, imageB64?: string): Promise<Generated> {
-  const out = parseProblem(await gemini(problemPrompt(kind, text, detailed), kind === 0 ? imageB64 : undefined));
+export async function generateOne(kind: GenKind, text: string, detailed: boolean, imageB64?: string, v: Variation = {}): Promise<Generated> {
+  const out = parseProblem(await gemini(problemPrompt(kind, text, detailed, v), kind === 0 ? imageB64 : undefined));
   if (!out.question.trim()) throw new AiError("빈 문제가 만들어졌어요. 다시 만들어 주세요.");
   return out;
 }
@@ -66,13 +66,18 @@ export async function classify(text: string, taxonomy: TaxRow[]): Promise<Sugges
 
 const msg = (e: unknown) => (e instanceof AiError ? e.message : "만들지 못했어요. 다시 눌러 주세요.");
 
-/** 원본 다시 쓰기, 유사문제 1·2번, 분류를 한꺼번에 (동시에) 만든다. 하나가 실패해도 나머지는 돌려준다. */
-export async function generateAll(text: string, detailed: boolean, imageB64: string | undefined, taxonomy: TaxRow[]) {
-  const [p0, p1, p2, cls] = await Promise.allSettled([
-    generateOne(0, text, detailed, imageB64),
-    generateOne(1, text, detailed),
-    generateOne(2, text, detailed),
-    classify(text, taxonomy),
+/** 한 번에 만들 수 있는 유사문제 수 (종류마다) */
+export const MAX_PER_KIND = 5;
+export type Counts = { basic: number; advanced: number };
+
+/** 원본 다시 쓰기, 기본 다지기 n개, 실력 키우기 m개, 분류를 한꺼번에 (동시에) 만든다. 하나가 실패해도 나머지는 돌려준다. */
+export async function generateAll(text: string, detailed: boolean, imageB64: string | undefined, taxonomy: TaxRow[], counts: Counts = { basic: 1, advanced: 1 }) {
+  const many = (kind: 1 | 2, n: number) => Array.from({ length: n }, (_, i) => generateOne(kind, text, detailed, undefined, { index: i + 1, total: n }));
+  const [p0, cls, basic, advanced] = await Promise.all([
+    Promise.allSettled([generateOne(0, text, detailed, imageB64)]).then(([r]) => r),
+    classify(text, taxonomy).catch(() => null),
+    Promise.allSettled(many(1, counts.basic)),
+    Promise.allSettled(many(2, counts.advanced)),
   ]);
   const card = (r: PromiseSettledResult<Generated>): CardResult =>
     r.status === "fulfilled" ? { ok: true, data: r.value } : { ok: false, error: msg(r.reason) };
@@ -81,8 +86,8 @@ export async function generateAll(text: string, detailed: boolean, imageB64: str
     // 원본 다시 쓰기가 실패하면 인식한 글자를 그대로 원본으로 쓴다 (Streamlit 과 같게)
     original: p0.status === "fulfilled" ? p0.value : { question: text, answer: "", solution: "" },
     originalRebuilt: p0.status === "fulfilled",
-    p1: card(p1),
-    p2: card(p2),
-    suggestion: cls.status === "fulfilled" ? cls.value : null,
+    basic: basic.map(card),
+    advanced: advanced.map(card),
+    suggestion: cls,
   };
 }

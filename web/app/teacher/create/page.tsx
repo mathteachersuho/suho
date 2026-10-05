@@ -13,7 +13,7 @@ export default async function CreatePage() {
       <div>
         <p className="eyebrow">Create</p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">문제 만들기</h1>
-        <p className="mt-1 text-sm text-ink-soft">사진을 올리면 원본을 깔끔하게 다시 쓰고, 비슷한 문제 2개를 만들어 문제 은행에 저장해요.</p>
+        <p className="mt-1 text-sm text-ink-soft">사진을 올리면 원본을 깔끔하게 다시 쓰고, 정한 개수만큼 기본 다지기·실력 키우기 문제를 만들어 문제 은행에 저장해요.</p>
       </div>
       {!cfg.mathpix || !cfg.gemini ? (
         <div className="rounded-2xl border border-line bg-warn-soft p-5 text-sm">
