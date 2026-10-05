@@ -1,0 +1,453 @@
+/**
+ * 좌표평면 그림: AI는 좌표와 식만 적고(<좌표그림>{...}</좌표그림>), 그림은 여기서 계산해서 그린다.
+ * 그래서 그래프 위의 점은 정확히 그래프 위에 찍히고, 점 이름 글자는 꼭짓점 바로 옆 빈 곳에 놓인다.
+ * 그린 SVG 에는 원래 설정을 data-figure 로 남겨 두어, AI로 고칠 때 다시 설정으로 바꿔 보낸다.
+ */
+
+export type FigureSpec = {
+  x: [number, number];
+  y: [number, number];
+  grid?: boolean;
+  graphs?: { f?: string; x?: number; label?: string; domain?: [number, number]; dashed?: boolean }[];
+  points?: { name?: string; x: number; y?: number; on?: number; label?: string; dot?: boolean }[];
+  polygons?: (string | string[])[];
+  segments?: [string, string][];
+};
+
+/* ---------------- 식 계산 (eval 없이) ---------------- */
+
+type Fn = (x: number) => number;
+const FUNCS: Record<string, (v: number) => number> = {
+  sqrt: Math.sqrt, abs: Math.abs, sin: Math.sin, cos: Math.cos, tan: Math.tan, ln: Math.log, log: Math.log10, exp: Math.exp,
+};
+
+/** "4x", "180/x", "-(x-1)^2+3", "2sqrt(x)" 같은 식을 함수로. 읽을 수 없으면 null. */
+export function compile(src: string): Fn | null {
+  const s = src.replace(/\s+/g, "").replace(/[−–]/g, "-").replace(/×/g, "*").replace(/÷/g, "/").replace(/\*\*/g, "^").replace(/π/g, "pi").replace(/√/g, "sqrt");
+  let i = 0;
+  type Node = (x: number) => number;
+  const peek = () => s[i];
+  const num = (): Node | null => {
+    const m = /^(\d+\.?\d*|\.\d+)/.exec(s.slice(i));
+    if (!m) return null;
+    i += m[0].length;
+    const v = Number(m[0]);
+    return () => v;
+  };
+  const atom = (): Node | null => {
+    const c = peek();
+    if (c === "(") {
+      i++;
+      const e = expr();
+      if (!e || peek() !== ")") return null;
+      i++;
+      return e;
+    }
+    if (c === "|") {
+      i++;
+      const e = expr();
+      if (!e || peek() !== "|") return null;
+      i++;
+      return (x) => Math.abs(e(x));
+    }
+    if (/[\d.]/.test(c ?? "")) return num();
+    const m = /^[a-z]+/i.exec(s.slice(i));
+    if (!m) return null;
+    const w = m[0].toLowerCase();
+    if (w === "x") return (i++, (x) => x);
+    if (w === "pi") return ((i += 2), () => Math.PI);
+    if (w === "e") return (i++, () => Math.E);
+    const fname = Object.keys(FUNCS).find((k) => w.startsWith(k));
+    if (fname) {
+      i += fname.length;
+      const arg = power();
+      if (!arg) return null;
+      const f = FUNCS[fname];
+      return (x) => f(arg(x));
+    }
+    if (w.startsWith("x")) return (i++, (x) => x); // "xx" 같은 경우는 곱으로 이어서 읽는다
+    return null;
+  };
+  const power = (): Node | null => {
+    const b = atom();
+    if (!b) return null;
+    if (peek() === "^") {
+      i++;
+      const e = unary();
+      if (!e) return null;
+      return (x) => Math.pow(b(x), e(x));
+    }
+    return b;
+  };
+  const unary = (): Node | null => {
+    if (peek() === "-") {
+      i++;
+      const v = unary();
+      return v && ((x) => -v(x));
+    }
+    if (peek() === "+") {
+      i++;
+      return unary();
+    }
+    return power();
+  };
+  const term = (): Node | null => {
+    let a = unary();
+    if (!a) return null;
+    for (;;) {
+      const c = peek();
+      if (c === "*" || c === "/") {
+        i++;
+        const b = unary();
+        if (!b) return null;
+        const l: Node = a;
+        a = c === "*" ? (x) => l(x) * b(x) : (x) => l(x) / b(x);
+      } else if (c && /[\d.(a-z|]/i.test(c) && c !== "|") {
+        // 4x, 2(x+1), 3sqrt(x) 처럼 곱하기 기호 없이 붙여 쓴 곱
+        const b = power();
+        if (!b) return null;
+        const l: Node = a;
+        a = (x) => l(x) * b(x);
+      } else return a;
+    }
+  };
+  const expr = (): Node | null => {
+    let a = term();
+    if (!a) return null;
+    while (peek() === "+" || peek() === "-") {
+      const c = s[i++];
+      const b = term();
+      if (!b) return null;
+      const l: Node = a;
+      a = c === "+" ? (x) => l(x) + b(x) : (x) => l(x) - b(x);
+    }
+    return a;
+  };
+  // "y=4x" 처럼 적었으면 오른쪽만
+  const eq = s.indexOf("=");
+  if (eq >= 0) return compile(s.slice(eq + 1));
+  const out = expr();
+  return out && i === s.length ? out : null;
+}
+
+/* ---------------- 그리기 ---------------- */
+
+const W = 260; // 그림 안쪽 최대 크기(px)
+const PAD = 22;
+const FONT = 12;
+type Box = { x1: number; y1: number; x2: number; y2: number };
+const fmt = (n: number) => String(Math.round(n * 10) / 10);
+const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const textW = (t: string) => [...t].reduce((a, ch) => a + (/[ㄱ-힝]/.test(ch) ? FONT : /[il.,()' ]/.test(ch) ? FONT * 0.35 : FONT * 0.6), 0);
+const overlap = (a: Box, b: Box) => Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1)) * Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1));
+/** 그림 속 글자: $ 와 \ 는 빼고 (문제 글자의 수식 처리와 섞이지 않게) 제곱은 위첨자로 */
+const cleanLabel = (t: unknown, max: number) =>
+  String(t ?? "")
+    .replace(/\\d?frac\{([^{}]*)\}\{([^{}]*)\}/g, "$1/$2")
+    .replace(/\\sqrt\{([^{}]*)\}/g, "√$1")
+    .replace(/\\(?:left|right)/g, "")
+    .replace(/[$\\{}]/g, "")
+    .replace(/\^2/g, "²")
+    .replace(/\^3/g, "³")
+    .replace(/\*/g, "")
+    .slice(0, max);
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : NaN);
+
+function range(v: unknown, fallback: [number, number]): [number, number] {
+  if (!Array.isArray(v) || v.length !== 2) return fallback;
+  const a = num(v[0]);
+  const b = num(v[1]);
+  return Number.isFinite(a) && Number.isFinite(b) && b > a ? [a, b] : fallback;
+}
+
+/** 설정 → SVG. 설정이 잘못됐으면 오류를 던진다. */
+export function renderFigure(raw: unknown): string {
+  if (!raw || typeof raw !== "object") throw new Error("그림 설정이 비어 있어요");
+  const spec = raw as FigureSpec;
+  const [x0, x1] = range(spec.x, [-5, 5]);
+  const [y0, y1] = range(spec.y, [-5, 5]);
+  const rx = x1 - x0;
+  const ry = y1 - y0;
+  // 같은 비율로 그려야 정사각형이 정사각형으로 보인다. 가로세로 차이가 너무 크면 각각 맞춘다.
+  let kx = W / Math.max(rx, ry);
+  let ky = kx;
+  if (rx / ry > 2.5 || ry / rx > 2.5) {
+    kx = W / rx;
+    ky = W / ry;
+  }
+  const w = rx * kx + PAD * 2;
+  const h = ry * ky + PAD * 2;
+  const X = (x: number) => PAD + (x - x0) * kx;
+  const Y = (y: number) => PAD + (y1 - y) * ky;
+
+  const parts: string[] = [];
+  const obstacles: (Box & { own?: string })[] = []; // 글자를 놓을 때 피할 곳 (선, 점, 다른 글자). own = 어느 선인지
+  const lineBoxes = (pts: [number, number][], own = "line") => {
+    for (let k = 1; k < pts.length; k++) {
+      const [ax, ay] = pts[k - 1];
+      const [bx, by] = pts[k];
+      const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 4));
+      for (let t = 0; t <= n; t++) {
+        const px = ax + ((bx - ax) * t) / n;
+        const py = ay + ((by - ay) * t) / n;
+        obstacles.push({ x1: px - 1.5, y1: py - 1.5, x2: px + 1.5, y2: py + 1.5, own });
+      }
+    }
+  };
+
+  // 격자
+  if (spec.grid && rx <= 30 && ry <= 30) {
+    const g: string[] = [];
+    for (let v = Math.ceil(x0); v <= x1; v++) g.push(`<line x1="${fmt(X(v))}" y1="${fmt(Y(y0))}" x2="${fmt(X(v))}" y2="${fmt(Y(y1))}"/>`);
+    for (let v = Math.ceil(y0); v <= y1; v++) g.push(`<line x1="${fmt(X(x0))}" y1="${fmt(Y(v))}" x2="${fmt(X(x1))}" y2="${fmt(Y(v))}"/>`);
+    parts.push(`<g stroke="#dddddd" stroke-width="1">${g.join("")}</g>`);
+  }
+
+  // 축 (화살표 포함)
+  const axisY = y0 <= 0 && y1 >= 0 ? 0 : y0 > 0 ? y0 : y1;
+  const axisX = x0 <= 0 && x1 >= 0 ? 0 : x0 > 0 ? x0 : x1;
+  const ax1 = X(x0) - 6;
+  const ax2 = X(x1) + 8;
+  const ay = Y(axisY);
+  const by1 = Y(y1) - 8;
+  const by2 = Y(y0) + 6;
+  const bx = X(axisX);
+  parts.push(
+    `<g stroke="#000000" stroke-width="1.2"><line x1="${fmt(ax1)}" y1="${fmt(ay)}" x2="${fmt(ax2)}" y2="${fmt(ay)}"/><line x1="${fmt(bx)}" y1="${fmt(by2)}" x2="${fmt(bx)}" y2="${fmt(by1)}"/></g>`,
+    `<polygon points="${fmt(ax2 + 2)},${fmt(ay)} ${fmt(ax2 - 5)},${fmt(ay - 3.5)} ${fmt(ax2 - 5)},${fmt(ay + 3.5)}" fill="#000000"/>`,
+    `<polygon points="${fmt(bx)},${fmt(by1 - 2)} ${fmt(bx - 3.5)},${fmt(by1 + 5)} ${fmt(bx + 3.5)},${fmt(by1 + 5)}" fill="#000000"/>`,
+  );
+  lineBoxes([[ax1, ay], [ax2, ay]]);
+  lineBoxes([[bx, by1], [bx, by2]]);
+
+  // 그래프
+  const graphs = (Array.isArray(spec.graphs) ? spec.graphs : []).slice(0, 8);
+  const fns: (Fn | { vx: number } | null)[] = [];
+  const curves: [number, number][][][] = []; // 그래프마다 화면 좌표 조각들
+  for (const g of graphs) {
+    const vx = num(g?.x);
+    if (Number.isFinite(vx) && !g?.f) {
+      fns.push({ vx });
+      const seg: [number, number][] = [[X(vx), Y(y0)], [X(vx), Y(y1)]];
+      curves.push([seg]);
+      continue;
+    }
+    const f = typeof g?.f === "string" ? compile(g.f) : null;
+    if (!f) throw new Error(`식을 읽지 못했어요: ${String(g?.f ?? "")}`);
+    fns.push(f);
+    const [d0, d1] = range(g.domain, [x0, x1]);
+    const lo = Math.max(d0, x0);
+    const hi = Math.min(d1, x1);
+    const N = 480;
+    const pieces: [number, number][][] = [];
+    let cur: [number, number][] = [];
+    let prev: [number, number] | null = null;
+    const flush = () => {
+      if (cur.length > 1) pieces.push(cur);
+      cur = [];
+    };
+    for (let k = 0; k <= N; k++) {
+      const x = lo + ((hi - lo) * k) / N;
+      const y = f(x);
+      if (!Number.isFinite(y)) {
+        flush();
+        prev = null;
+        continue;
+      }
+      if (prev) {
+        const [px, py] = prev;
+        if (Math.abs(y - py) > ry * 3) flush(); // 점근선을 건너뛰는 큰 점프는 잇지 않는다
+        else {
+          // 선분을 보이는 y 범위로 자른다
+          let t0 = 0;
+          let t1 = 1;
+          const dy = y - py;
+          if (dy === 0) {
+            if (py < y0 || py > y1) t0 = 2;
+          } else {
+            const ta = (y0 - py) / dy;
+            const tb = (y1 - py) / dy;
+            t0 = Math.max(t0, Math.min(ta, tb));
+            t1 = Math.min(t1, Math.max(ta, tb));
+          }
+          if (t0 <= t1) {
+            const a: [number, number] = [X(px + (x - px) * t0), Y(py + dy * t0)];
+            const b: [number, number] = [X(px + (x - px) * t1), Y(py + dy * t1)];
+            const last = cur[cur.length - 1];
+            if (!last || Math.abs(last[0] - a[0]) > 0.01 || Math.abs(last[1] - a[1]) > 0.01) {
+              flush();
+              cur.push(a);
+            }
+            cur.push(b);
+          } else flush();
+        }
+      }
+      prev = [x, y];
+    }
+    if (cur.length > 1) pieces.push(cur);
+    curves.push(pieces);
+  }
+  graphs.forEach((g, gi) => {
+    const dash = g?.dashed ? ` stroke-dasharray="4 3"` : "";
+    for (const p of curves[gi]) {
+      parts.push(`<polyline points="${p.map(([a, b]) => `${fmt(a)},${fmt(b)}`).join(" ")}" fill="none" stroke="#000000" stroke-width="1.4"${dash}/>`);
+      lineBoxes(p, `g${gi}`);
+    }
+  });
+
+  // 점 (그래프 위의 점은 y를 계산해서 정확히)
+  const pts = new Map<string, [number, number]>();
+  const shown: { name: string; text: string; px: number; py: number; dot: boolean }[] = [];
+  for (const p of (Array.isArray(spec.points) ? spec.points : []).slice(0, 26)) {
+    let x = num(p?.x);
+    let y = num(p?.y);
+    const on = typeof p?.on === "number" ? fns[p.on] : undefined;
+    if (on && typeof on === "object") x = on.vx;
+    else if (typeof on === "function" && Number.isFinite(x)) y = on(x);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`점 ${p?.name ?? ""}의 좌표가 없어요`);
+    const name = String(p?.name ?? "").slice(0, 3);
+    if (name) pts.set(name, [x, y]);
+    const text = cleanLabel(p?.label ?? name, 20);
+    shown.push({ name, text, px: X(x), py: Y(y), dot: p?.dot !== false });
+  }
+  const P = (n: string) => {
+    const v = pts.get(n);
+    if (!v) throw new Error(`점 ${n}이 없어요`);
+    return [X(v[0]), Y(v[1])] as [number, number];
+  };
+  const names = (v: string | string[]) => (Array.isArray(v) ? v.map(String) : [...String(v)].filter((c) => pts.has(c)));
+
+  // 다각형과 선분
+  const polys: [number, number][][] = [];
+  for (const poly of (Array.isArray(spec.polygons) ? spec.polygons : []).slice(0, 6)) {
+    const vs = names(poly).map(P);
+    if (vs.length < 3) continue;
+    polys.push(vs);
+    parts.push(`<polygon points="${vs.map(([a, b]) => `${fmt(a)},${fmt(b)}`).join(" ")}" fill="#e8eefc" fill-opacity="0.7" stroke="#000000" stroke-width="1.3"/>`);
+    lineBoxes([...vs, vs[0]]);
+  }
+  for (const s of (Array.isArray(spec.segments) ? spec.segments : []).slice(0, 12)) {
+    if (!Array.isArray(s) || s.length !== 2) continue;
+    const a = P(String(s[0]));
+    const b = P(String(s[1]));
+    parts.push(`<line x1="${fmt(a[0])}" y1="${fmt(a[1])}" x2="${fmt(b[0])}" y2="${fmt(b[1])}" stroke="#000000" stroke-width="1.2"/>`);
+    lineBoxes([a, b]);
+  }
+  for (const s of shown) {
+    if (s.dot) {
+      parts.push(`<circle cx="${fmt(s.px)}" cy="${fmt(s.py)}" r="2.6" fill="#000000"/>`);
+      obstacles.push({ x1: s.px - 3, y1: s.py - 3, x2: s.px + 3, y2: s.py + 3 });
+    }
+  }
+
+  // 글자 놓기: 점 둘레 여러 자리 중 선·글자와 덜 겹치고 도형 바깥쪽인 자리를 고른다
+  const labels: string[] = [];
+  const view: Box = { x1: 2, y1: 2, x2: w - 2, y2: h - 2 };
+  const inPoly = (x: number, y: number) =>
+    polys.some((vs) => {
+      let c = false;
+      for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+        const [xi, yi] = vs[i];
+        const [xj, yj] = vs[j];
+        if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+      }
+      return c;
+    });
+  /** 점 (cx, cy) 둘레에서 글자를 놓기 가장 좋은 자리와 점수 (낮을수록 좋다) */
+  const bestSpot = (text: string, cx: number, cy: number, away: [number, number] | null, dist: number, self?: string) => {
+    const tw = textW(text);
+    const th = FONT;
+    let best: { box: Box; score: number } | null = null;
+    for (let a = 0; a < 16; a++) {
+      const ang = (Math.PI * 2 * a) / 16;
+      const dx = Math.cos(ang);
+      const dy = Math.sin(ang);
+      for (const r of [dist, dist + 5, dist + 11]) {
+        // 글자 상자의 가장 가까운 모서리가 점에서 r 만큼 떨어지게
+        const bx = cx + dx * r + (dx >= 0 ? 0 : -tw) + (Math.abs(dx) < 0.38 ? (dx >= 0 ? -tw / 2 : tw / 2) : 0);
+        const byTop = cy + dy * r + (dy >= 0 ? 0 : -th) + (Math.abs(dy) < 0.38 ? (dy >= 0 ? -th / 2 : th / 2) : 0);
+        const box = { x1: bx, y1: byTop, x2: bx + tw, y2: byTop + th };
+        let score = r - dist; // 가까울수록 좋다
+        for (const o of obstacles) score += overlap(box, o) * 4;
+        const outside = Math.max(0, view.x1 - box.x1) + Math.max(0, box.x2 - view.x2) + Math.max(0, view.y1 - box.y1) + Math.max(0, box.y2 - view.y2);
+        score += outside * 40;
+        if (self) {
+          // 그래프 이름은 다른 선 가까이에 두지 않는다 (어느 선의 이름인지 헷갈리지 않게)
+          const near = { x1: box.x1 - 9, y1: box.y1 - 9, x2: box.x2 + 9, y2: box.y2 + 9 };
+          for (const o of obstacles) if (o.own && o.own !== self && overlap(near, o) > 0) score += 2;
+        }
+        if (inPoly((box.x1 + box.x2) / 2, (box.y1 + box.y2) / 2)) score += 30; // 색칠한 도형 안은 피한다
+        if (away) score += -(dx * away[0] + dy * away[1]) * 6; // 도형 안쪽 말고 바깥쪽으로
+        if (!best || score < best.score) best = { box, score };
+      }
+    }
+    return best!;
+  };
+  const commit = (text: string, b: Box, italic = false) => {
+    obstacles.push(b);
+    labels.push(
+      `<text x="${fmt(b.x1)}" y="${fmt(b.y2 - 2)}" font-size="${FONT}" fill="#000000"${italic ? ' font-style="italic"' : ""}>${esc(text)}</text>`,
+    );
+  };
+  const place = (text: string, cx: number, cy: number, away: [number, number] | null, dist = 9, italic = false) =>
+    commit(text, bestSpot(text, cx, cy, away, dist).box, italic);
+  // 도형의 꼭짓점이면 도형 중심 반대쪽으로
+  const awayFrom = (px: number, py: number): [number, number] | null => {
+    for (const vs of polys) {
+      if (vs.some(([a, b]) => Math.abs(a - px) < 0.5 && Math.abs(b - py) < 0.5)) {
+        const cx = vs.reduce((s, v) => s + v[0], 0) / vs.length;
+        const cy = vs.reduce((s, v) => s + v[1], 0) / vs.length;
+        const d = Math.hypot(px - cx, py - cy) || 1;
+        return [(px - cx) / d, (py - cy) / d];
+      }
+    }
+    return null;
+  };
+  // 축 이름과 원점
+  place("x", ax2 + 2, ay, [1, 0.3], 4, true);
+  place("y", bx, by1 - 2, [0.3, -1], 4, true);
+  const originShown = x0 <= 0 && x1 >= 0 && y0 <= 0 && y1 >= 0 && !shown.some((s) => s.name === "O");
+  if (originShown) place("O", X(0), Y(0), [-0.7, 0.7], 5);
+  for (const s of shown) if (s.text) place(s.text, s.px, s.py, awayFrom(s.px, s.py));
+  // 그래프 이름: 곡선 끝 쪽 빈 곳
+  graphs.forEach((g, gi) => {
+    const label = cleanLabel(g?.label, 24);
+    const pieces = curves[gi];
+    if (!label || !pieces?.length) return;
+    // 곡선 위 여러 곳 중 글자가 가장 덜 겹치는 곳 (끝 쪽을 조금 더 좋아한다)
+    let best: { box: Box; score: number } | null = null;
+    for (const piece of pieces)
+      for (const t of [0.95, 0.85, 0.7, 0.55, 0.4, 0.25, 0.1]) {
+        const at = piece[Math.floor((piece.length - 1) * t)];
+        const spot = bestSpot(label, at[0], at[1], null, 6, `g${gi}`);
+        const score = spot.score + (1 - t) * 3;
+        if (!best || score < best.score) best = { box: spot.box, score };
+      }
+    if (best) commit(label, best.box);
+  });
+
+  const data = esc(JSON.stringify(spec).replace(/\$/g, ""));
+  return `<svg width="${Math.round(w)}" height="${Math.round(h)}" viewBox="0 0 ${Math.round(w)} ${Math.round(h)}" font-family="sans-serif" data-figure="${data}">${parts.join("")}${labels.join("")}</svg>`;
+}
+
+const BLOCK = /(?:```[a-z]*\s*)?<좌표그림>([\s\S]*?)<\/좌표그림>(?:\s*```)?/g;
+
+/** AI가 쓴 <좌표그림> 블록을 SVG로 바꾼다. 잘못된 설정이면 그 자리에 안내 문구를 남긴다. */
+export function renderFigureBlocks(text: string): string {
+  return text.replace(BLOCK, (_m, body: string) => {
+    try {
+      const json = body.trim().replace(/^```(?:json)?|```$/g, "").replace(/,\s*([}\]])/g, "$1");
+      return renderFigure(JSON.parse(json));
+    } catch (e) {
+      return `[그림을 그리지 못했어요${e instanceof Error && !(e instanceof SyntaxError) ? `: ${e.message}` : ""} · 다시 만들기나 AI로 고치기를 눌러 주세요]`;
+    }
+  });
+}
+
+/** 앱이 그린 좌표 그림 SVG를 다시 <좌표그림> 설정으로 (AI로 고칠 때 보내기 위해) */
+export function figuresToBlocks(text: string): string {
+  return text.replace(/<svg\b[^>]*\bdata-figure="([^"]*)"[^>]*>[\s\S]*?<\/svg>/g, (_m, data: string) => {
+    const json = data.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    return `<좌표그림>\n${json}\n</좌표그림>`;
+  });
+}
