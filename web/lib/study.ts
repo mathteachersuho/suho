@@ -26,8 +26,13 @@ export type WrongItem = StudyProblem & {
   hwTitle: string;
   day: string; // 숙제를 낸 날 (서울) YYYY-MM-DD
   starred: boolean;
+  wrong: boolean; // false 면 맞았지만 선생님이 '어려워함'으로 표시한 문제
+  tags: string[]; // 선생님 표시 (중요·어려워함)
   similar: StudyProblem[];
 };
+
+const TEACHER_TAGS = ["중요", "어려워함"];
+const teacherTags = (v: unknown) => (Array.isArray(v) ? TEACHER_TAGS.filter((t) => v.includes(t)) : []);
 
 const P = (r: Record<string, unknown>, prefix = ""): StudyProblem => ({
   id: r[prefix + "id"] as string,
@@ -47,7 +52,7 @@ const received = (studentId: string) => db()`
   join homework_students hs on hs.hw_id = hp.hw_id and hs.student_id = ${studentId}`;
 
 /**
- * 오답노트: 숙제에서 틀린(N) 문제, 최근 순. 같은 문제를 여러 번 틀렸으면 가장 최근 것 하나만.
+ * 오답노트: 숙제에서 틀린(N) 문제와 선생님이 '어려워함'으로 표시한 문제, 최근 순. 같은 문제가 여러 번이면 가장 최근 것 하나만.
  * 문제마다 비슷한 문제(같은 묶음 → 같은 문제틀 순서, 아직 받지 않은 것) 2개까지 붙인다.
  */
 export async function wrongNotes(studentId: string, withSimilar = true): Promise<WrongItem[]> {
@@ -55,13 +60,13 @@ export async function wrongNotes(studentId: string, withSimilar = true): Promise
   const rows = await sql`
     with wrong as (
       select distinct on (r.problem_id) r.problem_id, r.answer as my_answer, h.hw_id, h.title as hw_title,
-        (h.created_at at time zone 'Asia/Seoul')::date::text as day, h.created_at
+        (h.created_at at time zone 'Asia/Seoul')::date::text as day, h.created_at, r.correct = 'N' as is_wrong, r.tags
       from hw_results r join homework h on h.hw_id = r.hw_id
-      where r.student_id = ${studentId} and r.correct = 'N'
+      where r.student_id = ${studentId} and (r.correct = 'N' or '어려워함' = any(r.tags))
       order by r.problem_id, h.created_at desc
     )
     select p.id, p.grade, p.unit, p.type, p.frame, p.difficulty, p.question, p.answer, p.solution, p.set_id,
-      coalesce(u.semester, '') as semester, w.my_answer, w.hw_id, w.hw_title, w.day,
+      coalesce(u.semester, '') as semester, w.my_answer, w.hw_id, w.hw_title, w.day, w.is_wrong, w.tags,
       exists(select 1 from stars s where s.student_id = ${studentId} and s.problem_id = p.id) as starred
     from wrong w join problems p on p.id = w.problem_id
     left join units u on u.grade = p.grade and u.unit = p.unit
@@ -96,19 +101,31 @@ export async function wrongNotes(studentId: string, withSimilar = true): Promise
     hwTitle: r.hw_title as string,
     day: r.day as string,
     starred: r.starred as boolean,
+    wrong: r.is_wrong as boolean,
+    tags: teacherTags(r.tags),
     similar: byFor.get(r.id as string) ?? [],
   }));
 }
 
-/** 중요 문제: 학생이 별표한 문제, 별표한 순서(최근 먼저) */
-export async function starredProblems(studentId: string): Promise<StudyProblem[]> {
+/** 선생님이 숙제에서 '중요'로 표시한 문제 (하위 질의) */
+const teacherStarred = (studentId: string) => db()`
+  select problem_id, max(updated_at) as at from hw_results
+  where student_id = ${studentId} and '중요' = any(tags) group by problem_id`;
+
+/** 중요 문제: 학생이 별표한 문제와 선생님이 '중요'로 표시한 문제, 최근 먼저 */
+export async function starredProblems(studentId: string): Promise<(StudyProblem & { mine: boolean; teacher: boolean })[]> {
   const rows = await db()`
-    select p.id, p.grade, p.unit, p.type, p.frame, p.difficulty, p.question, p.answer, p.solution
-    from stars s join problems p on p.id = s.problem_id
-    where s.student_id = ${studentId}
-    order by s.created_at desc, p.id
+    with mine as (select problem_id, created_at as at from stars where student_id = ${studentId}),
+    teach as (${teacherStarred(studentId)}),
+    allp as (
+      select coalesce(m.problem_id, t.problem_id) as problem_id, greatest(m.at, t.at) as at, m.problem_id is not null as mine, t.problem_id is not null as teacher
+      from mine m full join teach t on t.problem_id = m.problem_id
+    )
+    select p.id, p.grade, p.unit, p.type, p.frame, p.difficulty, p.question, p.answer, p.solution, a.mine, a.teacher
+    from allp a join problems p on p.id = a.problem_id
+    order by a.at desc, p.id
     limit 300`;
-  return rows.map((r) => P(r));
+  return rows.map((r) => ({ ...P(r), mine: r.mine as boolean, teacher: r.teacher as boolean }));
 }
 
 export async function starredIds(studentId: string): Promise<Set<string>> {
@@ -155,12 +172,13 @@ export async function setStar(studentId: string, problemId: string, on: boolean)
 export async function studyCounts(studentId: string) {
   const [r] = await db()`
     select
-      (select count(distinct problem_id) from hw_results where student_id = ${studentId} and correct = 'N')::int as wrong,
-      (select count(*) from stars where student_id = ${studentId})::int as stars`;
+      (select count(distinct problem_id) from hw_results where student_id = ${studentId} and (correct = 'N' or '어려워함' = any(tags)))::int as wrong,
+      (select count(*) from (select problem_id from stars where student_id = ${studentId}
+                             union select problem_id from hw_results where student_id = ${studentId} and '중요' = any(tags)) x)::int as stars`;
   return { wrong: r.wrong as number, stars: r.stars as number };
 }
 
-export type TypeStat = { unit: string; type: string; total: number; wrong: number; right: number; pending: number };
+export type TypeStat = { unit: string; type: string; total: number; wrong: number; right: number; pending: number; hard: number };
 
 /** 선생님용: 학생의 숙제 결과를 단원·유형별로 센다 (틀린 수 많은 순) */
 export async function typeStats(studentId: string): Promise<TypeStat[]> {
@@ -168,12 +186,13 @@ export async function typeStats(studentId: string): Promise<TypeStat[]> {
     select p.unit, p.type, count(*)::int as total,
       count(*) filter (where r.correct = 'N')::int as wrong,
       count(*) filter (where r.correct = 'Y')::int as right,
-      count(*) filter (where r.correct in ('?', ''))::int as pending
+      count(*) filter (where r.correct in ('?', ''))::int as pending,
+      count(*) filter (where '어려워함' = any(r.tags))::int as hard
     from hw_results r join problems p on p.id = r.problem_id
     where r.student_id = ${studentId}
     group by p.unit, p.type
     order by wrong desc, total desc, p.unit, p.type`;
-  return rows.map((r) => ({ unit: r.unit, type: r.type, total: r.total, wrong: r.wrong, right: r.right, pending: r.pending }));
+  return rows.map((r) => ({ unit: r.unit, type: r.type, total: r.total, wrong: r.wrong, right: r.right, pending: r.pending, hard: r.hard }));
 }
 
 /** 선생님용: 학생이 받은 숙제 수, 낸 숙제 수 */

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { IconArrow, IconChart } from "@/components/Icons";
 import WrongSections from "@/components/WrongSections";
-import { dayLabel } from "@/lib/hwFormat";
+import { dayLabel, TAG_STYLE } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import { getStudent } from "@/lib/students";
 import { homeworkProgress, typeStats, wrongNotes, type WrongItem } from "@/lib/study";
@@ -45,7 +45,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
       <dl className="grid grid-cols-3 gap-2">
         <Stat label="낸 숙제" value={`${hw.done}/${hw.given}`} />
         <Stat label="정답률" value={pct(right, graded) === null ? "－" : `${pct(right, graded)}%`} />
-        <Stat label="틀린 문제" value={String(wrong.length)} />
+        <Stat label="틀림·어려워함" value={String(wrong.length)} />
       </dl>
 
       <section className="card">
@@ -62,6 +62,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
                   <th className="py-2 pr-3 font-medium">유형</th>
                   <th className="py-2 pr-3 text-right font-medium">푼 문제</th>
                   <th className="py-2 pr-3 text-right font-medium">틀림</th>
+                  <th className="py-2 pr-3 text-right font-medium">어려워함</th>
                   <th className="py-2 font-medium">정답률</th>
                 </tr>
               </thead>
@@ -74,6 +75,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
                       <td className="py-2 pr-3 font-medium">{t.type || "-"}</td>
                       <td className="py-2 pr-3 text-right tabular-nums">{t.total}</td>
                       <td className={`py-2 pr-3 text-right tabular-nums ${t.wrong ? "font-semibold text-bad" : "text-ink-faint"}`}>{t.wrong}</td>
+                      <td className={`py-2 pr-3 text-right tabular-nums ${t.hard ? "font-semibold text-accent" : "text-ink-faint"}`}>{t.hard}</td>
                       <td className="py-2">
                         {r === null ? (
                           <span className="text-ink-faint">채점 전</span>
@@ -105,7 +107,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-bold tracking-tight">틀린 문제</h2>
+        <h2 className="text-lg font-bold tracking-tight">틀린 문제 · 어려워한 문제</h2>
         {!wrong.length ? (
           <p className="card text-sm text-ink-soft">숙제에서 틀린 문제가 없어요.</p>
         ) : (
@@ -137,6 +139,15 @@ function WrongCard({ it, no, meta }: { it: WrongItem; no: number; meta: string }
         <div className="min-w-0 flex-1">
           <p className="font-semibold">{no}</p>
           <p className="text-xs text-ink-faint">{[meta, it.frame, it.difficulty && `난이도 ${it.difficulty}`, it.starred && "학생이 중요 표시"].filter(Boolean).join(" · ")}</p>
+          {it.tags.length > 0 && (
+            <p className="mt-1.5 flex flex-wrap gap-1">
+              {it.tags.map((t) => (
+                <span key={t} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${TAG_STYLE[t]?.cls ?? ""}`}>
+                  {TAG_STYLE[t]?.icon} {t}
+                </span>
+              ))}
+            </p>
+          )}
         </div>
         <Link href={`/teacher/bank/${encodeURIComponent(it.id)}`} className="btn-soft shrink-0 px-2.5 py-1.5 text-sm">
           문제 고치기
@@ -146,7 +157,8 @@ function WrongCard({ it, no, meta }: { it: WrongItem; no: number; meta: string }
       <div className="grid gap-1 border-t border-line pt-3 text-sm sm:grid-cols-2">
         <p>
           <span className="text-ink-soft">학생 답 </span>
-          <span className="font-medium text-bad">{it.myAnswer || "(빈칸)"}</span>
+          <span className={`font-medium ${it.wrong ? "text-bad" : "text-good"}`}>{it.myAnswer || "(빈칸)"}</span>
+          {!it.wrong && <span className="text-ink-soft"> · 맞음</span>}
         </p>
         <div className="flex gap-1.5">
           <span className="shrink-0 text-ink-soft">정답</span>

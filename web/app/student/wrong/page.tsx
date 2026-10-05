@@ -19,7 +19,7 @@ export default async function WrongNotes({ searchParams }: PageProps<"/student/w
       <div>
         <p className="eyebrow">Wrong notes</p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight">오답노트</h1>
-        <p className="mt-1 text-sm text-ink-soft">숙제에서 틀린 문제를 모았어요. 다시 풀어 보고, 비슷한 문제로 한 번 더 연습해요.</p>
+        <p className="mt-1 text-sm text-ink-soft">숙제에서 틀린 문제와 선생님이 어려워함으로 표시한 문제를 모았어요. 다시 풀어 보고, 비슷한 문제로 한 번 더 연습해요.</p>
       </div>
 
       {!items.length ? (
@@ -44,6 +44,8 @@ export default async function WrongNotes({ searchParams }: PageProps<"/student/w
               myAnswer={it.myAnswer}
               from={q.view === "date" ? it.unit : `${dayLabel(it.day)} ${it.hwTitle}`}
               similar={it.similar}
+              tags={it.tags}
+              right={!it.wrong}
             />
           )}
         />

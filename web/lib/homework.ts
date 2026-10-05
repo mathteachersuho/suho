@@ -24,7 +24,12 @@ export type HomeworkSummary = {
   correctCount: number; // 모든 학생의 맞은 문제 수 합
 };
 
-export type HwResult = { studentId: string; problemId: string; answer: string; correct: Mark; gradedBy: string };
+export type HwResult = { studentId: string; problemId: string; answer: string; correct: Mark; gradedBy: string; tags: HwTag[] };
+
+/** 선생님이 숙제 문제에 붙이는 표시 (학생마다). '틀림'은 Streamlit 이 쓰던 값이라 건드리지 않고 그대로 둔다. */
+export const HW_TAGS = ["중요", "어려워함"] as const;
+export type HwTag = (typeof HW_TAGS)[number];
+export const hwTags = (v: unknown): HwTag[] => (Array.isArray(v) ? HW_TAGS.filter((t) => v.includes(t)) : []);
 
 /** 'hw' + 시각(ms). Apps Script 판과 같은 모양 */
 const newHwId = () => `hw${Date.now()}`;
@@ -123,9 +128,9 @@ async function hwProblems(hwId: string): Promise<HomeworkProblem[]> {
 async function hwResults(hwId: string, studentId?: string): Promise<HwResult[]> {
   const sql = db();
   const rows = await sql`
-    select student_id, problem_id, answer, correct, graded_by from hw_results
+    select student_id, problem_id, answer, correct, graded_by, tags from hw_results
     where hw_id = ${hwId} ${studentId ? sql`and student_id = ${studentId}` : sql``}`;
-  return rows.map((r) => ({ studentId: r.student_id, problemId: r.problem_id, answer: r.answer, correct: r.correct as Mark, gradedBy: r.graded_by }));
+  return rows.map((r) => ({ studentId: r.student_id, problemId: r.problem_id, answer: r.answer, correct: r.correct as Mark, gradedBy: r.graded_by, tags: hwTags(r.tags) }));
 }
 
 /** 선생님: 숙제 하나의 문제, 받는 학생, 결과 */
@@ -175,6 +180,27 @@ export async function markResults(hwId: string, marks: { studentId: string; prob
                where hw_id = ${hwId} and student_id = ${m.studentId} and problem_id = ${m.problemId}`;
     }
     return ok.length;
+  });
+}
+
+/**
+ * 선생님이 중요·어려워함 표시를 바꾼다. 결과 줄이 있는 칸(학생이 냈거나 선생님이 채점한 칸)만 바뀐다.
+ * 줄을 새로 만들면 '낸 숙제'로 보이므로 만들지 않는다.
+ */
+export async function tagResults(hwId: string, tags: { studentId: string; problemId: string; tags: HwTag[] }[]) {
+  if (!tags.length) return 0;
+  const sql = db();
+  return sql.begin(async (tx) => {
+    let n = 0;
+    for (const t of tags) {
+      const r = await tx`
+        update hw_results
+        set tags = array(select x from unnest(tags) x where x <> all(${HW_TAGS as unknown as string[]})) || ${hwTags(t.tags)}::text[],
+            updated_at = now()
+        where hw_id = ${hwId} and student_id = ${t.studentId} and problem_id = ${t.problemId}`;
+      n += r.count;
+    }
+    return n;
   });
 }
 

@@ -15,7 +15,7 @@ export default async function Stars() {
       <div>
         <p className="eyebrow">Starred</p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight">중요 문제</h1>
-        <p className="mt-1 text-sm text-ink-soft">숙제 결과나 오답노트에서 &lsquo;중요 표시&rsquo;를 누른 문제가 모여요. 시험 전에 다시 풀어 보세요.</p>
+        <p className="mt-1 text-sm text-ink-soft">내가 &lsquo;중요 표시&rsquo;를 누른 문제와 선생님이 중요로 표시한 문제가 모여요. 시험 전에 다시 풀어 보세요.</p>
       </div>
       {!items.length ? (
         <div className="card flex flex-col items-center py-12 text-center">
@@ -31,7 +31,7 @@ export default async function Stars() {
       ) : (
         <ol className="space-y-3">
           {items.map((p, i) => (
-            <StudyCard key={p.id} p={p} no={i + 1} starred />
+            <StudyCard key={p.id} p={p} no={i + 1} starred={p.mine} tags={p.teacher ? ["중요"] : []} />
           ))}
         </ol>
       )}

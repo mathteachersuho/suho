@@ -157,6 +157,7 @@ export type WeakType = {
   type: string;
   total: number;
   right: number;
+  hard: number; // 선생님이 '어려워함'으로 표시한 문제 수
 };
 export type ReportWrong = {
   id: string;
@@ -207,7 +208,8 @@ export async function buildReport(
       where r.student_id = ${studentId} and r.correct in ('Y', 'N') and (h.created_at at time zone 'Asia/Seoul')::date between ${from}::date and ${to}::date
       group by p.unit order by p.unit`,
     sql`
-      select p.unit, p.type, count(*)::int as total, count(*) filter (where r.correct = 'Y')::int as right
+      select p.unit, p.type, count(*)::int as total, count(*) filter (where r.correct = 'Y')::int as right,
+        count(*) filter (where '어려워함' = any(r.tags))::int as hard
       from hw_results r join homework h on h.hw_id = r.hw_id join problems p on p.id = r.problem_id
       where r.student_id = ${studentId} and r.correct in ('Y', 'N') and (h.created_at at time zone 'Asia/Seoul')::date between ${from}::date and ${to}::date
       group by p.unit, p.type`,
@@ -234,16 +236,17 @@ export async function buildReport(
     total: r.total as number,
     right: r.right as number,
   }));
-  // 보완이 필요한 유형: 2문제 이상 풀었고 정답률 80% 미만, 정답률 낮은 순 5개
+  // 보완이 필요한 유형: 2문제 이상 풀었고 정답률 80% 미만이거나, 선생님이 어려워함으로 표시한 문제가 있는 유형. 정답률 낮은 순 5개
   const weak = typeRows
     .map((r) => ({
       unit: r.unit as string,
       type: (r.type as string) || "유형 없음",
       total: r.total as number,
       right: r.right as number,
+      hard: r.hard as number,
     }))
-    .filter((t) => t.total >= 2 && t.right / t.total < 0.8)
-    .sort((a, b) => a.right / a.total - b.right / b.total || b.total - a.total)
+    .filter((t) => (t.total >= 2 && t.right / t.total < 0.8) || t.hard > 0)
+    .sort((a, b) => a.right / a.total - b.right / b.total || b.hard - a.hard || b.total - a.total)
     .slice(0, 5);
   return {
     from,
