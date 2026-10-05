@@ -44,13 +44,13 @@ export async function mathpixText(imageB64: string): Promise<string> {
 
 type Part = { text: string } | { inline_data: { mime_type: string; data: string } };
 
-/** Gemini 한 번 호출 → 글자. 사진을 함께 보내면 사진을 먼저 넣는다. */
-export async function gemini(prompt: string, imageB64?: string): Promise<string> {
+/** Gemini 한 번 호출 → 글자. 사진(여러 장 가능)을 함께 보내면 사진을 먼저 넣는다. */
+export async function gemini(prompt: string, images?: string | string[]): Promise<string> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new AiError("Gemini 키가 설정되지 않았어요. Vercel 환경 변수에 GEMINI_API_KEY를 넣어 주세요.");
   const model = (process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL).trim();
   const parts: Part[] = [];
-  if (imageB64) parts.push({ inline_data: { mime_type: imageMime(imageB64), data: imageB64 } });
+  for (const b64 of [images ?? []].flat()) if (b64) parts.push({ inline_data: { mime_type: imageMime(b64), data: b64 } });
   parts.push({ text: prompt });
   const res = await fetch(`${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
@@ -68,8 +68,8 @@ export async function gemini(prompt: string, imageB64?: string): Promise<string>
   return text.trim();
 }
 
-export async function geminiJson(prompt: string): Promise<Record<string, unknown>> {
-  const text = await gemini(prompt);
+export async function geminiJson(prompt: string, images?: string | string[]): Promise<Record<string, unknown>> {
+  const text = await gemini(prompt, images);
   const m = text.match(/\{[\s\S]*\}/);
   try {
     return m ? JSON.parse(m[0]) : {};

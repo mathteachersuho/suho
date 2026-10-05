@@ -16,7 +16,18 @@ export function reportPrompt(name: string, r: ReportData) {
     r.wrong.map((w) => `- [${w.day}] ${w.unit} › ${w.type} | ${short(w.question)} | 학생 답: ${w.myAnswer || "(빈칸)"} | 정답: ${short(w.answer, 60)}`).join("\n") ||
     "(없음)";
   const exams =
-    r.exams.map((e) => `- ${e.takenOn} ${e.kind} ${e.name} ${e.score ?? "-"}/${e.maxScore ?? "-"}${e.memo ? ` (${e.memo})` : ""}`).join("\n") || "(없음)";
+    r.exams
+      .map((e) => {
+        let line = `- ${e.takenOn} ${e.kind} ${e.name} ${e.score ?? "-"}/${e.maxScore ?? "-"}${e.memo ? ` (${e.memo})` : ""}`;
+        const a = e.analysis;
+        if (a) {
+          const bad = a.problems.filter((p) => p.result === "틀림").map((p) => `${p.no}번 ${p.unit} › ${p.type}`);
+          if (bad.length) line += `\n  틀린 문항: ${bad.join(", ")}`;
+          if (a.summary) line += `\n  시험지 분석: ${short(a.summary, 500)}`;
+        }
+        return line;
+      })
+      .join("\n") || "(없음)";
   return `너는 수학 학원 선생님이다. 아래 기록을 읽고 ${name} 학생의 학부모님께 보낼 학습 리포트의 '문제 분석'과 '선생님 종합 의견'을 써라.
 - 기간: ${r.from} ~ ${r.to}
 - 숙제: ${r.hw.length}번 중 ${done}번 제출, 채점된 문제 ${r.solved}개, 정답률 ${pct(r.right, r.solved)}
