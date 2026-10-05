@@ -4,6 +4,8 @@ import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, 
 import { DIFFICULTIES } from "./difficulty";
 import { figuresToBlocks, renderFigureBlocks } from "./figure";
 import { brief, fingerprint, sameProblem, type Fingerprint } from "./similar";
+import { sameTypeProblems } from "./problems";
+import { reportError } from "./reportError";
 import type { TaxRow } from "./taxonomy";
 
 export const SEMESTERS = ["1학기", "2학기", "공통"] as const;
@@ -81,23 +83,32 @@ export type Counts = { basic: number; advanced: number };
 const REDO_BEFORE_MS = 65_000;
 const REDO_ROUNDS = 2;
 
-/** 원본 다시 쓰기, 기본 다지기 n개, 실력 키우기 m개, 분류를 한꺼번에 (동시에) 만든다. 하나가 실패해도 나머지는 돌려준다.
- *  다 만든 뒤 원본이나 다른 문제와 같은 문제가 있으면, 겹친 문제를 알려 주고 그 문제만 다시 만든다. */
+/** AI에게 보여 줄 "은행에 이미 있는 같은 유형 문제" 수 (프롬프트가 너무 길어지지 않게) */
+const BANK_IN_PROMPT = 8;
+
+/** 원본 다시 쓰기·분류를 먼저 하고(동시에), 분류한 유형의 은행 문제를 찾은 뒤 기본 다지기 n개, 실력 키우기 m개를 동시에 만든다.
+ *  은행에 있는 같은 유형 문제는 AI에게 겹치지 말라고 알려 주고, 다 만든 뒤 원본·은행·다른 문제와 같은 문제가 있으면 그 칸만 다시 만든다.
+ *  하나가 실패해도 나머지는 돌려준다. */
 export async function generateAll(text: string, detailed: boolean, imageB64: string | undefined, taxonomy: TaxRow[], counts: Counts = { basic: 7, advanced: 3 }) {
   const started = Date.now();
-  const many = (kind: 1 | 2, n: number) => Array.from({ length: n }, (_, i) => generateOne(kind, text, detailed, undefined, { index: i + 1, total: n }));
-  const [p0, cls, basic, advanced] = await Promise.all([
-    Promise.allSettled([generateOne(0, text, detailed, imageB64)]).then(([r]) => r),
-    classify(text, taxonomy).catch(() => null),
-    Promise.allSettled(many(1, counts.basic)),
-    Promise.allSettled(many(2, counts.advanced)),
-  ]);
+  const p0p = Promise.allSettled([generateOne(0, text, detailed, imageB64)]).then(([r]) => r);
+  const cls = await classify(text, taxonomy).catch(() => null);
+  const bank = cls
+    ? await sameTypeProblems(cls).catch(async (e) => {
+        await reportError("같은 유형 은행 문제 찾기", e);
+        return [];
+      })
+    : [];
+  const bankBrief = bank.slice(0, BANK_IN_PROMPT).map((p) => brief(p.question));
+  const many = (kind: 1 | 2, n: number) =>
+    Array.from({ length: n }, (_, i) => generateOne(kind, text, detailed, undefined, { index: i + 1, total: n, bank: bankBrief }));
+  const [p0, basic, advanced] = await Promise.all([p0p, Promise.allSettled(many(1, counts.basic)), Promise.allSettled(many(2, counts.advanced))]);
   const card = (r: PromiseSettledResult<Generated>): CardResult =>
     r.status === "fulfilled" ? { ok: true, data: r.value } : { ok: false, error: msg(r.reason) };
   if (p0.status === "rejected") console.error("원본 다시 쓰기 실패", p0.reason);
   const original = p0.status === "fulfilled" ? p0.value : { question: text, answer: "", solution: "" };
   const cards = { 1: basic.map(card), 2: advanced.map(card) };
-  await removeDuplicates(cards, original.question, text, detailed, counts, started);
+  await removeDuplicates(cards, [original, { question: text, answer: original.answer }, ...bank], bankBrief, text, detailed, counts, started);
   return {
     // 원본 다시 쓰기가 실패하면 인식한 글자를 그대로 원본으로 쓴다 (Streamlit 과 같게)
     original,
@@ -105,37 +116,51 @@ export async function generateAll(text: string, detailed: boolean, imageB64: str
     basic: cards[1],
     advanced: cards[2],
     suggestion: cls,
+    bankChecked: bank.length,
   };
 }
 
-/** 같은 문제를 찾아 그 칸만 다시 만든다 (cards 를 바로 고친다). 다시 만들어도 같으면 마지막 것을 그대로 둔다. */
-async function removeDuplicates(cards: Record<1 | 2, CardResult[]>, originalQ: string, text: string, detailed: boolean, counts: Counts, started: number) {
-  const kept: { fp: Fingerprint; q: string }[] = [originalQ, text].map((q) => ({ fp: fingerprint(q), q }));
-  const isDup = (q: string) => {
-    const fp = fingerprint(q);
-    return kept.some((k) => sameProblem(fp, k.fp));
+/** 같은 문제를 찾아 그 칸만 다시 만든다 (cards 를 바로 고친다). 다시 만들어도 같으면 마지막 것을 그대로 둔다.
+ *  base = 원본과 은행 문제 (비교만 하고 AI에게 다시 보여 주지는 않는다) */
+async function removeDuplicates(
+  cards: Record<1 | 2, CardResult[]>,
+  base: { question: string; answer: string }[],
+  bankBrief: string[],
+  text: string,
+  detailed: boolean,
+  counts: Counts,
+  started: number,
+) {
+  const kept: Fingerprint[] = base.map((p) => fingerprint(p.question, p.answer));
+  const made: string[] = []; // 이번에 만든 문제 (다시 만들 때 AI에게 보여 준다)
+  const isDup = (g: Generated) => {
+    const fp = fingerprint(g.question, g.answer);
+    return kept.some((k) => sameProblem(fp, k));
   };
-  const keep = (q: string) => kept.push({ fp: fingerprint(q), q });
+  const keep = (g: Generated) => {
+    kept.push(fingerprint(g.question, g.answer));
+    made.push(brief(g.question));
+  };
   let redo: { kind: 1 | 2; i: number }[] = [];
   for (const kind of [1, 2] as const)
     cards[kind].forEach((c, i) => {
       if (!c.ok) return;
-      if (isDup(c.data.question)) redo.push({ kind, i });
-      else keep(c.data.question);
+      if (isDup(c.data)) redo.push({ kind, i });
+      else keep(c.data);
     });
   for (let round = 0; round < REDO_ROUNDS && redo.length && Date.now() - started < REDO_BEFORE_MS; round++) {
-    const avoid = kept.slice(1).map((k) => brief(k.q)).slice(-12); // 인식한 원본 글자는 문제 안에 이미 있다
+    const avoid = made.slice(-12);
     const total = (kind: 1 | 2) => (kind === 1 ? counts.basic : counts.advanced);
     const again = await Promise.allSettled(
-      redo.map(({ kind, i }) => generateOne(kind, text, detailed, undefined, { index: i + 1, total: total(kind), avoid })),
+      redo.map(({ kind, i }) => generateOne(kind, text, detailed, undefined, { index: i + 1, total: total(kind), avoid, bank: bankBrief })),
     );
     const next: typeof redo = [];
     again.forEach((r, j) => {
       const { kind, i } = redo[j];
       if (r.status === "rejected") return; // 다시 만들기가 실패하면 처음 것을 둔다
       cards[kind][i] = { ok: true, data: r.value };
-      if (isDup(r.value.question)) next.push(redo[j]);
-      else keep(r.value.question);
+      if (isDup(r.value)) next.push(redo[j]);
+      else keep(r.value);
     });
     redo = next;
   }

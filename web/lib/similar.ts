@@ -31,16 +31,44 @@ function dice(a: string, b: string) {
   return (2 * common) / (Math.max(a.length - 1, 1) + Math.max(b.length - 1, 1));
 }
 
-export type Fingerprint = { text: string; nums: string };
-export const fingerprint = (q: string): Fingerprint => {
+export type Fingerprint = { text: string; nums: string; words: string[]; answer: string };
+
+/** 정답 비교용: 수식 표시·띄어쓰기·단위 앞 글자 차이를 지운다 */
+const normAnswer = (a: string) =>
+  plain(a)
+    .replace(/\\?d?frac(\d)(\d)/g, "$1/$2")
+    .replace(/[()]/g, "")
+    .toLowerCase();
+
+/** 문제 글자(그림 설정 빼고)에 쓰인 숫자들, 작은 것부터 */
+const wordNums = (q: string) =>
+  nums(plain(q.replace(/<svg\b[\s\S]*?<\/svg>/g, " "))).sort();
+
+export const fingerprint = (q: string, answer = ""): Fingerprint => {
   const text = plain(q);
-  return { text, nums: nums(text).join(",") };
+  return { text, nums: nums(text).join(","), words: wordNums(q), answer: normAnswer(answer) };
 };
 
-/** 쓰인 숫자가 모두 같고 글자도 많이 겹치면 같은 문제 (숫자를 바꾼 문제는 다른 문제로 본다). 숫자가 없으면 글자가 거의 같을 때만. */
+/** a 의 숫자가 모두 b 에 들어 있는지 (같은 숫자는 개수까지) */
+function within(a: string[], b: string[]) {
+  const left = [...b];
+  for (const n of a) {
+    const i = left.indexOf(n);
+    if (i < 0) return false;
+    left.splice(i, 1);
+  }
+  return true;
+}
+
+/** 같은 문제:
+ *  1) 쓰인 숫자가 모두 같고 글자도 많이 겹치거나 (숫자가 없으면 글자가 거의 같을 때)
+ *  2) 정답이 같고, 한쪽 지문의 숫자가 모두 다른 쪽에 들어 있을 때 (상황·말만 바꾼 문제. 덧붙인 숫자는 2개까지)
+ *  숫자를 바꿔 답이 달라진 문제는 다른 문제로 본다. */
 export function sameProblem(a: Fingerprint, b: Fingerprint) {
-  if (a.nums !== b.nums) return false;
-  return dice(a.text, b.text) >= (a.nums ? 0.6 : 0.95);
+  if (a.nums === b.nums && dice(a.text, b.text) >= (a.nums ? 0.6 : 0.95)) return true;
+  if (!a.answer || a.answer !== b.answer) return false;
+  const [small, big] = a.words.length <= b.words.length ? [a.words, b.words] : [b.words, a.words];
+  return small.length >= 2 && big.length - small.length <= 2 && within(small, big);
 }
 
 /** AI에게 "이것과 겹치지 마라"로 보여 줄 짧은 글 (그림은 빼고) */

@@ -140,3 +140,14 @@ export async function updateProblem(id: string, e: ProblemEdit) {
     return rows.length > 0;
   });
 }
+
+/** 문제 만들기에서 겹침 확인용: 같은 학년·단원·유형의 은행 문제 (같은 문제틀 먼저, 최신순) */
+export async function sameTypeProblems(t: { grade: string; unit: string; type: string; frame: string }, limit = 200) {
+  if (!t.grade || !t.unit || !t.type) return [];
+  const rows = await db()`
+    select question, answer from problems
+    where grade = ${t.grade} and unit = ${t.unit} and type = ${t.type}
+    order by (frame = ${t.frame}) desc, created_at desc
+    limit ${limit}`;
+  return rows.map((r) => ({ question: r.question as string, answer: r.answer as string }));
+}
