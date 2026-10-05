@@ -54,7 +54,7 @@ export default function LoginForm() {
           </label>
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-ink-soft">비밀번호</span>
-            <input name="password" type="password" inputMode="numeric" className="field" autoComplete="current-password" required />
+            <input name="password" type="password" className="field" autoComplete="current-password" required />
           </label>
           {error(sState?.error)}
           <button className="btn-main w-full py-3" disabled={sPending}>

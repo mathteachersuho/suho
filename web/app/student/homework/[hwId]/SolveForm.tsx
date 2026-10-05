@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { submitAction } from "../actions";
+import AnswerInput from "./AnswerInput";
 
 const listeners = new Set<() => void>();
 function subscribe(fn: () => void) {
@@ -69,26 +70,16 @@ export default function SolveForm({ hwId, problems }: { hwId: string; problems: 
       }}
     >
       <p className="text-sm text-ink-soft">
-        답만 적으면 돼요. 분수는 <b>3/4</b>, 루트는 <b>sqrt(3)</b>, 제곱은 <b>x^2</b>처럼 쓰고, 답이 여러 개면 쉼표로 나눠 쓰세요.
+        답만 적으면 돼요. 루트·파이·제곱 같은 기호는 답 칸 아래 버튼으로 넣으세요. 분수는 <b>3/4</b>, 루트 안이 길면 <b>√(x+1)</b>처럼 괄호로 묶고, 답이 여러 개면 쉼표로 나눠 쓰세요.
       </p>
       <ol className="space-y-3">
         {problems.map((p, i) => (
           <li key={p.id} className="card p-4 sm:p-5">
             <p className="mb-2 font-semibold">{i + 1}번</p>
             <div className="problem-body" dangerouslySetInnerHTML={{ __html: p.html }} />
-            <label className="mt-4 flex items-center gap-2">
-              <span className="shrink-0 text-sm font-medium text-ink-soft">답</span>
-              <input
-                value={answers[p.id] || ""}
-                onChange={(e) => set(p.id, e.target.value)}
-                maxLength={200}
-                autoComplete="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                className="field py-2"
-                aria-label={`${i + 1}번 답`}
-              />
-            </label>
+            <div className="mt-4">
+              <AnswerInput value={answers[p.id] || ""} onChange={(v) => set(p.id, v)} label={`${i + 1}번 답`} />
+            </div>
           </li>
         ))}
       </ol>

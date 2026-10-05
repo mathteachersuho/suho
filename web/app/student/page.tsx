@@ -34,6 +34,10 @@ export default async function StudentHome() {
           {greeting()}, <span className="text-accent">{name}</span>
         </h1>
         <p className="mt-2 text-ink-soft">오늘 할 일부터 하나씩 끝내 봐요.</p>
+        <Link href="/student/password" className="mt-3 inline-flex items-center gap-1 text-sm text-ink-soft underline-offset-2 hover:text-ink hover:underline">
+          선생님이 준 비밀번호를 쓰고 있다면 내 비밀번호로 바꾸세요
+          <IconArrow className="h-3.5 w-3.5" />
+        </Link>
       </section>
 
       <div className="grid gap-3 sm:grid-cols-3">
