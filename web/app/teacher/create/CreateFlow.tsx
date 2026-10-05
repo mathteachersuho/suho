@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
-import { IconArrow, IconCheck, IconPlus } from "@/components/Icons";
+import { IconArrow, IconCheck, IconPlus, IconSparkle } from "@/components/Icons";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import type { CardResult, Suggestion } from "@/lib/create";
-import { generateAction, ocrAction, regenerateAction, saveAction } from "./actions";
+import { aiEditAction, generateAction, ocrAction, regenerateAction, saveAction } from "./actions";
 import ClassPicker from "./ClassPicker";
 import { shrinkImage } from "./image";
 import type { Classification, Source } from "./types";
@@ -25,6 +25,11 @@ type Card = {
   verified: boolean;
   editing: boolean;
   busy: boolean;
+  /** AI로 고치기: 적고 있는 요청, 진행 중, 실패 메시지, 고치기 전 내용(되돌리기용) */
+  ask: string;
+  askBusy: boolean;
+  askError?: string;
+  undo?: { question: string; answer: string; solution: string };
 };
 
 const KIND: Record<Source, 0 | 1 | 2> = { 원본: 0, "AI 기본": 1, "AI 실력": 2 };
@@ -117,7 +122,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
       const { original, originalRebuilt, p1, p2, suggestion: sug } = r.result;
       const diff = sug?.difficulty || "중";
       const up = DIFFICULTIES[Math.min(DIFFICULTIES.indexOf(diff as (typeof DIFFICULTIES)[number]) + 1, 2)];
-      const base = { include: true, verified: false, editing: false, busy: false };
+      const base = { include: true, verified: false, editing: false, busy: false, ask: "", askBusy: false };
       const fromCard = (c: CardResult) => (c.ok ? { ...c.data } : { question: "", answer: "", solution: "", error: c.error });
       setCards([
         { ...base, source: "원본", label: "원본 문제", ...original, difficulty: diff },
@@ -139,8 +144,29 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
     if (!cards) return;
     update(i, { busy: true });
     const r = await regenerateAction({ kind: KIND[cards[i].source], text, imageB64: image?.b64, detailed });
-    if (r.ok) update(i, { ...r.data, error: undefined, busy: false, include: true });
+    if (r.ok) update(i, { ...r.data, error: undefined, busy: false, include: true, undo: undefined, askError: undefined });
     else update(i, { busy: false, error: r.error });
+    setGroupId(newGroupId());
+    setSaved(null);
+  };
+
+  const aiEdit = async (i: number) => {
+    if (!cards) return;
+    const c = cards[i];
+    if (!c.ask.trim() || c.askBusy) return;
+    update(i, { askBusy: true, askError: undefined });
+    const before = { question: c.question, answer: c.answer, solution: c.solution };
+    const r = await aiEditAction({ ...before, instruction: c.ask, imageB64: c.source === "원본" ? image?.b64 : undefined });
+    if (r.ok) update(i, { ...r.data, askBusy: false, ask: "", undo: before, verified: false });
+    else update(i, { askBusy: false, askError: r.error });
+    setGroupId(newGroupId());
+    setSaved(null);
+  };
+
+  const undoEdit = (i: number) => {
+    const u = cards?.[i].undo;
+    if (!u) return;
+    update(i, { ...u, undo: undefined, verified: false });
     setGroupId(newGroupId());
     setSaved(null);
   };
@@ -347,6 +373,45 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
                         {c.solution && <div className="problem-body text-ink-soft" dangerouslySetInnerHTML={{ __html: cardHtml[i * 3 + 2] ?? "" }} />}
                       </div>
                     )}
+                    <form
+                      className="mt-4 border-t border-line pt-4"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        aiEdit(i);
+                      }}
+                    >
+                      <label htmlFor={`ask-${i}`} className="mb-1 flex items-center gap-1.5 text-xs font-medium text-ink-soft">
+                        <IconSparkle className="h-3.5 w-3.5 text-accent" />
+                        AI로 고치기 · 그림이나 문제를 어떻게 바꿀지 말로 적어 주세요
+                      </label>
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <input
+                          id={`ask-${i}`}
+                          value={c.ask}
+                          onChange={(e) => update(i, { ask: e.target.value })}
+                          placeholder="예: 그림에서 점 P를 x축 위로 옮기고, 선분 AB 길이 6cm 표시해 줘"
+                          className="field py-2"
+                          maxLength={1000}
+                          disabled={c.askBusy}
+                          autoComplete="off"
+                        />
+                        <div className="flex shrink-0 gap-2">
+                          <button type="submit" className="btn-main px-3 py-2" disabled={c.askBusy || !c.ask.trim()}>
+                            {c.askBusy ? <Spinner /> : null}
+                            {c.askBusy ? "고치는 중" : "AI로 고치기"}
+                          </button>
+                          {c.undo && !c.askBusy && (
+                            <button type="button" className="btn-soft px-3 py-2" onClick={() => undoEdit(i)}>
+                              되돌리기
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {c.askError && <p className="mt-1.5 text-sm text-bad">{c.askError}</p>}
+                      {c.undo && !c.askBusy && !c.askError && (
+                        <p className="mt-1.5 text-xs text-ink-soft">AI가 고쳤어요. 정답과 풀이도 맞는지 확인하고, 마음에 안 들면 되돌리기를 누르세요.</p>
+                      )}
+                    </form>
                     {c.editing && (
                       <div className="mt-4 grid gap-2.5 border-t border-line pt-4">
                         <label className="block">

@@ -88,6 +88,39 @@ ${RULES}
 
 export type Generated = { question: string; answer: string; solution: string };
 
+/** 선생님이 말로 적은 요청대로 이미 만든 문제를 고친다 (그림 SVG 포함). */
+export function editPrompt(current: Generated, instruction: string, withImage: boolean) {
+  return `너는 대한민국 중학교/고등학교 수학 출제 위원이야. 아래 문제를 선생님의 요청대로 고쳐라.
+
+[지금 문제]
+${current.question}
+
+[지금 정답]
+${current.answer || "(없음)"}
+
+[지금 풀이]
+${current.solution || "(없음)"}
+
+[선생님 요청]
+${instruction}
+
+[고치기 원칙]
+- 요청한 부분만 고치고, 요청하지 않은 지문·숫자·보기·그림은 그대로 둬라.
+- 그림(SVG)을 고치라는 요청이면 SVG 코드를 직접 고쳐서 다시 출력하라. 좌표, 점 이름, 길이·각도 표시가 문제 지문과 맞는지 확인하라.
+- 숫자나 조건이 바뀌면 정답과 풀이도 바뀐 문제에 맞게 다시 계산해서 써라. 바뀌지 않으면 정답과 풀이는 그대로 둬라.${
+    withImage ? "\n- 함께 보낸 사진은 원본 문제다. 그림을 원본과 같게 맞추라는 요청이면 사진을 기준으로 삼아라." : ""
+  }
+${RULES}
+[출력 양식] (설명이나 인사말 없이 아래 양식만)
+[문제]
+(고친 문제 지문 및 SVG)
+[정답]
+(정답)
+[풀이]
+(풀이)
+`;
+}
+
 /** app.py parse_single_problem 과 같은 방식으로 [문제] [정답] [풀이] 를 나눈다 */
 export function parseProblem(text: string): Generated {
   const q = text.match(/\[문제\]([\s\S]*?)(?=\[정답\]|$)/);
