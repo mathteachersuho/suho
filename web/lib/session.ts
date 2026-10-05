@@ -78,3 +78,25 @@ export async function requireStudent() {
   if (s?.role !== "student") redirect("/login");
   return s;
 }
+
+/** 오류 기록용: 쿠키 글에서 누가 썼는지만 읽는다 ('teacher' / 학생 아이디 / ''). 비밀번호 지문은 보지 않는다. */
+export async function whoFromCookieHeader(cookie: string) {
+  const token = cookie.match(new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`))?.[1];
+  if (!token) return "";
+  try {
+    const { payload } = await jwtVerify(token, key(), { algorithms: ["HS256"] });
+    return payload.role === "teacher" ? "teacher" : typeof payload.studentId === "string" ? payload.studentId : "";
+  } catch {
+    return "";
+  }
+}
+
+/** 오류 기록용: 지금 로그인한 사람 */
+export async function whoNow() {
+  try {
+    const s = await getSession();
+    return s?.role === "teacher" ? "teacher" : (s?.studentId ?? "");
+  } catch {
+    return "";
+  }
+}

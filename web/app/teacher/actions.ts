@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { hashPassword, makeTempPassword } from "@/lib/password";
 import { requireTeacher } from "@/lib/session";
 import { ID_RULE } from "@/lib/students";
+import { reportError } from "@/lib/reportError";
 
 export type ActionState =
   | {
@@ -33,7 +34,7 @@ export async function addStudent(_: ActionState, form: FormData): Promise<Action
       values (${studentId}, ${await hashPassword(tempPassword)}, ${classId}, ${name})`;
   } catch (e) {
     if ((e as { code?: string }).code === "23505") return { error: `'${studentId}'는 이미 있는 아이디예요.`, values };
-    console.error("학생 추가 오류", e);
+    await reportError("학생 추가", e);
     return { error: "저장하지 못했어요. 잠시 뒤 다시 해 주세요.", values };
   }
   revalidatePath("/teacher");

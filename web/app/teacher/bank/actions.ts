@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import { deleteProblem, problemUsage, updateProblem, type ProblemEdit } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
+import { reportError } from "@/lib/reportError";
 
 const pid = (v: unknown) => (typeof v === "string" ? v.trim().slice(0, 80) : "");
 
@@ -45,7 +46,7 @@ export async function updateProblemAction(id: string, e: ProblemEdit): Promise<{
   try {
     if (!(await updateProblem(pid(id), edit))) return { error: "지워졌거나 없는 문제예요." };
   } catch (err) {
-    console.error("문제 고치기 오류", err);
+    await reportError("문제 고치기", err);
     return { error: "저장하지 못했어요. 잠시 뒤 다시 해 주세요." };
   }
   revalidatePath("/teacher/bank", "layout");
