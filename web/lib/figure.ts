@@ -12,6 +12,12 @@ export type FigureSpec = {
   points?: { name?: string; x: number; y?: number; on?: number; label?: string; dot?: boolean }[];
   polygons?: (string | string[])[];
   segments?: [string, string][];
+  /** 색칠할 다각형 (없으면 polygons 모두). 색은 맨 뒤에 반투명하게 */
+  shade?: (string | string[])[];
+  /** 정사각형 "ABCD": A, B 를 기준으로 C, D 를 정확한 정사각형 자리로 맞춘다 */
+  squares?: string[];
+  /** false 면 축 없이 도형만 (가로세로 같은 비율) */
+  axes?: boolean;
 };
 
 /* ---------------- 식 계산 (eval 없이) ---------------- */
@@ -236,17 +242,80 @@ function range(v: unknown, fallback: [number, number]): [number, number] {
 }
 
 /** 설정 → SVG. 설정이 잘못됐으면 오류를 던진다. */
+type Pt = { name: string; x: number; y: number; label: unknown; dot: boolean };
+
+/** 점 좌표를 모두 계산한다: 그래프 위의 점은 y를 식으로, 정사각형은 C·D를 A·B로 맞춘다 */
+function resolvePoints(spec: FigureSpec): Pt[] {
+  const fns = (Array.isArray(spec.graphs) ? spec.graphs : []).slice(0, 8).map((g) => {
+    const vx = num(g?.x);
+    if (Number.isFinite(vx) && !g?.f) return { vx };
+    return typeof g?.f === "string" ? compile(g.f) : null;
+  });
+  const squares = (Array.isArray(spec.squares) ? spec.squares : []).filter((q): q is string => typeof q === "string").slice(0, 6);
+  const out: Pt[] = [];
+  for (const p of (Array.isArray(spec.points) ? spec.points : []).slice(0, 26)) {
+    let x = num(p?.x);
+    let y = num(p?.y);
+    const on = typeof p?.on === "number" ? fns[p.on] : undefined;
+    if (on && typeof on === "object") x = on.vx;
+    else if (typeof on === "function" && Number.isFinite(x)) y = on(x);
+    const name = String(p?.name ?? "").slice(0, 3);
+    out.push({ name, x, y, label: p?.label ?? name, dot: p?.dot !== false });
+  }
+  const get = (n: string) => out.find((q) => q.name === n);
+  for (const sq of squares) {
+    const vs = [...sq];
+    if (vs.length !== 4) continue;
+    const [a, b, c, d] = vs.map(get);
+    if (!a || !b || !Number.isFinite(a.x + a.y + b.x + b.y)) continue;
+    const vx = b.x - a.x;
+    const vy = b.y - a.y;
+    // 왼쪽(시계 반대)과 오른쪽(시계) 중 AI가 적은 C 에 가까운 쪽으로
+    const left: [number, number] = [-vy, vx];
+    const right: [number, number] = [vy, -vx];
+    let n = left;
+    if (c && Number.isFinite(c.x + c.y)) {
+      const dl = Math.hypot(b.x + left[0] - c.x, b.y + left[1] - c.y);
+      const dr = Math.hypot(b.x + right[0] - c.x, b.y + right[1] - c.y);
+      if (dr < dl) n = right;
+    }
+    const put = (q: Pt | undefined, name: string, x: number, y: number) => {
+      if (q) {
+        q.x = x;
+        q.y = y;
+      } else out.push({ name, x, y, label: name, dot: true });
+    };
+    put(c, vs[2], b.x + n[0], b.y + n[1]);
+    put(d, vs[3], a.x + n[0], a.y + n[1]);
+  }
+  for (const q of out) if (!Number.isFinite(q.x + q.y)) throw new Error(`점 ${q.name}의 좌표가 없어요`);
+  return out;
+}
+
+/** 축 없는 도형 그림: 범위를 안 적었으면 점들이 다 들어가게 */
+function autoRange(v: unknown, vals: number[], fallback: [number, number]): [number, number] {
+  if (Array.isArray(v) && v.length === 2) return range(v, fallback);
+  if (!vals.length) return fallback;
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const m = Math.max((hi - lo) * 0.12, 0.5);
+  return [lo - m, hi + m];
+}
+
+/** 설정 → SVG. 설정이 잘못됐으면 오류를 던진다. */
 export function renderFigure(raw: unknown): string {
   if (!raw || typeof raw !== "object") throw new Error("그림 설정이 비어 있어요");
   const spec = raw as FigureSpec;
-  const [x0, x1] = range(spec.x, [-5, 5]);
-  const [y0, y1] = range(spec.y, [-5, 5]);
+  const axes = spec.axes !== false;
+  const resolved = resolvePoints(spec);
+  const [x0, x1] = axes ? range(spec.x, [-5, 5]) : autoRange(spec.x, resolved.map((q) => q.x), [-5, 5]);
+  const [y0, y1] = axes ? range(spec.y, [-5, 5]) : autoRange(spec.y, resolved.map((q) => q.y), [-5, 5]);
   const rx = x1 - x0;
   const ry = y1 - y0;
-  // 같은 비율로 그려야 정사각형이 정사각형으로 보인다. 가로세로 차이가 너무 크면 각각 맞춘다.
+  // 같은 비율로 그려야 정사각형이 정사각형으로 보인다. 가로세로 차이가 너무 크면 각각 맞춘다 (축 없는 도형은 늘 같은 비율).
   let kx = W / Math.max(rx, ry);
   let ky = kx;
-  if (rx / ry > 2.5 || ry / rx > 2.5) {
+  if (axes && (rx / ry > 2.5 || ry / rx > 2.5)) {
     kx = W / rx;
     ky = W / ry;
   }
@@ -278,6 +347,8 @@ export function renderFigure(raw: unknown): string {
     parts.push(`<g stroke="#dddddd" stroke-width="1">${g.join("")}</g>`);
   }
 
+  // 색칠은 맨 뒤에 (선과 글자를 가리지 않게)
+  const back: string[] = [];
   // 축 (화살표 포함)
   const axisY = y0 <= 0 && y1 >= 0 ? 0 : y0 > 0 ? y0 : y1;
   const axisX = x0 <= 0 && x1 >= 0 ? 0 : x0 > 0 ? x0 : x1;
@@ -287,13 +358,16 @@ export function renderFigure(raw: unknown): string {
   const by1 = Y(y1) - 8;
   const by2 = Y(y0) + 6;
   const bx = X(axisX);
-  parts.push(
-    `<g stroke="#000000" stroke-width="1.2"><line x1="${fmt(ax1)}" y1="${fmt(ay)}" x2="${fmt(ax2)}" y2="${fmt(ay)}"/><line x1="${fmt(bx)}" y1="${fmt(by2)}" x2="${fmt(bx)}" y2="${fmt(by1)}"/></g>`,
-    `<polygon points="${fmt(ax2 + 2)},${fmt(ay)} ${fmt(ax2 - 5)},${fmt(ay - 3.5)} ${fmt(ax2 - 5)},${fmt(ay + 3.5)}" fill="#000000"/>`,
-    `<polygon points="${fmt(bx)},${fmt(by1 - 2)} ${fmt(bx - 3.5)},${fmt(by1 + 5)} ${fmt(bx + 3.5)},${fmt(by1 + 5)}" fill="#000000"/>`,
-  );
-  lineBoxes([[ax1, ay], [ax2, ay]]);
-  lineBoxes([[bx, by1], [bx, by2]]);
+  if (axes)
+    parts.push(
+      `<g stroke="#000000" stroke-width="1.2"><line x1="${fmt(ax1)}" y1="${fmt(ay)}" x2="${fmt(ax2)}" y2="${fmt(ay)}"/><line x1="${fmt(bx)}" y1="${fmt(by2)}" x2="${fmt(bx)}" y2="${fmt(by1)}"/></g>`,
+      `<polygon points="${fmt(ax2 + 2)},${fmt(ay)} ${fmt(ax2 - 5)},${fmt(ay - 3.5)} ${fmt(ax2 - 5)},${fmt(ay + 3.5)}" fill="#000000"/>`,
+      `<polygon points="${fmt(bx)},${fmt(by1 - 2)} ${fmt(bx - 3.5)},${fmt(by1 + 5)} ${fmt(bx + 3.5)},${fmt(by1 + 5)}" fill="#000000"/>`,
+    );
+  if (axes) {
+    lineBoxes([[ax1, ay], [ax2, ay]]);
+    lineBoxes([[bx, by1], [bx, by2]]);
+  }
 
   // 그래프
   const graphs = (Array.isArray(spec.graphs) ? spec.graphs : []).slice(0, 8);
@@ -373,17 +447,9 @@ export function renderFigure(raw: unknown): string {
   // 점 (그래프 위의 점은 y를 계산해서 정확히)
   const pts = new Map<string, [number, number]>();
   const shown: { name: string; label: Label | null; px: number; py: number; dot: boolean }[] = [];
-  for (const p of (Array.isArray(spec.points) ? spec.points : []).slice(0, 26)) {
-    let x = num(p?.x);
-    let y = num(p?.y);
-    const on = typeof p?.on === "number" ? fns[p.on] : undefined;
-    if (on && typeof on === "object") x = on.vx;
-    else if (typeof on === "function" && Number.isFinite(x)) y = on(x);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`점 ${p?.name ?? ""}의 좌표가 없어요`);
-    const name = String(p?.name ?? "").slice(0, 3);
-    if (name) pts.set(name, [x, y]);
-    const label = makeLabel(p?.label ?? name, 20);
-    shown.push({ name, label, px: X(x), py: Y(y), dot: p?.dot !== false });
+  for (const p of resolved) {
+    if (p.name) pts.set(p.name, [p.x, p.y]);
+    shown.push({ name: p.name, label: makeLabel(p.label, 20), px: X(p.x), py: Y(p.y), dot: p.dot });
   }
   const P = (n: string) => {
     const v = pts.get(n);
@@ -394,11 +460,21 @@ export function renderFigure(raw: unknown): string {
 
   // 다각형과 선분
   const polys: [number, number][][] = [];
-  for (const poly of (Array.isArray(spec.polygons) ? spec.polygons : []).slice(0, 6)) {
+  const key = (v: string | string[]) => names(v).join("");
+  const polyList = (Array.isArray(spec.polygons) ? spec.polygons : []).slice(0, 8);
+  const shadeList = Array.isArray(spec.shade) ? spec.shade.slice(0, 6) : null;
+  const shaded = new Set((shadeList ?? polyList).map(key));
+  // 색칠만 적고 polygons 에 없는 도형도 테두리를 그린다
+  for (const sh of shadeList ?? []) if (!polyList.some((q) => key(q) === key(sh))) polyList.push(sh);
+  const ptsAttr = (vs: [number, number][]) => vs.map(([a, b]) => `${fmt(a)},${fmt(b)}`).join(" ");
+  for (const poly of polyList) {
     const vs = names(poly).map(P);
     if (vs.length < 3) continue;
     polys.push(vs);
-    parts.push(`<polygon points="${vs.map(([a, b]) => `${fmt(a)},${fmt(b)}`).join(" ")}" fill="#e8eefc" fill-opacity="0.7" stroke="#000000" stroke-width="1.3"/>`);
+    if (shaded.has(key(poly))) {
+      back.push(`<polygon points="${ptsAttr(vs)}" fill="#7f9cf5" fill-opacity="0.25" stroke="none"/>`);
+    }
+    parts.push(`<polygon points="${ptsAttr(vs)}" fill="none" stroke="#000000" stroke-width="1.3"/>`);
     lineBoxes([...vs, vs[0]]);
   }
   for (const s of (Array.isArray(spec.segments) ? spec.segments : []).slice(0, 12)) {
@@ -478,9 +554,11 @@ export function renderFigure(raw: unknown): string {
     return null;
   };
   // 축 이름과 원점
-  place(makeLabel("x", 1, true), ax2 + 2, ay, [1, 0.3], 4);
-  place(makeLabel("y", 1, true), bx, by1 - 2, [0.3, -1], 4);
-  const originShown = x0 <= 0 && x1 >= 0 && y0 <= 0 && y1 >= 0 && !shown.some((s) => s.name === "O");
+  if (axes) {
+    place(makeLabel("x", 1, true), ax2 + 2, ay, [1, 0.3], 4);
+    place(makeLabel("y", 1, true), bx, by1 - 2, [0.3, -1], 4);
+  }
+  const originShown = axes && x0 <= 0 && x1 >= 0 && y0 <= 0 && y1 >= 0 && !shown.some((s) => s.name === "O");
   if (originShown) place(makeLabel("O", 1), X(0), Y(0), [-0.7, 0.7], 5);
   for (const s of shown) place(s.label, s.px, s.py, awayFrom(s.px, s.py));
   // 그래프 이름: 곡선 끝 쪽 빈 곳
@@ -501,7 +579,7 @@ export function renderFigure(raw: unknown): string {
   });
 
   const data = esc(JSON.stringify(spec).replace(/\$/g, ""));
-  return `<svg width="${Math.round(w)}" height="${Math.round(h)}" viewBox="0 0 ${Math.round(w)} ${Math.round(h)}" font-family="sans-serif" data-figure="${data}">${parts.join("")}${labels.join("")}</svg>`;
+  return `<svg width="${Math.round(w)}" height="${Math.round(h)}" viewBox="0 0 ${Math.round(w)} ${Math.round(h)}" font-family="sans-serif" data-figure="${data}">${back.join("")}${parts.join("")}${labels.join("")}</svg>`;
 }
 
 const BLOCK = /(?:```[a-z]*\s*)?<좌표그림>([\s\S]*?)<\/좌표그림>(?:\s*```)?/g;
@@ -523,5 +601,44 @@ export function figuresToBlocks(text: string): string {
   return text.replace(/<svg\b[^>]*\bdata-figure="([^"]*)"[^>]*>[\s\S]*?<\/svg>/g, (_m, data: string) => {
     const json = data.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
     return `<좌표그림>\n${json}\n</좌표그림>`;
+  });
+}
+
+/* ---------------- AI가 직접 그린 SVG: 색칠은 맨 뒤에 반투명하게 ---------------- */
+
+const NAMED: Record<string, string> = { white: "#ffffff", black: "#000000", none: "", transparent: "" };
+/** 색칠(밝은 색·옅은 색)인지: 검정·흰색·없음은 아니다 */
+function isShade(fill: string) {
+  const f = fill.trim().toLowerCase();
+  const hex = f in NAMED ? NAMED[f] : f;
+  if (!hex) return false;
+  const m = hex.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/);
+  if (!m) return !/^url\(/.test(hex); // 이름 색(lightblue 등)은 색칠로 본다, 무늬(url)는 그대로
+  const h = m[1].length === 3 ? [...m[1]].map((c) => c + c).join("") : m[1];
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return l > 0.3 && l < 0.97;
+}
+
+const SHAPE = /<(polygon|path|rect|circle|ellipse)\b([^>]*?)\/>/g;
+const fillOf = (attrs: string) => attrs.match(/\bfill="([^"]*)"/)?.[1] ?? attrs.match(/fill\s*:\s*([^;"]+)/)?.[1] ?? "";
+
+/** 색칠한 도형의 색만 SVG 맨 뒤(먼저 그리는 곳)로 옮기고 반투명하게. 테두리는 제자리에 남겨 선·글자가 가려지지 않게 한다. */
+export function shadeBehind(text: string): string {
+  return text.replace(/(<svg\b[^>]*>)([\s\S]*?)(<\/svg>)/g, (all, open: string, body: string, close: string) => {
+    if (/data-figure=/.test(open)) return all;
+    const back: string[] = [];
+    const rest = body.replace(SHAPE, (el, tag: string, attrs: string) => {
+      if (!isShade(fillOf(attrs))) return el;
+      const plain = attrs.replace(/\s*\b(?:fill-opacity|opacity)="[^"]*"/g, "").replace(/fill\s*:\s*[^;"]+;?/g, "");
+      back.push(`<${tag}${plain.replace(/\bstroke="[^"]*"/g, "").replace(/\bstroke-width="[^"]*"/g, "")} stroke="none" fill-opacity="0.3"/>`);
+      const stroke = attrs.match(/\bstroke="([^"]*)"/)?.[1];
+      // 테두리가 있으면 제자리에 테두리만 남긴다
+      return stroke && stroke !== "none" ? `<${tag}${plain.replace(/\bfill="[^"]*"/, 'fill="none"')}/>` : "";
+    });
+    if (!back.length) return all;
+    // 정의(defs)와 흰 바탕 사각형 뒤, 다른 모든 것 앞에
+    const lead = rest.match(/^\s*(?:<defs\b[\s\S]*?<\/defs>\s*)?(?:<rect\b[^>]*fill="(?:#fff|#ffffff|white)"[^>]*\/>\s*)?/i)?.[0] ?? "";
+    return open + lead + back.join("") + rest.slice(lead.length) + close;
   });
 }
