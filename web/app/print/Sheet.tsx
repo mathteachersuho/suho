@@ -7,7 +7,7 @@ import { IconArrow, IconDown, IconPrinter, IconUp, IconX } from "@/components/Ic
 
 export type SheetItem = { id: string; tag: string; question: string; answer: string; solution: string };
 
-const PER_PAGE = [1, 2, 4] as const;
+const PER_PAGE = [1, 2, 4, 5, 6] as const;
 
 function chunk<T>(xs: T[], n: number) {
   const out: T[][] = [];

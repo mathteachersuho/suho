@@ -72,18 +72,32 @@ function toSummary(r: Record<string, unknown>): HomeworkSummary {
   };
 }
 
-/** 선생님: 낸 숙제 목록 (최근 순) */
-export async function listHomework(limit = 100): Promise<HomeworkSummary[]> {
+export type ClassHomework = HomeworkSummary & { day: string }; // day: 낸 날(서울) YYYY-MM-DD
+
+/**
+ * 선생님: 낸 숙제 목록을 반별로 (최근 순). 여러 반에 낸 숙제는 반마다 한 줄씩 나오고,
+ * 학생 수·낸 학생·맞은 수도 그 반 학생만 센다. classId '' = 반 없음.
+ */
+export async function listHomeworkByClass(limit = 300): Promise<ClassHomework[]> {
   const rows = await db()`
-    select h.hw_id, h.title, h.due_date::text as due, h.class_id, h.memo, h.created_at,
+    with recent as (select * from homework order by created_at desc limit ${limit}),
+    per as (
+      select hs.hw_id, coalesce(s.class_id, '') as class_id, hs.student_id,
+        (select count(*) from hw_results r where r.hw_id = hs.hw_id and r.student_id = hs.student_id) as n,
+        (select count(*) from hw_results r where r.hw_id = hs.hw_id and r.student_id = hs.student_id and r.correct = 'Y') as y
+      from homework_students hs join recent h on h.hw_id = hs.hw_id
+      left join students s on s.student_id = hs.student_id
+    )
+    select h.hw_id, h.title, h.due_date::text as due, coalesce(per.class_id, '') as class_id, h.memo, h.created_at,
+      (h.created_at at time zone 'Asia/Seoul')::date::text as day,
       (select count(*) from homework_problems p where p.hw_id = h.hw_id) as problem_count,
-      (select count(*) from homework_students s where s.hw_id = h.hw_id) as student_count,
-      (select count(distinct r.student_id) from hw_results r where r.hw_id = h.hw_id) as submitted_count,
-      (select count(*) from hw_results r where r.hw_id = h.hw_id and r.correct = 'Y') as correct_count
-    from homework h
-    order by h.created_at desc
-    limit ${limit}`;
-  return rows.map(toSummary);
+      count(per.student_id) as student_count,
+      count(per.student_id) filter (where per.n > 0) as submitted_count,
+      coalesce(sum(per.y), 0) as correct_count
+    from recent h left join per on per.hw_id = h.hw_id
+    group by h.hw_id, h.title, h.due_date, h.memo, h.created_at, per.class_id
+    order by h.created_at desc, class_id`;
+  return rows.map((r) => ({ ...toSummary(r), day: r.day as string }));
 }
 
 export type HomeworkProblem = { id: string; position: number; question: string; answer: string; solution: string; type: string; frame: string; difficulty: string };
