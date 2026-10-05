@@ -20,6 +20,7 @@ export type StudyProblem = {
 };
 
 export type WrongItem = StudyProblem & {
+  semester: string; // 단원을 배우는 학기 (units 표, 모르면 "")
   myAnswer: string;
   hwId: string;
   hwTitle: string;
@@ -60,9 +61,10 @@ export async function wrongNotes(studentId: string, withSimilar = true): Promise
       order by r.problem_id, h.created_at desc
     )
     select p.id, p.grade, p.unit, p.type, p.frame, p.difficulty, p.question, p.answer, p.solution, p.set_id,
-      w.my_answer, w.hw_id, w.hw_title, w.day,
+      coalesce(u.semester, '') as semester, w.my_answer, w.hw_id, w.hw_title, w.day,
       exists(select 1 from stars s where s.student_id = ${studentId} and s.problem_id = p.id) as starred
     from wrong w join problems p on p.id = w.problem_id
+    left join units u on u.grade = p.grade and u.unit = p.unit
     order by w.created_at desc, p.id
     limit 200`;
   if (!rows.length) return [];
@@ -88,6 +90,7 @@ export async function wrongNotes(studentId: string, withSimilar = true): Promise
   }
   return rows.map((r) => ({
     ...P(r),
+    semester: r.semester as string,
     myAnswer: r.my_answer as string,
     hwId: r.hw_id as string,
     hwTitle: r.hw_title as string,

@@ -4,14 +4,14 @@ import WrongSections from "@/components/WrongSections";
 import { dayLabel } from "@/lib/hwFormat";
 import { requireStudent } from "@/lib/session";
 import { wrongNotes } from "@/lib/study";
-import { parseView } from "@/lib/wrongGroups";
+import { parseWrongQuery } from "@/lib/wrongGroups";
 import StudyCard from "../study/StudyCard";
 
 export const metadata: Metadata = { title: "오답노트 · 수학클래스룸" };
 
 export default async function WrongNotes({ searchParams }: PageProps<"/student/wrong">) {
   const me = await requireStudent();
-  const view = parseView((await searchParams).view);
+  const q = parseWrongQuery(await searchParams);
   const items = await wrongNotes(me.studentId);
 
   return (
@@ -33,7 +33,7 @@ export default async function WrongNotes({ searchParams }: PageProps<"/student/w
       ) : (
         <WrongSections
           items={items}
-          view={view}
+          q={q}
           baseHref="/student/wrong"
           card={(it, no) => (
             <StudyCard
@@ -42,7 +42,7 @@ export default async function WrongNotes({ searchParams }: PageProps<"/student/w
               no={no}
               starred={it.starred}
               myAnswer={it.myAnswer}
-              from={view === "date" ? it.unit : `${dayLabel(it.day)} ${it.hwTitle}`}
+              from={q.view === "date" ? it.unit : `${dayLabel(it.day)} ${it.hwTitle}`}
               similar={it.similar}
             />
           )}

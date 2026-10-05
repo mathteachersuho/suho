@@ -7,7 +7,7 @@ import { dayLabel } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import { getStudent } from "@/lib/students";
 import { homeworkProgress, typeStats, wrongNotes, type WrongItem } from "@/lib/study";
-import { parseView } from "@/lib/wrongGroups";
+import { parseWrongQuery } from "@/lib/wrongGroups";
 
 export const metadata: Metadata = { title: "학생 기록 · 수학클래스룸" };
 
@@ -15,7 +15,7 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : null);
 
 export default async function StudentRecord({ params, searchParams }: PageProps<"/teacher/students/[id]">) {
   const id = decodeURIComponent((await params).id).slice(0, 40);
-  const view = parseView((await searchParams).view);
+  const q = parseWrongQuery(await searchParams);
   const s = await getStudent(id);
   if (!s) notFound();
   const [stats, wrong, hw] = await Promise.all([typeStats(id), wrongNotes(id, false), homeworkProgress(id)]);
@@ -103,9 +103,9 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
         ) : (
           <WrongSections
             items={wrong}
-            view={view}
+            q={q}
             baseHref={`/teacher/students/${encodeURIComponent(id)}`}
-            card={(it, no) => <WrongCard key={it.id} it={it} no={no} meta={view === "date" ? it.type : `${dayLabel(it.day)} ${it.hwTitle}`} />}
+            card={(it, no) => <WrongCard key={it.id} it={it} no={no} meta={q.view === "date" ? it.type : `${dayLabel(it.day)} ${it.hwTitle}`} />}
           />
         )}
       </section>
