@@ -140,17 +140,92 @@ const fmt = (n: number) => String(Math.round(n * 10) / 10);
 const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const textW = (t: string) => [...t].reduce((a, ch) => a + (/[ㄱ-힝]/.test(ch) ? FONT : /[il.,()' ]/.test(ch) ? FONT * 0.35 : FONT * 0.6), 0);
 const overlap = (a: Box, b: Box) => Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1)) * Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1));
-/** 그림 속 글자: $ 와 \ 는 빼고 (문제 글자의 수식 처리와 섞이지 않게) 제곱은 위첨자로 */
-const cleanLabel = (t: unknown, max: number) =>
-  String(t ?? "")
-    .replace(/\\d?frac\{([^{}]*)\}\{([^{}]*)\}/g, "$1/$2")
+/** 그림 속 글자: $ 와 \\ 는 빼고 (문제 글자의 수식 처리와 섞이지 않게) 제곱은 위첨자로 */
+const cleanText = (t: string) =>
+  t
     .replace(/\\sqrt\{([^{}]*)\}/g, "√$1")
     .replace(/\\(?:left|right)/g, "")
+    .replace(/\\(?:cdot|times)/g, "×")
     .replace(/[$\\{}]/g, "")
     .replace(/\^2/g, "²")
     .replace(/\^3/g, "³")
-    .replace(/\*/g, "")
-    .slice(0, max);
+    .replace(/\*/g, "");
+
+/** 글자 한 조각: 보통 글자 또는 분수(위아래로 쌓아 그림) */
+type Piece = { k: "t"; s: string } | { k: "f"; n: string; d: string };
+/** 그림 속 글자 하나: 크기와 그리는 법 */
+type Label = { w: number; h: number; draw: (x1: number, y1: number) => string };
+
+const SMALL = FONT * 0.85;
+const unwrap = (t: string) => (/^\([^()]*\)$/.test(t) ? t.slice(1, -1) : t);
+/** "y=\frac{12}{x}" 나 "y=12/x" 의 분수를 위아래로 쌓은 분수 조각으로 나눈다 */
+function pieces(raw: unknown, max: number): Piece[] {
+  const src = String(raw ?? "").slice(0, max * 4);
+  const out: Piece[] = [];
+  let used = 0;
+  const pushText = (t: string) => {
+    // 글자 속 a/b 도 분수로 (분자: 숫자·문자 묶음이나 괄호, 분모: 수 하나·문자 하나·괄호)
+    const re = /([0-9a-zA-Z.]+|\([^()]*\))\/(\d+(?:\.\d+)?|[a-zA-Z]|\([^()]*\))/g;
+    let at = 0;
+    for (const m of t.matchAll(re)) {
+      if (m.index! > at) out.push({ k: "t", s: t.slice(at, m.index) });
+      out.push({ k: "f", n: unwrap(m[1]), d: unwrap(m[2]) });
+      at = m.index! + m[0].length;
+    }
+    if (at < t.length) out.push({ k: "t", s: t.slice(at) });
+  };
+  const re = /\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g;
+  let at = 0;
+  for (const m of src.matchAll(re)) {
+    pushText(cleanText(src.slice(at, m.index)));
+    out.push({ k: "f", n: cleanText(m[1]), d: cleanText(m[2]) });
+    at = m.index! + m[0].length;
+  }
+  pushText(cleanText(src.slice(at)));
+  // 길이 제한 (보이는 글자 수 기준)
+  return out
+    .map((p) => {
+      const left = Math.max(0, max - used);
+      if (p.k === "t") {
+        used += p.s.length;
+        return { ...p, s: p.s.slice(0, left) };
+      }
+      used += Math.max(p.n.length, p.d.length);
+      return left > 0 ? p : { k: "t" as const, s: "" };
+    })
+    .filter((p) => (p.k === "t" ? p.s : p.n || p.d));
+}
+
+function makeLabel(raw: unknown, max: number, italic = false): Label | null {
+  const ps = pieces(raw, max);
+  if (!ps.length) return null;
+  const hasFrac = ps.some((p) => p.k === "f");
+  const pw = (p: Piece) => (p.k === "t" ? textW(p.s) : Math.max(textW(p.n), textW(p.d)) * (SMALL / FONT) + 3);
+  const w = ps.reduce((a, p) => a + pw(p), 0);
+  const h = hasFrac ? FONT * 2 + 1 : FONT;
+  const it = italic ? ' font-style="italic"' : "";
+  const draw = (x1: number, y1: number) => {
+    const base = y1 + h / 2 + FONT * 0.35;
+    const axis = base - FONT * 0.32;
+    let x = x1;
+    const out: string[] = [];
+    for (const p of ps) {
+      const pwid = pw(p);
+      if (p.k === "t") out.push(`<text x="${fmt(x)}" y="${fmt(base)}" font-size="${FONT}" fill="#000000"${it}>${esc(p.s.replace(/ /g, "\u00a0"))}</text>`);
+      else {
+        const mid = x + pwid / 2;
+        out.push(
+          `<text x="${fmt(mid)}" y="${fmt(axis - 2)}" font-size="${fmt(SMALL)}" fill="#000000" text-anchor="middle">${esc(p.n)}</text>`,
+          `<line x1="${fmt(x + 0.5)}" y1="${fmt(axis)}" x2="${fmt(x + pwid - 0.5)}" y2="${fmt(axis)}" stroke="#000000" stroke-width="0.9"/>`,
+          `<text x="${fmt(mid)}" y="${fmt(axis + 2 + SMALL * 0.74)}" font-size="${fmt(SMALL)}" fill="#000000" text-anchor="middle">${esc(p.d)}</text>`,
+        );
+      }
+      x += pwid;
+    }
+    return out.join("");
+  };
+  return { w, h, draw };
+}
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v)) ? Number(v) : NaN);
 
 function range(v: unknown, fallback: [number, number]): [number, number] {
@@ -297,7 +372,7 @@ export function renderFigure(raw: unknown): string {
 
   // 점 (그래프 위의 점은 y를 계산해서 정확히)
   const pts = new Map<string, [number, number]>();
-  const shown: { name: string; text: string; px: number; py: number; dot: boolean }[] = [];
+  const shown: { name: string; label: Label | null; px: number; py: number; dot: boolean }[] = [];
   for (const p of (Array.isArray(spec.points) ? spec.points : []).slice(0, 26)) {
     let x = num(p?.x);
     let y = num(p?.y);
@@ -307,8 +382,8 @@ export function renderFigure(raw: unknown): string {
     if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`점 ${p?.name ?? ""}의 좌표가 없어요`);
     const name = String(p?.name ?? "").slice(0, 3);
     if (name) pts.set(name, [x, y]);
-    const text = cleanLabel(p?.label ?? name, 20);
-    shown.push({ name, text, px: X(x), py: Y(y), dot: p?.dot !== false });
+    const label = makeLabel(p?.label ?? name, 20);
+    shown.push({ name, label, px: X(x), py: Y(y), dot: p?.dot !== false });
   }
   const P = (n: string) => {
     const v = pts.get(n);
@@ -354,9 +429,9 @@ export function renderFigure(raw: unknown): string {
       return c;
     });
   /** 점 (cx, cy) 둘레에서 글자를 놓기 가장 좋은 자리와 점수 (낮을수록 좋다) */
-  const bestSpot = (text: string, cx: number, cy: number, away: [number, number] | null, dist: number, self?: string) => {
-    const tw = textW(text);
-    const th = FONT;
+  const bestSpot = (lab: Label, cx: number, cy: number, away: [number, number] | null, dist: number, self?: string) => {
+    const tw = lab.w;
+    const th = lab.h;
     let best: { box: Box; score: number } | null = null;
     for (let a = 0; a < 16; a++) {
       const ang = (Math.PI * 2 * a) / 16;
@@ -383,14 +458,13 @@ export function renderFigure(raw: unknown): string {
     }
     return best!;
   };
-  const commit = (text: string, b: Box, italic = false) => {
+  const commit = (lab: Label, b: Box) => {
     obstacles.push(b);
-    labels.push(
-      `<text x="${fmt(b.x1)}" y="${fmt(b.y2 - 2)}" font-size="${FONT}" fill="#000000"${italic ? ' font-style="italic"' : ""}>${esc(text)}</text>`,
-    );
+    labels.push(lab.draw(b.x1, b.y1));
   };
-  const place = (text: string, cx: number, cy: number, away: [number, number] | null, dist = 9, italic = false) =>
-    commit(text, bestSpot(text, cx, cy, away, dist).box, italic);
+  const place = (lab: Label | null, cx: number, cy: number, away: [number, number] | null, dist = 9) => {
+    if (lab) commit(lab, bestSpot(lab, cx, cy, away, dist).box);
+  };
   // 도형의 꼭짓점이면 도형 중심 반대쪽으로
   const awayFrom = (px: number, py: number): [number, number] | null => {
     for (const vs of polys) {
@@ -404,14 +478,14 @@ export function renderFigure(raw: unknown): string {
     return null;
   };
   // 축 이름과 원점
-  place("x", ax2 + 2, ay, [1, 0.3], 4, true);
-  place("y", bx, by1 - 2, [0.3, -1], 4, true);
+  place(makeLabel("x", 1, true), ax2 + 2, ay, [1, 0.3], 4);
+  place(makeLabel("y", 1, true), bx, by1 - 2, [0.3, -1], 4);
   const originShown = x0 <= 0 && x1 >= 0 && y0 <= 0 && y1 >= 0 && !shown.some((s) => s.name === "O");
-  if (originShown) place("O", X(0), Y(0), [-0.7, 0.7], 5);
-  for (const s of shown) if (s.text) place(s.text, s.px, s.py, awayFrom(s.px, s.py));
+  if (originShown) place(makeLabel("O", 1), X(0), Y(0), [-0.7, 0.7], 5);
+  for (const s of shown) place(s.label, s.px, s.py, awayFrom(s.px, s.py));
   // 그래프 이름: 곡선 끝 쪽 빈 곳
   graphs.forEach((g, gi) => {
-    const label = cleanLabel(g?.label, 24);
+    const label = makeLabel(g?.label, 24);
     const pieces = curves[gi];
     if (!label || !pieces?.length) return;
     // 곡선 위 여러 곳 중 글자가 가장 덜 겹치는 곳 (끝 쪽을 조금 더 좋아한다)

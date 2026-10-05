@@ -52,7 +52,7 @@ export async function generateAction(input: { text: string; imageB64?: string; d
     const text = cleanText(input.text).trim();
     if (!text) return { error: "문제 글자가 비어 있어요." } as const;
     const taxonomy = await listTaxonomy();
-    const counts = { basic: count(input.basic, 1), advanced: count(input.advanced, 1) };
+    const counts = { basic: count(input.basic, 7), advanced: count(input.advanced, 3) };
     return { result: await generateAll(text, !!input.detailed, cleanImage(input.imageB64), taxonomy, counts) } as const;
   } catch (e) {
     return { error: fail(e) } as const;
