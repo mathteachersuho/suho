@@ -199,3 +199,8 @@ alter table app_settings      enable row level security;
 -- ---------------------------------------------------------------
 create index if not exists problems_search_idx
   on problems using gin ((question || ' ' || memo || ' ' || frame) extensions.gin_trgm_ops);
+
+-- ---------------------------------------------------------------
+-- 웹앱 1단계에서 추가: 학생 이름(또는 별명). 예전 앱은 이 칸을 쓰지 않으므로 영향이 없다.
+-- ---------------------------------------------------------------
+alter table students add column if not exists name text not null default '';
