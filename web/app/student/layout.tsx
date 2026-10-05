@@ -1,0 +1,24 @@
+import { redirect } from "next/navigation";
+import TopBar from "@/components/TopBar";
+import { requireStudent } from "@/lib/session";
+import { getStudent } from "@/lib/students";
+
+export default async function StudentLayout({ children }: LayoutProps<"/student">) {
+  const s = await requireStudent();
+  const me = await getStudent(s.studentId);
+  if (!me) redirect("/logout"); // 선생님이 지운 학생
+  return (
+    <>
+      <TopBar
+        who={me.name || me.studentId}
+        items={[
+          { label: "🏠 홈", href: "/student", active: true },
+          { label: "📝 숙제" },
+          { label: "📒 오답노트" },
+          { label: "⭐ 중요 문제" },
+        ]}
+      />
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">{children}</main>
+    </>
+  );
+}
