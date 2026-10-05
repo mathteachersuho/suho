@@ -16,8 +16,8 @@ export default async function StudentLayout({ children }: LayoutProps<"/student"
         items={[
           { label: "홈", icon: <IconHome />, href: "/student" },
           { label: "숙제", icon: <IconClipboard />, href: "/student/homework" },
-          { label: "오답노트", icon: <IconNote /> },
-          { label: "중요 문제", icon: <IconStar /> },
+          { label: "오답노트", icon: <IconNote />, href: "/student/wrong" },
+          { label: "중요 문제", icon: <IconStar />, href: "/student/stars" },
         ]}
       />
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</main>
