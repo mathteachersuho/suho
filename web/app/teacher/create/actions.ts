@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { AiError, mathpixText } from "@/lib/ai/clients";
 import type { GenKind } from "@/lib/ai/prompts";
-import { generateAll, generateOne, SEMESTERS, type CardResult } from "@/lib/create";
+import { editOne, generateAll, generateOne, SEMESTERS, type CardResult } from "@/lib/create";
 import { db } from "@/lib/db";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import { renderProblemHtml } from "@/lib/mathText";
@@ -57,6 +57,26 @@ export async function regenerateAction(input: { kind: GenKind; text: string; ima
   try {
     const kind = ([0, 1, 2] as const).includes(input.kind) ? input.kind : 1;
     return { ok: true, data: await generateOne(kind, cleanText(input.text), !!input.detailed, cleanImage(input.imageB64)) };
+  } catch (e) {
+    return { ok: false, error: fail(e) };
+  }
+}
+
+/** 선생님이 말로 적은 요청대로 AI가 한 문제를 고친다. 원본 카드는 사진도 함께 보낸다. */
+export async function aiEditAction(input: {
+  question: string;
+  answer: string;
+  solution: string;
+  instruction: string;
+  imageB64?: string;
+}): Promise<CardResult> {
+  await requireTeacher();
+  try {
+    const instruction = cleanText(input.instruction, 1000).trim();
+    if (!instruction) return { ok: false, error: "어떻게 고칠지 적어 주세요." };
+    const current = { question: cleanText(input.question), answer: cleanText(input.answer, 2000), solution: cleanText(input.solution) };
+    if (!current.question.trim()) return { ok: false, error: "고칠 문제가 비어 있어요." };
+    return { ok: true, data: await editOne(current, instruction, cleanImage(input.imageB64)) };
   } catch (e) {
     return { ok: false, error: fail(e) };
   }

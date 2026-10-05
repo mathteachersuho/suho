@@ -1,6 +1,6 @@
 import "server-only";
 import { AiError, gemini, geminiJson } from "./ai/clients";
-import { classifyStep1, classifyStep2, parseProblem, problemPrompt, type GenKind, type Generated } from "./ai/prompts";
+import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, type GenKind, type Generated } from "./ai/prompts";
 import { DIFFICULTIES } from "./difficulty";
 import type { TaxRow } from "./taxonomy";
 
@@ -22,6 +22,13 @@ export type CardResult = { ok: true; data: Generated } | { ok: false; error: str
 export async function generateOne(kind: GenKind, text: string, detailed: boolean, imageB64?: string): Promise<Generated> {
   const out = parseProblem(await gemini(problemPrompt(kind, text, detailed), kind === 0 ? imageB64 : undefined));
   if (!out.question.trim()) throw new AiError("빈 문제가 만들어졌어요. 다시 만들어 주세요.");
+  return out;
+}
+
+/** 말로 적은 요청대로 문제 고치기 */
+export async function editOne(current: Generated, instruction: string, imageB64?: string): Promise<Generated> {
+  const out = parseProblem(await gemini(editPrompt(current, instruction, !!imageB64), imageB64));
+  if (!out.question.trim()) throw new AiError("고친 문제가 비어 있어요. 요청을 조금 바꿔 다시 해 보세요.");
   return out;
 }
 
