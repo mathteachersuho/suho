@@ -1,4 +1,5 @@
-import { IconUsers } from "@/components/Icons";
+import Link from "next/link";
+import { IconChart, IconUsers } from "@/components/Icons";
 import { listStudents } from "@/lib/students";
 import { deleteStudent, updateStudent } from "./actions";
 import { AddStudentForm, DeleteStudentButton, ResetPasswordButton } from "./StudentForms";
@@ -55,10 +56,10 @@ export default async function TeacherHome() {
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-sm font-semibold text-accent">
                       {(s.name || s.studentId).slice(0, 1)}
                     </span>
-                    <div>
-                      <p className="font-medium leading-tight">{s.name || "(이름 없음)"}</p>
+                    <Link href={`/teacher/students/${encodeURIComponent(s.studentId)}`} className="group">
+                      <p className="font-medium leading-tight group-hover:text-accent group-hover:underline">{s.name || "(이름 없음)"}</p>
                       <p className="text-sm text-ink-faint">@{s.studentId}</p>
-                    </div>
+                    </Link>
                   </div>
                   <form action={updateStudent} className="flex flex-1 flex-wrap gap-2">
                     <input type="hidden" name="studentId" value={s.studentId} />
@@ -74,6 +75,10 @@ export default async function TeacherHome() {
                     <button className="btn-soft px-3 py-2">저장</button>
                   </form>
                   <div className="flex flex-wrap items-start gap-2">
+                    <Link href={`/teacher/students/${encodeURIComponent(s.studentId)}`} className="btn-soft px-3 py-2">
+                      <IconChart />
+                      오답·유형
+                    </Link>
                     <ResetPasswordButton studentId={s.studentId} />
                     <DeleteStudentButton studentId={s.studentId} action={deleteStudent} />
                   </div>

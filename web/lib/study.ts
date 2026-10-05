@@ -21,6 +21,7 @@ export type StudyProblem = {
 
 export type WrongItem = StudyProblem & {
   myAnswer: string;
+  hwId: string;
   hwTitle: string;
   day: string; // 숙제를 낸 날 (서울) YYYY-MM-DD
   starred: boolean;
@@ -48,24 +49,26 @@ const received = (studentId: string) => db()`
  * 오답노트: 숙제에서 틀린(N) 문제, 최근 순. 같은 문제를 여러 번 틀렸으면 가장 최근 것 하나만.
  * 문제마다 비슷한 문제(같은 묶음 → 같은 문제틀 순서, 아직 받지 않은 것) 2개까지 붙인다.
  */
-export async function wrongNotes(studentId: string): Promise<WrongItem[]> {
+export async function wrongNotes(studentId: string, withSimilar = true): Promise<WrongItem[]> {
   const sql = db();
   const rows = await sql`
     with wrong as (
-      select distinct on (r.problem_id) r.problem_id, r.answer as my_answer, h.title as hw_title,
+      select distinct on (r.problem_id) r.problem_id, r.answer as my_answer, h.hw_id, h.title as hw_title,
         (h.created_at at time zone 'Asia/Seoul')::date::text as day, h.created_at
       from hw_results r join homework h on h.hw_id = r.hw_id
       where r.student_id = ${studentId} and r.correct = 'N'
       order by r.problem_id, h.created_at desc
     )
     select p.id, p.grade, p.unit, p.type, p.frame, p.difficulty, p.question, p.answer, p.solution, p.set_id,
-      w.my_answer, w.hw_title, w.day,
+      w.my_answer, w.hw_id, w.hw_title, w.day,
       exists(select 1 from stars s where s.student_id = ${studentId} and s.problem_id = p.id) as starred
     from wrong w join problems p on p.id = w.problem_id
     order by w.created_at desc, p.id
     limit 200`;
   if (!rows.length) return [];
-  const sims = await sql`
+  const sims = !withSimilar
+    ? []
+    : await sql`
     select w.id as for_id, q.id, q.grade, q.unit, q.type, q.frame, q.difficulty, q.question, q.answer, q.solution
     from problems w
     cross join lateral (
@@ -86,6 +89,7 @@ export async function wrongNotes(studentId: string): Promise<WrongItem[]> {
   return rows.map((r) => ({
     ...P(r),
     myAnswer: r.my_answer as string,
+    hwId: r.hw_id as string,
     hwTitle: r.hw_title as string,
     day: r.day as string,
     starred: r.starred as boolean,
@@ -151,4 +155,29 @@ export async function studyCounts(studentId: string) {
       (select count(distinct problem_id) from hw_results where student_id = ${studentId} and correct = 'N')::int as wrong,
       (select count(*) from stars where student_id = ${studentId})::int as stars`;
   return { wrong: r.wrong as number, stars: r.stars as number };
+}
+
+export type TypeStat = { unit: string; type: string; total: number; wrong: number; right: number; pending: number };
+
+/** 선생님용: 학생의 숙제 결과를 단원·유형별로 센다 (틀린 수 많은 순) */
+export async function typeStats(studentId: string): Promise<TypeStat[]> {
+  const rows = await db()`
+    select p.unit, p.type, count(*)::int as total,
+      count(*) filter (where r.correct = 'N')::int as wrong,
+      count(*) filter (where r.correct = 'Y')::int as right,
+      count(*) filter (where r.correct in ('?', ''))::int as pending
+    from hw_results r join problems p on p.id = r.problem_id
+    where r.student_id = ${studentId}
+    group by p.unit, p.type
+    order by wrong desc, total desc, p.unit, p.type`;
+  return rows.map((r) => ({ unit: r.unit, type: r.type, total: r.total, wrong: r.wrong, right: r.right, pending: r.pending }));
+}
+
+/** 선생님용: 학생이 받은 숙제 수, 낸 숙제 수 */
+export async function homeworkProgress(studentId: string) {
+  const [r] = await db()`
+    select count(*)::int as given,
+      count(*) filter (where exists (select 1 from hw_results x where x.hw_id = hs.hw_id and x.student_id = hs.student_id))::int as done
+    from homework_students hs where hs.student_id = ${studentId}`;
+  return { given: r.given as number, done: r.done as number };
 }
