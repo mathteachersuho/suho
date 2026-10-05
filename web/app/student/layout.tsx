@@ -13,7 +13,7 @@ export default async function StudentLayout({ children }: LayoutProps<"/student"
       <TopBar
         who={me.name || me.studentId}
         items={[
-          { label: "홈", icon: <IconHome />, href: "/student", active: true },
+          { label: "홈", icon: <IconHome />, href: "/student" },
           { label: "숙제", icon: <IconClipboard /> },
           { label: "오답노트", icon: <IconNote /> },
           { label: "중요 문제", icon: <IconStar /> },

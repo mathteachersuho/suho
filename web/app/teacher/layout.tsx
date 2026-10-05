@@ -9,8 +9,8 @@ export default async function TeacherLayout({ children }: LayoutProps<"/teacher"
       <TopBar
         who="선생님"
         items={[
-          { label: "학생 관리", icon: <IconUsers />, href: "/teacher", active: true },
-          { label: "문제 은행", icon: <IconBook /> },
+          { label: "학생 관리", icon: <IconUsers />, href: "/teacher" },
+          { label: "문제 은행", icon: <IconBook />, href: "/teacher/bank" },
           { label: "숙제", icon: <IconClipboard /> },
           { label: "리포트", icon: <IconChart /> },
         ]}

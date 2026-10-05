@@ -86,3 +86,206 @@ body {
 @utility eyebrow {
   @apply text-xs font-semibold uppercase tracking-[0.08em] text-ink-faint;
 }
+
+/* ---------- 문제 글자 (수식, 표, 그림) ---------- */
+.problem-body {
+  line-height: 1.75;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.problem-body .katex {
+  font-size: 1.08em;
+}
+.problem-body .mt-table {
+  margin: 10px 0;
+  overflow-x: auto;
+}
+.problem-body .mt-figure {
+  text-align: center;
+  margin: 12px 0;
+}
+/* 그림은 검은 선으로 그려져 있어서 다크 모드에서도 흰 바탕 위에 둔다 */
+.problem-body .mt-figure > div {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  background: #fff;
+  color: #111;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+.problem-body .mt-figure svg {
+  max-width: 100%;
+  height: auto;
+}
+.problem-body .mt-cards {
+  display: inline-flex;
+  gap: 8px;
+  margin: 6px 0;
+  vertical-align: middle;
+}
+.problem-body .mt-card {
+  min-width: 32px;
+  height: 44px;
+  padding: 2px 8px;
+  border: 2px solid currentColor;
+  border-radius: 6px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---------- A4 학습지 ---------- */
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+.sheet-wrap {
+  overflow-x: auto;
+  padding: 24px 16px 48px;
+}
+.sheet-page {
+  width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto 24px;
+  padding: 12mm 14mm;
+  background: #fff;
+  color: #111;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.08), 0 8px 24px rgb(0 0 0 / 0.08);
+  display: flex;
+  flex-direction: column;
+  font-size: 10.5pt;
+  color-scheme: light;
+}
+.sheet-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1.5px solid #111;
+  padding-bottom: 6px;
+  margin-bottom: 4mm;
+}
+.sheet-head h1 {
+  font-size: 15pt;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.sheet-head p {
+  font-size: 9.5pt;
+  color: #555;
+  white-space: nowrap;
+}
+.sheet-grid {
+  flex: 1;
+  display: grid;
+  height: calc(297mm - 24mm - 16mm);
+}
+.sheet-grid.per-1 {
+  grid-template-rows: 1fr;
+}
+.sheet-grid.per-2 {
+  grid-template-rows: 1fr 1fr;
+}
+.sheet-grid.per-4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  column-gap: 6mm;
+}
+.sheet-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding: 3mm 0;
+  border-bottom: 1px dashed #bbb;
+}
+.sheet-grid.per-1 .sheet-item,
+.sheet-grid.per-2 .sheet-item:nth-child(2),
+.sheet-grid.per-4 .sheet-item:nth-child(n + 3) {
+  border-bottom: none;
+}
+.sheet-no {
+  font-weight: 700;
+  font-size: 12pt;
+  margin-bottom: 2mm;
+}
+.sheet-no span {
+  margin-left: 8px;
+  font-weight: 400;
+  font-size: 8.5pt;
+  color: #888;
+}
+.sheet-work {
+  flex: 1;
+  min-height: 20mm;
+}
+.sheet-page .mt-figure > div {
+  border: none;
+  padding: 0;
+}
+.sheet-tools {
+  position: absolute;
+  top: 2mm;
+  right: 0;
+  display: flex;
+  gap: 4px;
+}
+.sheet-tools button {
+  display: inline-flex;
+  height: 28px;
+  width: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid #e4e6ec;
+  background: #fff;
+  color: #5b6275;
+}
+.sheet-tools button:hover:not(:disabled) {
+  background: #f1f2f5;
+  color: #111;
+}
+.sheet-tools button:disabled {
+  opacity: 0.35;
+}
+.sheet-answers {
+  display: block;
+}
+.sheet-answers ol li {
+  padding: 2.5mm 0;
+  border-bottom: 1px solid #eee;
+  break-inside: avoid;
+}
+.sheet-answers .sol {
+  margin-top: 1mm;
+  font-size: 9.5pt;
+  color: #444;
+}
+@media print {
+  html,
+  body {
+    background: #fff !important;
+  }
+  .sheet-wrap {
+    padding: 0;
+    overflow: visible;
+  }
+  .sheet-page {
+    margin: 0;
+    box-shadow: none;
+    break-after: page;
+  }
+  .sheet-page:last-child {
+    break-after: auto;
+  }
+  .sheet-answers {
+    min-height: 0;
+  }
+  .sheet-tools {
+    display: none;
+  }
+}
