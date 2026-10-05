@@ -1,71 +1,88 @@
 @import "tailwindcss";
 
-/* 중학생용 밝은 색: 보라(주색), 분홍, 노랑, 민트, 하늘 */
+/* 차분한 무채색 + 인디고 포인트. 휴대폰이 다크 모드면 자동으로 어두운 화면 */
 :root {
-  color-scheme: light;
-  --ink: #2b2350;
-  --ink-soft: #6b6390;
-  --grape: #7c5cff;
-  --grape-dark: #5b3fe0;
-  --bubble: #ff7ab6;
-  --sunny: #ffd23f;
-  --mint: #2bd4a4;
-  --sky: #4cc9f0;
-  --paper: #ffffff;
-  --line: #e7e2ff;
-  --bg: #f6f3ff;
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f2f5;
+  --ink: #0e1220;
+  --ink-soft: #5b6275;
+  --ink-faint: #9aa0ae;
+  --line: #e4e6ec;
+  --accent: #4f46e5;
+  --accent-strong: #4338ca;
+  --accent-soft: #eef0ff;
+  --good: #0f9f6e;
+  --bad: #e5484d;
+  --bad-soft: #fff0f0;
+  --warn-soft: #fff8e6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0d14;
+    --surface: #131622;
+    --surface-2: #1b1f2e;
+    --ink: #eef0f6;
+    --ink-soft: #a3a9ba;
+    --ink-faint: #6b7183;
+    --line: #262b3b;
+    --accent: #7c74ff;
+    --accent-strong: #948dff;
+    --accent-soft: #1f1d3f;
+    --good: #34d399;
+    --bad: #ff6b6f;
+    --bad-soft: #2a1517;
+    --warn-soft: #2a2312;
+  }
 }
 
 @theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-ink: var(--ink);
   --color-ink-soft: var(--ink-soft);
-  --color-grape: var(--grape);
-  --color-grape-dark: var(--grape-dark);
-  --color-bubble: var(--bubble);
-  --color-sunny: var(--sunny);
-  --color-mint: var(--mint);
-  --color-sky: var(--sky);
-  --color-paper: var(--paper);
+  --color-ink-faint: var(--ink-faint);
   --color-line: var(--line);
-  --color-bg: var(--bg);
-  --font-sans: var(--font-body);
-  --font-display: var(--font-display);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --color-good: var(--good);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-warn-soft: var(--warn-soft);
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
 }
 
 body {
-  background:
-    radial-gradient(circle at 10% 0%, #ffe3f1 0, transparent 40%),
-    radial-gradient(circle at 100% 20%, #dff6ff 0, transparent 35%),
-    radial-gradient(circle at 50% 100%, #fff4c7 0, transparent 40%),
-    var(--bg);
+  background: var(--bg);
   color: var(--ink);
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* 눌리는 느낌의 통통한 버튼 */
 @utility btn {
-  @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 font-bold transition active:translate-y-1 disabled:opacity-60 disabled:active:translate-y-0;
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
 }
 @utility btn-main {
-  @apply btn bg-grape text-white shadow-[0_5px_0_var(--grape-dark)] hover:brightness-110 active:shadow-none;
+  @apply btn bg-ink text-bg hover:opacity-90;
+}
+@utility btn-accent {
+  @apply btn bg-accent text-white hover:bg-accent-strong;
 }
 @utility btn-soft {
-  @apply btn bg-white text-ink border-2 border-line shadow-[0_4px_0_var(--line)] hover:border-grape active:shadow-none;
+  @apply btn border border-line bg-surface text-ink hover:bg-surface-2;
 }
 @utility btn-danger {
-  @apply btn bg-white text-rose-500 border-2 border-rose-200 shadow-[0_4px_0_#fecdd3] hover:bg-rose-50 active:shadow-none;
+  @apply btn border border-line bg-surface text-bad hover:bg-bad-soft;
 }
 @utility field {
-  @apply w-full rounded-2xl border-2 border-line bg-white px-4 py-3 text-base outline-none transition placeholder:text-ink-soft/60 focus:border-grape focus:ring-4 focus:ring-grape/15;
+  @apply w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[15px] text-ink outline-none transition placeholder:text-ink-faint focus:border-accent focus:ring-4 focus:ring-accent/15;
 }
 @utility card {
-  @apply rounded-3xl border-2 border-line bg-paper p-6 shadow-[0_8px_0_var(--line)];
+  @apply rounded-2xl border border-line bg-surface p-5 sm:p-6;
 }
-
-@keyframes floaty {
-  0%, 100% { transform: translateY(0) rotate(var(--r, 0deg)); }
-  50% { transform: translateY(-10px) rotate(var(--r, 0deg)); }
-}
-.floaty { animation: floaty 6s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) {
-  .floaty { animation: none; }
+@utility eyebrow {
+  @apply text-xs font-semibold uppercase tracking-[0.08em] text-ink-faint;
 }

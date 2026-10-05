@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import TopBar from "@/components/TopBar";
+import { IconHome, IconNote, IconClipboard, IconStar } from "@/components/Icons";
 import { requireStudent } from "@/lib/session";
 import { getStudent } from "@/lib/students";
 
@@ -12,13 +13,13 @@ export default async function StudentLayout({ children }: LayoutProps<"/student"
       <TopBar
         who={me.name || me.studentId}
         items={[
-          { label: "🏠 홈", href: "/student", active: true },
-          { label: "📝 숙제" },
-          { label: "📒 오답노트" },
-          { label: "⭐ 중요 문제" },
+          { label: "홈", icon: <IconHome />, href: "/student", active: true },
+          { label: "숙제", icon: <IconClipboard /> },
+          { label: "오답노트", icon: <IconNote /> },
+          { label: "중요 문제", icon: <IconStar /> },
         ]}
       />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">{children}</main>
+      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</main>
     </>
   );
 }

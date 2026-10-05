@@ -1,49 +1,54 @@
 import Link from "next/link";
 import { logout } from "@/app/actions/auth";
-import { Logo, Mascot } from "./Brand";
+import { Logo } from "./Brand";
+import { IconLogout } from "./Icons";
 
-export type NavItem = { label: string; href?: string; active?: boolean };
+export type NavItem = { label: string; icon?: React.ReactNode; href?: string; active?: boolean };
 
 /** 화면 위쪽 막대: 앱 이름, 메뉴, 나가기 버튼 */
 export default function TopBar({ items, who }: { items: NavItem[]; who: string }) {
   return (
-    <header className="sticky top-0 z-10 border-b-2 border-line bg-white/85 backdrop-blur">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3 px-4 py-3">
-        <Link href="/" className="flex items-center gap-2">
-          <Mascot size={36} />
-          <Logo />
+    <header className="sticky top-0 z-10 border-b border-line bg-surface/80 backdrop-blur-md">
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-6 gap-y-2 px-4 pt-3 sm:h-16 sm:py-0">
+        <Link href="/" aria-label="처음으로">
+          <Logo size={26} />
         </Link>
-        <nav className="order-3 flex w-full gap-2 overflow-x-auto sm:order-none sm:ml-4 sm:w-auto">
+        <div className="ml-auto flex items-center gap-3 sm:order-last">
+          <span className="hidden text-sm text-ink-soft sm:inline">{who}</span>
+          <form action={logout}>
+            <button className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-ink-soft transition-colors hover:bg-surface-2 hover:text-ink">
+              <IconLogout />
+              나가기
+            </button>
+          </form>
+        </div>
+        <nav className="-mx-1 flex w-full gap-1 overflow-x-auto pb-2 sm:mx-0 sm:w-auto sm:pb-0">
           {items.map((it) =>
             it.href ? (
               <Link
                 key={it.label}
                 href={it.href}
-                className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-bold transition ${
-                  it.active ? "bg-grape text-white" : "bg-bg text-ink-soft hover:text-ink"
+                aria-current={it.active ? "page" : undefined}
+                className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+                  it.active ? "bg-surface-2 text-ink" : "text-ink-soft hover:bg-surface-2 hover:text-ink"
                 }`}
               >
+                {it.icon}
                 {it.label}
               </Link>
             ) : (
               <span
                 key={it.label}
                 title="곧 열려요"
-                className="whitespace-nowrap rounded-full bg-bg px-4 py-1.5 text-sm font-bold text-ink-soft/50"
+                className="inline-flex cursor-default items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium text-ink-faint"
               >
-                {it.label} <span className="text-[10px]">곧</span>
+                {it.icon}
+                {it.label}
+                <span className="rounded border border-line px-1 text-[10px] leading-4">곧</span>
               </span>
             ),
           )}
         </nav>
-        <div className="ml-auto flex items-center gap-2">
-          <span className="hidden text-sm text-ink-soft sm:inline">{who}</span>
-          <form action={logout}>
-            <button className="rounded-full border-2 border-line px-3 py-1 text-sm font-bold text-ink-soft hover:border-grape hover:text-grape">
-              나가기
-            </button>
-          </form>
-        </div>
       </div>
     </header>
   );

@@ -1,8 +1,7 @@
+import { IconUsers } from "@/components/Icons";
 import { listStudents } from "@/lib/students";
 import { deleteStudent, updateStudent } from "./actions";
 import { AddStudentForm, DeleteStudentButton, ResetPasswordButton } from "./StudentForms";
-
-const COLORS = ["bg-grape", "bg-bubble", "bg-sky", "bg-mint", "bg-sunny"];
 
 export default async function TeacherHome() {
   const students = await listStudents();
@@ -15,37 +14,51 @@ export default async function TeacherHome() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-2">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-display text-3xl">학생 관리</h1>
-          <p className="text-ink-soft">
-            학생 {students.length}명 · 반 {classes.length}개
-          </p>
+          <p className="eyebrow">Students</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">학생 관리</h1>
         </div>
+        <dl className="flex gap-2">
+          <div className="rounded-xl border border-line bg-surface px-4 py-2">
+            <dt className="text-xs text-ink-faint">학생</dt>
+            <dd className="text-lg font-semibold tabular-nums">{students.length}</dd>
+          </div>
+          <div className="rounded-xl border border-line bg-surface px-4 py-2">
+            <dt className="text-xs text-ink-faint">반</dt>
+            <dd className="text-lg font-semibold tabular-nums">{classes.length}</dd>
+          </div>
+        </dl>
       </div>
 
       <AddStudentForm classes={classes} />
 
       {students.length === 0 ? (
-        <div className="card text-center">
-          <p className="text-5xl">🐣</p>
-          <p className="mt-2 font-bold">아직 학생이 없어요</p>
+        <div className="card flex flex-col items-center py-12 text-center">
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-surface-2 text-ink-soft">
+            <IconUsers className="h-5 w-5" />
+          </span>
+          <p className="mt-3 font-semibold">아직 학생이 없어요</p>
           <p className="text-sm text-ink-soft">위에서 첫 학생을 추가해 보세요.</p>
         </div>
       ) : (
-        [...groups.entries()].map(([classId, list], gi) => (
-          <section key={classId || "none"} className="card">
-            <h2 className="mb-4 flex items-center gap-2 font-display text-xl">
-              <span className={`inline-block h-3 w-3 rounded-full ${COLORS[gi % COLORS.length]}`} />
+        [...groups.entries()].map(([classId, list]) => (
+          <section key={classId || "none"} className="overflow-hidden rounded-2xl border border-line bg-surface">
+            <h2 className="flex items-center gap-2 border-b border-line bg-surface-2/60 px-5 py-3 text-sm font-semibold">
               {classId || "반 미정"}
-              <span className="text-sm font-sans text-ink-soft">{list.length}명</span>
+              <span className="font-normal text-ink-faint">{list.length}명</span>
             </h2>
-            <ul className="divide-y-2 divide-line">
+            <ul className="divide-y divide-line">
               {list.map((s) => (
-                <li key={s.studentId} className="flex flex-col gap-3 py-4 lg:flex-row lg:items-start">
-                  <div className="min-w-40">
-                    <p className="font-bold">{s.name || "(이름 없음)"}</p>
-                    <p className="text-sm text-ink-soft">@{s.studentId}</p>
+                <li key={s.studentId} className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-start">
+                  <div className="flex min-w-44 items-center gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-sm font-semibold text-accent">
+                      {(s.name || s.studentId).slice(0, 1)}
+                    </span>
+                    <div>
+                      <p className="font-medium leading-tight">{s.name || "(이름 없음)"}</p>
+                      <p className="text-sm text-ink-faint">@{s.studentId}</p>
+                    </div>
                   </div>
                   <form action={updateStudent} className="flex flex-1 flex-wrap gap-2">
                     <input type="hidden" name="studentId" value={s.studentId} />
@@ -58,7 +71,7 @@ export default async function TeacherHome() {
                       aria-label="반"
                       list="class-list"
                     />
-                    <button className="btn-soft px-3 py-2 text-sm">저장</button>
+                    <button className="btn-soft px-3 py-2">저장</button>
                   </form>
                   <div className="flex flex-wrap items-start gap-2">
                     <ResetPasswordButton studentId={s.studentId} />
