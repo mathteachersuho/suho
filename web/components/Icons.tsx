@@ -25,3 +25,10 @@ export const IconPlus = ({ className }: P) => base(<path d="M12 5v14M5 12h14" />
 export const IconLogout = ({ className }: P) =>
   base(<><path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H3" /></>, className);
 export const IconArrow = ({ className }: P) => base(<path d="M5 12h14M13 6l6 6-6 6" />, className);
+export const IconCheck = ({ className }: P) => base(<path d="m5 12.5 4.5 4.5L19 7.5" />, className);
+export const IconPrinter = ({ className }: P) =>
+  base(<><path d="M7 9V3h10v6M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2" /><rect x="7" y="14" width="10" height="7" rx="1" /></>, className);
+export const IconSearch = ({ className }: P) => base(<><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>, className);
+export const IconX = ({ className }: P) => base(<path d="M6 6l12 12M18 6 6 18" />, className);
+export const IconUp = ({ className }: P) => base(<path d="m6 15 6-6 6 6" />, className);
+export const IconDown = ({ className }: P) => base(<path d="m6 9 6 6 6-6" />, className);
