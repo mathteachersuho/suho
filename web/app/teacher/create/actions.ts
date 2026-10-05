@@ -95,7 +95,7 @@ export async function aiEditAction(input: {
 /** 고치는 글자를 문제 은행과 똑같은 모양으로 미리 보기 */
 export async function previewAction(texts: string[]): Promise<string[]> {
   await requireTeacher();
-  return texts.slice(0, 12).map((t) => renderProblemHtml(cleanText(t)));
+  return texts.slice(0, 3 * (1 + 2 * MAX_PER_KIND)).map((t) => renderProblemHtml(cleanText(t)));
 }
 
 const POSITION: Record<Source, number> = { 원본: 0, "AI 기본": 1, "AI 실력": 2 };

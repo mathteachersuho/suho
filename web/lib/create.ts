@@ -2,6 +2,7 @@ import "server-only";
 import { AiError, gemini, geminiJson } from "./ai/clients";
 import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, type EditTarget, type GenKind, type Generated, type Variation } from "./ai/prompts";
 import { DIFFICULTIES } from "./difficulty";
+import { figuresToBlocks, renderFigureBlocks } from "./figure";
 import type { TaxRow } from "./taxonomy";
 
 export const SEMESTERS = ["1학기", "2학기", "공통"] as const;
@@ -19,8 +20,11 @@ export type Suggestion = {
 
 export type CardResult = { ok: true; data: Generated } | { ok: false; error: string };
 
+/** AI가 쓴 <좌표그림> 블록을 정확한 SVG로 바꾼다 */
+const drawFigures = (g: Generated): Generated => ({ question: renderFigureBlocks(g.question), answer: g.answer, solution: renderFigureBlocks(g.solution) });
+
 export async function generateOne(kind: GenKind, text: string, detailed: boolean, imageB64?: string, v: Variation = {}): Promise<Generated> {
-  const out = parseProblem(await gemini(problemPrompt(kind, text, detailed, v), kind === 0 ? imageB64 : undefined));
+  const out = drawFigures(parseProblem(await gemini(problemPrompt(kind, text, detailed, v), kind === 0 ? imageB64 : undefined)));
   if (!out.question.trim()) throw new AiError("빈 문제가 만들어졌어요. 다시 만들어 주세요.");
   return out;
 }
@@ -28,7 +32,9 @@ export async function generateOne(kind: GenKind, text: string, detailed: boolean
 /** 말로 적은 요청대로 문제 고치기 */
 export async function editOne(current: Generated, instruction: string, imageB64?: string, target: EditTarget = "problem"): Promise<Generated> {
   const img = target === "problem" ? imageB64 : undefined;
-  const out = parseProblem(await gemini(editPrompt(current, instruction, !!img, target), img));
+  // 앱이 그린 좌표 그림은 설정(<좌표그림>)으로 바꿔 보내서 AI가 좌표·식만 고치게 한다
+  const asBlocks = { question: figuresToBlocks(current.question), answer: current.answer, solution: figuresToBlocks(current.solution) };
+  const out = drawFigures(parseProblem(await gemini(editPrompt(asBlocks, instruction, !!img, target), img)));
   // 풀이만 고칠 때는 AI가 문제를 건드렸더라도 원래 문제를 그대로 둔다
   if (target === "solution") {
     if (!out.solution.trim() && !out.answer.trim()) throw new AiError("고친 풀이가 비어 있어요. 요청을 조금 바꿔 다시 해 보세요.");
