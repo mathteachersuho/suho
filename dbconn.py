@@ -58,12 +58,19 @@ def ping(url, timeout=10):
                     "where n.nspname = 'public' and c.relkind = 'r'"
                 )
                 rows = {name: rls for name, rls in cur.fetchall()}
+                # 요청 한 번이 오가는 데 걸리는 시간(평균). 화면이 느린지 판단하는 기준이 된다.
+                t0 = time.monotonic()
+                for _ in range(5):
+                    cur.execute("select 1")
+                    cur.fetchone()
+                rtt_ms = int((time.monotonic() - t0) * 1000 / 5)
     except Exception as e:  # 접속 실패, 시간 초과, 비밀번호 오류 등
         return {"ok": False, "error": _mask(f"{type(e).__name__}: {e}", url)}
     found = [t for t in EXPECTED_TABLES if t in rows]
     return {
         "ok": True,
         "ms": int((time.monotonic() - started) * 1000),
+        "rtt_ms": rtt_ms,
         "version": version,
         "found": found,
         "missing": [t for t in EXPECTED_TABLES if t not in rows],
@@ -211,16 +218,21 @@ class Db:
         """유형표에 (학년, 단원, 유형, 문제틀)이 없으면 추가하고 번호를 돌려준다. 문제틀이 비어 있으면 None."""
         if not frame:
             return None
+        args = (grade or "", unit or "", type_ or "", frame, description or "")
+        # 추가와 조회를 한 번의 요청으로 처리한다(왕복 횟수를 줄이기 위해).
         row = conn.execute(
-            "insert into taxonomy (grade, unit, type, frame, description) values (%s, %s, %s, %s, %s) "
-            "on conflict (grade, unit, type, frame) do nothing returning id",
-            (grade or "", unit or "", type_ or "", frame, description or ""),
+            "with ins as (insert into taxonomy (grade, unit, type, frame, description) "
+            "values (%s, %s, %s, %s, %s) on conflict (grade, unit, type, frame) do nothing returning id) "
+            "select id from ins union all "
+            "select id from taxonomy where grade = %s and unit = %s and type = %s and frame = %s limit 1",
+            args + args[:4],
         ).fetchone()
         if row:
             return row[0]
+        # 다른 요청이 같은 순간 먼저 추가한 경우: 그 요청이 끝난 뒤 다시 조회한다
         return conn.execute(
             "select id from taxonomy where grade = %s and unit = %s and type = %s and frame = %s",
-            (grade or "", unit or "", type_ or "", frame),
+            args[:4],
         ).fetchone()[0]
 
     def taxonomy_list(self):
@@ -341,6 +353,11 @@ class Db:
     def bank_ids_for(self, group_id, count):
         return [f"{group_id}_{i + 1}" for i in range(count)]
 
+    def bank_exists(self, group_id):
+        """이 group_id로 이미 저장된 문제가 있는지 (한 번의 요청)."""
+        with self.pool.connection() as conn:
+            return conn.execute("select 1 from problems where id = %s", (f"{group_id}_1",)).fetchone() is not None
+
     def bank_save(self, group_id, problems, image_file_id=""):
         """여러 문제를 한 번에 저장한다. 같은 group_id로 다시 저장해도 중복되지 않는다(duplicate: True).
         하나라도 실패하면 아무것도 저장되지 않는다."""
@@ -352,29 +369,35 @@ class Db:
                 if conn.execute("select 1 from problems where id = %s", (ids[0],)).fetchone():
                     return {"ok": True, "ids": ids, "duplicate": True}
                 first = problems[0]
-                conn.execute(
-                    "insert into problem_sets (id, made_on, grade, unit, subtype, image_ref) "
-                    "values (%s, (now() at time zone 'Asia/Seoul')::date, %s, %s, %s, %s)",
-                    (group_id, first.get("grade", ""), first.get("unit", ""), first.get("frame", ""), image_file_id or ""),
-                )
-                origin_id = ""
+                # 유형표 번호는 먼저 구해 두고(같은 분류는 한 번만), 나머지 쓰기는 한꺼번에 보낸다.
+                tax_ids = {}
+                for p in problems:
+                    key = (p.get("grade"), p.get("unit"), p.get("type"), p.get("frame"))
+                    if key not in tax_ids:
+                        tax_ids[key] = self._ensure_taxonomy(conn, *key, p.get("frame_description"))
+                origin_id = next((pid for pid, p in zip(ids, problems) if p.get("source") == "원본"), "")
+                # 묶음과 문제 전부를 한 번의 요청으로 저장한다(왕복 횟수를 줄이기 위해, 풀러와도 호환).
+                rows, params = [], [
+                    group_id, first.get("grade", ""), first.get("unit", ""), first.get("frame", ""), image_file_id or ""]
                 for pid, p in zip(ids, problems):
-                    if p.get("source") == "원본":
-                        origin_id = pid
-                    tax_id = self._ensure_taxonomy(
-                        conn, p.get("grade"), p.get("unit"), p.get("type"), p.get("frame"), p.get("frame_description"))
-                    conn.execute(
-                        "insert into problems (id, set_id, position, taxonomy_id, grade, unit, type, frame, difficulty, "
-                        "source, origin_id, question, answer, solution, image_ref, verified, memo) "
-                        "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                        (pid, group_id, self._POSITION.get(p.get("source")), tax_id,
-                         p.get("grade", ""), p.get("unit", ""), p.get("type", ""), p.get("frame", ""),
-                         p.get("difficulty", ""), p.get("source", ""),
-                         None if p.get("source") == "원본" else (origin_id or None),
-                         p.get("question", ""), p.get("answer", ""), p.get("solution", ""),
-                         (image_file_id or "") if p.get("use_image") else "",
-                         bool(p.get("verified")), p.get("memo", "")),
-                    )
+                    key = (p.get("grade"), p.get("unit"), p.get("type"), p.get("frame"))
+                    rows.append("(" + ", ".join(["%s"] * 17) + ")")
+                    params += [
+                        pid, group_id, self._POSITION.get(p.get("source")), tax_ids[key],
+                        p.get("grade", ""), p.get("unit", ""), p.get("type", ""), p.get("frame", ""),
+                        p.get("difficulty", ""), p.get("source", ""),
+                        None if p.get("source") == "원본" else (origin_id or None),
+                        p.get("question", ""), p.get("answer", ""), p.get("solution", ""),
+                        (image_file_id or "") if p.get("use_image") else "",
+                        bool(p.get("verified")), p.get("memo", "")]
+                conn.execute(
+                    "with s as (insert into problem_sets (id, made_on, grade, unit, subtype, image_ref) "
+                    "values (%s, (now() at time zone 'Asia/Seoul')::date, %s, %s, %s, %s)) "
+                    "insert into problems (id, set_id, position, taxonomy_id, grade, unit, type, frame, difficulty, "
+                    "source, origin_id, question, answer, solution, image_ref, verified, memo) values "
+                    + ", ".join(rows),
+                    params,
+                )
             return {"ok": True, "ids": ids, "image_file_id": image_file_id or ""}
         except pgerrors.UniqueViolation:
             # 같은 요청이 동시에 두 번 들어온 경우: 먼저 들어온 쪽이 저장했다

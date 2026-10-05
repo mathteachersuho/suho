@@ -313,7 +313,7 @@ def _db_bank_save(problems, image_b64, group_id):
     db = _db_connect(url)
     file_id = ""
     try:
-        already = bool(problems) and db.bank_search(ids=db.bank_ids_for(group_id, 1))["total"] > 0
+        already = bool(problems) and db.bank_exists(group_id)
         if image_b64 and any(p.get("use_image") for p in problems) and not already:
             file_id, err = _db_image_upload(image_b64, group_id)
             if err:
@@ -2393,6 +2393,7 @@ def db_panel():
                 st.caption(res["error"])
                 return
             st.success(f"연결됐어요 ({res['ms']}ms, Postgres {res['version']})")
+            st.caption(f"요청 한 번당 왕복 시간: 약 {res['rtt_ms']}ms (문제 하나를 저장할 때 이 왕복이 대략 5~7번 일어납니다)")
             total = len(dbconn.EXPECTED_TABLES)
             if res["missing"]:
                 st.warning(f"표 {len(res['found'])}/{total}개만 있어요. 없는 표: {', '.join(res['missing'])}. db/schema.sql 을 SQL Editor에서 실행해 주세요.")
