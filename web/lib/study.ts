@@ -107,25 +107,36 @@ export async function wrongNotes(studentId: string, withSimilar = true): Promise
   }));
 }
 
-/** 선생님이 숙제에서 '중요'로 표시한 문제 (하위 질의) */
-const teacherStarred = (studentId: string) => db()`
-  select problem_id, max(updated_at) as at from hw_results
-  where student_id = ${studentId} and '중요' = any(tags) group by problem_id`;
+export type MarkedItem = StudyProblem & {
+  semester: string;
+  mine: boolean; // 학생이 직접 중요 표시
+  teacher: boolean; // 선생님이 숙제에서 중요 표시
+  hard: boolean; // 선생님이 숙제에서 어려움 표시
+};
 
-/** 중요 문제: 학생이 별표한 문제와 선생님이 '중요'로 표시한 문제, 최근 먼저 */
-export async function starredProblems(studentId: string): Promise<(StudyProblem & { mine: boolean; teacher: boolean })[]> {
+/**
+ * 중요 문제: 학생이 별표한 문제 + 선생님이 숙제에서 '중요'·'어려움'으로 표시한 문제. 문제마다 한 줄, 최근 표시 먼저.
+ * (어려움은 저장 값 '어려워함')
+ */
+export async function markedProblems(studentId: string): Promise<MarkedItem[]> {
   const rows = await db()`
-    with mine as (select problem_id, created_at as at from stars where student_id = ${studentId}),
-    teach as (${teacherStarred(studentId)}),
-    allp as (
-      select coalesce(m.problem_id, t.problem_id) as problem_id, greatest(m.at, t.at) as at, m.problem_id is not null as mine, t.problem_id is not null as teacher
-      from mine m full join teach t on t.problem_id = m.problem_id
+    with marks as (
+      select problem_id, created_at as at, true as mine, false as teacher, false as hard from stars where student_id = ${studentId}
+      union all
+      select problem_id, updated_at, false, '중요' = any(tags), '어려워함' = any(tags) from hw_results
+      where student_id = ${studentId} and tags && array['중요', '어려워함']
+    ),
+    m as (
+      select problem_id, max(at) as at, bool_or(mine) as mine, bool_or(teacher) as teacher, bool_or(hard) as hard
+      from marks group by problem_id
     )
-    select p.id, p.grade, p.unit, p.type, p.frame, p.difficulty, p.question, p.answer, p.solution, a.mine, a.teacher
-    from allp a join problems p on p.id = a.problem_id
-    order by a.at desc, p.id
-    limit 300`;
-  return rows.map((r) => ({ ...P(r), mine: r.mine as boolean, teacher: r.teacher as boolean }));
+    select p.id, p.grade, p.unit, p.type, p.frame, p.difficulty, p.question, p.answer, p.solution,
+      coalesce(u.semester, '') as semester, m.mine, m.teacher, m.hard
+    from m join problems p on p.id = m.problem_id
+    left join units u on u.grade = p.grade and u.unit = p.unit
+    order by m.at desc, p.id
+    limit 500`;
+  return rows.map((r) => ({ ...P(r), semester: r.semester as string, mine: r.mine as boolean, teacher: r.teacher as boolean, hard: r.hard as boolean }));
 }
 
 export async function starredIds(studentId: string): Promise<Set<string>> {
@@ -174,7 +185,7 @@ export async function studyCounts(studentId: string) {
     select
       (select count(distinct problem_id) from hw_results where student_id = ${studentId} and (correct = 'N' or '어려워함' = any(tags)))::int as wrong,
       (select count(*) from (select problem_id from stars where student_id = ${studentId}
-                             union select problem_id from hw_results where student_id = ${studentId} and '중요' = any(tags)) x)::int as stars`;
+                             union select problem_id from hw_results where student_id = ${studentId} and tags && array['중요', '어려워함']) x)::int as stars`;
   return { wrong: r.wrong as number, stars: r.stars as number };
 }
 

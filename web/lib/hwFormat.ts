@@ -20,8 +20,11 @@ export function dayLabel(day: string) {
   return `${m}월 ${d}일 (${w})`;
 }
 
-/** 선생님이 숙제 문제에 붙이는 표시의 모양: 중요 ★, 어려워함 ! */
-export const TAG_STYLE: Record<string, { icon: string; cls: string }> = {
-  중요: { icon: "★", cls: "bg-warn-soft text-warn" },
-  어려워함: { icon: "!", cls: "bg-accent-soft text-accent" },
+/**
+ * 선생님이 숙제 문제에 붙이는 표시의 모양: 중요 ★, 어려움 !
+ * 저장되는 값은 Streamlit 과 같은 '어려워함'이고 화면에는 '어려움'으로 보인다.
+ */
+export const TAG_STYLE: Record<string, { icon: string; cls: string; label: string }> = {
+  중요: { icon: "★", cls: "bg-warn-soft text-warn", label: "중요" },
+  어려워함: { icon: "!", cls: "bg-accent-soft text-accent", label: "어려움" },
 };

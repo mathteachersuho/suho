@@ -73,7 +73,7 @@ export default async function SolveHomework({ params }: PageProps<"/student/home
                     <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${m.cls}`}>{m.text}</span>
                     {r?.tags.map((t) => (
                       <span key={t} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${TAG_STYLE[t].cls}`} title="선생님 표시">
-                        {TAG_STYLE[t].icon} {t}
+                        {TAG_STYLE[t].icon} {TAG_STYLE[t].label}
                       </span>
                     ))}
                     <span className="ml-auto">

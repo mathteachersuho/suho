@@ -16,14 +16,16 @@ export default function WrongSections<T extends Item>({
   items,
   q,
   baseHref,
+  keep = {},
   card,
 }: {
   items: T[];
   q: WrongQuery;
   baseHref: string;
+  keep?: Record<string, string>; // 주소에 함께 남길 다른 값 (예: 중요 문제 표시 고르기)
   card: (item: T, no: number) => React.ReactNode;
 }) {
-  const href = (p: Record<string, string>) => `${baseHref}?${new URLSearchParams(p)}#${ANCHOR}`;
+  const href = (p: Record<string, string>) => `${baseHref}?${new URLSearchParams({ ...keep, ...p })}#${ANCHOR}`;
   return (
     <div id={ANCHOR} className="scroll-mt-24 space-y-5">
       <div className="flex rounded-xl bg-surface-2 p-1 sm:w-fit" role="tablist" aria-label="오답 보기 방법">
@@ -49,7 +51,7 @@ export default function WrongSections<T extends Item>({
   );
 }
 
-function Row({ title, count, sub, children }: { title: string; count: number; sub?: string; children: React.ReactNode }) {
+export function Row({ title, count, sub, tone = "bad", children }: { title: string; count: number; sub?: string; tone?: "bad" | "neutral"; children: React.ReactNode }) {
   return (
     <details className="group rounded-2xl border border-line bg-surface open:bg-transparent open:border-transparent">
       <summary className="flex cursor-pointer list-none items-center gap-3 rounded-2xl px-4 py-3.5 hover:bg-surface-2 group-open:border group-open:border-line group-open:bg-surface [&::-webkit-details-marker]:hidden">
@@ -57,7 +59,7 @@ function Row({ title, count, sub, children }: { title: string; count: number; su
           <span className="block font-semibold">{title}</span>
           {sub && <span className="block truncate text-xs text-ink-faint">{sub}</span>}
         </span>
-        <span className="shrink-0 rounded-full bg-bad-soft px-2.5 py-0.5 text-sm font-semibold tabular-nums text-bad">{count}</span>
+        <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-sm font-semibold tabular-nums ${tone === "bad" ? "bg-bad-soft text-bad" : "bg-surface-2 text-ink-soft"}`}>{count}</span>
         <IconDown className="h-4 w-4 shrink-0 text-ink-faint transition-transform group-open:rotate-180" />
       </summary>
       <div className="space-y-4 pt-3">{children}</div>

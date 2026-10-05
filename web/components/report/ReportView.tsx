@@ -78,7 +78,7 @@ export default function ReportView({ name, classId, r, children }: { name: strin
           <h3 className="report-h">보완이 필요한 유형</h3>
           <Table
             head={["유형", "맞힌/푼", "정답률"]}
-            rows={r.weak.map((t) => [`${t.unit} › ${t.type}${t.hard ? ` (어려워함 ${t.hard})` : ""}`, `${t.right}/${t.total}`, `${pct(t.right, t.total)}%`])}
+            rows={r.weak.map((t) => [`${t.unit} › ${t.type}${t.hard ? ` (어려움 ${t.hard})` : ""}`, `${t.right}/${t.total}`, `${pct(t.right, t.total)}%`])}
             empty="뚜렷하게 약한 유형이 없습니다."
           />
         </section>

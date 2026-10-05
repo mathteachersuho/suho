@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { IconChart, IconDownload, IconUsers } from "@/components/Icons";
+import { IconChart, IconDownload, IconStar, IconUsers } from "@/components/Icons";
 import { backupAge } from "@/lib/backup";
 import { listStudents } from "@/lib/students";
 import { deleteStudent, updateStudent } from "./actions";
@@ -95,6 +95,10 @@ export default async function TeacherHome() {
                     <Link href={`/teacher/students/${encodeURIComponent(s.studentId)}`} className="btn-soft px-3 py-2">
                       <IconChart />
                       오답·유형
+                    </Link>
+                    <Link href={`/teacher/students/${encodeURIComponent(s.studentId)}#marked-list`} className="btn-soft px-3 py-2">
+                      <IconStar />
+                      중요 문제
                     </Link>
                     <ResetPasswordButton studentId={s.studentId} />
                     <DeleteStudentButton studentId={s.studentId} action={deleteStudent} />

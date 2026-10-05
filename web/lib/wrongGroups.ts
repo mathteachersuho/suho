@@ -30,7 +30,7 @@ export function termOf(x: { grade: string; semester: string }) {
 }
 
 /** 중 → 고 → 그 밖, 학년 숫자, 학기 순 */
-function termRank(t: string) {
+export function termRank(t: string) {
   const school = t.startsWith("중") ? 0 : t.startsWith("고") ? 1 : 2;
   const [, n = "9", s = "0"] = t.match(/(\d)(?:-(\d))?$/) ?? [];
   return school * 100 + Number(n) * 10 + Number(s);
