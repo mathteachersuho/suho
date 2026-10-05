@@ -4,6 +4,7 @@ import { IconBook, IconSparkle } from "@/components/Icons";
 import { bankOutline, PAGE_SIZE, searchProblems, type BankFilter } from "@/lib/problems";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import BankFilters from "./BankFilters";
+import DeleteProblem from "./DeleteProblem";
 import { AddAllButton, CartBar, CartToggle } from "./CartControls";
 
 type SP = Promise<Record<string, string | string[] | undefined>>;
@@ -82,7 +83,17 @@ export default async function BankPage({ searchParams }: { searchParams: SP }) {
       ) : (
         <div className="space-y-3">
           {items.map((p, i) => (
-            <ProblemCard key={p.id} p={p} no={(page - 1) * PAGE_SIZE + i + 1} action={<CartToggle id={p.id} />} />
+            <ProblemCard
+              key={p.id}
+              p={p}
+              no={(page - 1) * PAGE_SIZE + i + 1}
+              action={
+                <div className="flex shrink-0 gap-1.5">
+                  <DeleteProblem id={p.id} no={(page - 1) * PAGE_SIZE + i + 1} />
+                  <CartToggle id={p.id} />
+                </div>
+              }
+            />
           ))}
         </div>
       )}
