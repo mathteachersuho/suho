@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { IconArrow, IconCheck, IconPlus } from "@/components/Icons";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import type { CardResult, Suggestion } from "@/lib/create";
@@ -16,6 +16,7 @@ import { usePreview } from "./usePreview";
 type Tax = { grade: string; unit: string; type: string; frame: string; description: string };
 
 type Card = {
+  key: string;
   source: Source;
   label: string;
   question: string;
@@ -36,6 +37,60 @@ type Card = {
 const KIND: Record<Source, 0 | 1 | 2> = { 원본: 0, "AI 기본": 1, "AI 실력": 2 };
 const EMPTY_CLS: Classification = { grade: "", unit: "", type: "", frame: "", description: "" };
 const SEMESTERS = ["1학기", "2학기", "공통"];
+
+// 만들 유사문제 수 (종류마다 0~5). 이 컴퓨터에 기억해 두고 다음에도 쓴다.
+const MAX_PER_KIND = 5;
+const COUNT_KEY = "create-counts";
+type Counts = { basic: number; advanced: number };
+const DEFAULT_COUNTS = '{"basic":1,"advanced":1}';
+const countListeners = new Set<() => void>();
+function readCounts(raw: string): Counts {
+  try {
+    const v = JSON.parse(raw);
+    const n = (x: unknown) => (Number.isInteger(x) ? Math.min(Math.max(x as number, 0), MAX_PER_KIND) : 1);
+    return { basic: n(v.basic), advanced: n(v.advanced) };
+  } catch {
+    return { basic: 1, advanced: 1 };
+  }
+}
+function useCounts(): [Counts, (c: Counts) => void] {
+  const raw = useSyncExternalStore(
+    (cb) => {
+      countListeners.add(cb);
+      return () => countListeners.delete(cb);
+    },
+    () => {
+      try {
+        return localStorage.getItem(COUNT_KEY) || DEFAULT_COUNTS;
+      } catch {
+        return DEFAULT_COUNTS;
+      }
+    },
+    () => DEFAULT_COUNTS,
+  );
+  const set = (c: Counts) => {
+    try {
+      localStorage.setItem(COUNT_KEY, JSON.stringify(c));
+    } catch {}
+    countListeners.forEach((f) => f());
+  };
+  return [readCounts(raw), set];
+}
+
+function CountPicker({ label, value, onChange }: { label: string; value: number; onChange: (n: number) => void }) {
+  return (
+    <label className="flex items-center gap-2 text-sm">
+      <span className="text-ink-soft">{label}</span>
+      <select value={value} onChange={(e) => onChange(Number(e.target.value))} className="field w-auto py-1.5">
+        {Array.from({ length: MAX_PER_KIND + 1 }, (_, n) => (
+          <option key={n} value={n}>
+            {n}개
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 function newGroupId() {
   // Streamlit 과 같은 모양의 저장 번호 (밀리초 + 'x' + 여섯 자리)
@@ -68,6 +123,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
   const [text, setText] = useState("");
   const [textOpen, setTextOpen] = useState(false);
   const [detailed, setDetailed] = useState(false);
+  const [counts, setCounts] = useCounts();
   const [error, setError] = useState("");
   const [cards, setCards] = useState<Card[] | null>(null);
   const [rebuilt, setRebuilt] = useState(true);
@@ -115,20 +171,21 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
     setError("");
     resetResult();
     startGen(async () => {
-      const r = await generateAction({ text, imageB64: image?.b64, detailed });
+      const r = await generateAction({ text, imageB64: image?.b64, detailed, ...counts });
       if ("error" in r) {
         setError(r.error ?? "");
         return;
       }
-      const { original, originalRebuilt, p1, p2, suggestion: sug } = r.result;
+      const { original, originalRebuilt, basic, advanced, suggestion: sug } = r.result;
       const diff = sug?.difficulty || "중";
       const up = DIFFICULTIES[Math.min(DIFFICULTIES.indexOf(diff as (typeof DIFFICULTIES)[number]) + 1, 2)];
       const base = { include: true, verified: false, editing: false, busy: false };
       const fromCard = (c: CardResult) => (c.ok ? { ...c.data } : { question: "", answer: "", solution: "", error: c.error });
+      const num = (list: unknown[], i: number) => (list.length > 1 ? ` ${i + 1}` : "");
       setCards([
-        { ...base, source: "원본", label: "원본 문제", ...original, difficulty: diff },
-        { ...base, source: "AI 기본", label: "유사문제 1 · 기본 다지기", ...fromCard(p1), difficulty: diff, include: p1.ok },
-        { ...base, source: "AI 실력", label: "유사문제 2 · 실력 키우기", ...fromCard(p2), difficulty: up, include: p2.ok },
+        { ...base, key: "o", source: "원본", label: "원본 문제", ...original, difficulty: diff },
+        ...basic.map((c, i) => ({ ...base, key: `b${i}`, source: "AI 기본" as const, label: `기본 다지기${num(basic, i)}`, ...fromCard(c), difficulty: diff, include: c.ok })),
+        ...advanced.map((c, i) => ({ ...base, key: `a${i}`, source: "AI 실력" as const, label: `실력 키우기${num(advanced, i)}`, ...fromCard(c), difficulty: up, include: c.ok })),
       ]);
       setRebuilt(originalRebuilt);
       setSuggestion(sug);
@@ -144,7 +201,9 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
   const regenerate = async (i: number) => {
     if (!cards) return;
     update(i, { busy: true });
-    const r = await regenerateAction({ kind: KIND[cards[i].source], text, imageB64: image?.b64, detailed });
+    // 같은 종류로 이미 만든 다른 문제와 겹치지 않게 함께 보낸다
+    const avoid = cards[i].source === "원본" ? [] : cards.filter((c, j) => j !== i && c.source === cards[i].source && !c.error).map((c) => c.question);
+    const r = await regenerateAction({ kind: KIND[cards[i].source], text, imageB64: image?.b64, detailed, avoid });
     if (r.ok) update(i, { ...r.data, error: undefined, busy: false, include: true, undo: undefined });
     else update(i, { busy: false, error: r.error });
     setGroupId(newGroupId());
@@ -277,14 +336,18 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
               <input type="checkbox" checked={detailed} onChange={(e) => setDetailed(e.target.checked)} className="h-4 w-4 accent-accent" />
               단계별 상세 풀이 (끄면 핵심 풀이만)
             </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <CountPicker label="기본 다지기" value={counts.basic} onChange={(n) => setCounts({ ...counts, basic: n })} />
+              <CountPicker label="실력 키우기" value={counts.advanced} onChange={(n) => setCounts({ ...counts, advanced: n })} />
+            </div>
             <button type="button" className="btn-main ml-auto" disabled={!text.trim() || genPending} onClick={generate}>
               {genPending ? (
                 <>
-                  <Spinner /> 만드는 중… (보통 10~30초)
+                  <Spinner /> 만드는 중… (보통 10~30초{counts.basic + counts.advanced > 4 ? ", 문제가 많으면 더 걸려요" : ""})
                 </>
               ) : (
                 <>
-                  원본 다시 쓰기 + 유사문제 2개 만들기 <IconArrow />
+                  {counts.basic + counts.advanced > 0 ? `원본 다시 쓰기 + 유사문제 ${counts.basic + counts.advanced}개 만들기` : "원본만 다시 쓰기"} <IconArrow />
                 </>
               )}
             </button>
@@ -323,7 +386,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
             </div>
 
             {cards.map((c, i) => (
-              <article key={c.source} className={`rounded-xl border p-4 ${c.include && !c.error ? "border-line" : "border-line opacity-70"}`}>
+              <article key={c.key} className={`rounded-xl border p-4 ${c.include && !c.error ? "border-line" : "border-line opacity-70"}`}>
                 <header className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
                   <label className="flex cursor-pointer items-center gap-2 font-semibold">
                     <input

@@ -65,7 +65,22 @@ const TYPE_INSTRUCTION: Record<GenKind, string> = {
 
 const KIND_NAME: Record<GenKind, string> = { 0: "원본 문제 다시 쓰기", 1: "1번 기본 다지기 문제", 2: "2번 실력 키우기 문제" };
 
-export function problemPrompt(kind: GenKind, ocrText: string, detailed: boolean) {
+/** 같은 종류를 여러 개 만들 때: 몇 번째인지, 이미 만든 문제(겹치면 안 되는 것) */
+export type Variation = { index?: number; total?: number; avoid?: string[] };
+
+function variationText(kind: GenKind, v: Variation) {
+  if (kind === 0) return "";
+  const lines: string[] = [];
+  if ((v.total ?? 1) > 1)
+    lines.push(
+      `- 이 문제는 같은 종류 ${v.total}문제 중 ${v.index}번째다. 다른 번호 문제와 숫자·조건·상황이 겹치지 않게, ${v.index}번째에 맞는 서로 다른 값과 접근을 골라라.`,
+    );
+  if (v.avoid?.length)
+    lines.push(`- 아래 문제들은 이미 만들었다. 이것들과 숫자·조건이 같거나 거의 같은 문제를 만들지 마라.\n${v.avoid.map((q, i) => `(${i + 1}) ${q}`).join("\n")}`);
+  return lines.length ? `\n[여러 문제 만들기]\n${lines.join("\n")}\n` : "";
+}
+
+export function problemPrompt(kind: GenKind, ocrText: string, detailed: boolean, v: Variation = {}) {
   const solution = detailed ? "단계별 상세 풀이와 해설 작성" : "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성";
   const head =
     kind === 0 ? "원본 문제를 실제 시험지처럼 깔끔하게 다시 써라." : `원본 문제를 바탕으로 [${KIND_NAME[kind]}]를 1개만 제작하라.`;
@@ -74,7 +89,7 @@ export function problemPrompt(kind: GenKind, ocrText: string, detailed: boolean)
 [원본 문제]
 ${ocrText}
 
-${TYPE_INSTRUCTION[kind]}
+${TYPE_INSTRUCTION[kind]}${variationText(kind, v)}
 ${RULES}
 [출력 양식]
 [문제]
