@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { IconArrow } from "@/components/Icons";
+import { IconArrow, IconChart } from "@/components/Icons";
 import WrongSections from "@/components/WrongSections";
 import { dayLabel } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
@@ -30,8 +30,16 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
           <IconArrow className="h-4 w-4 rotate-180" />
           학생 관리
         </Link>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight">{s.name || s.studentId}</h1>
-        <p className="text-sm text-ink-faint">{[s.classId, `@${s.studentId}`].filter(Boolean).join(" · ")}</p>
+        <div className="mt-1 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">{s.name || s.studentId}</h1>
+            <p className="text-sm text-ink-faint">{[s.classId, `@${s.studentId}`].filter(Boolean).join(" · ")}</p>
+          </div>
+          <Link href={`/teacher/report/${encodeURIComponent(id)}`} className="btn-soft px-3 py-2">
+            <IconChart />
+            학부모 리포트
+          </Link>
+        </div>
       </div>
 
       <dl className="grid grid-cols-3 gap-2">

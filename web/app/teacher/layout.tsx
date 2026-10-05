@@ -13,7 +13,7 @@ export default async function TeacherLayout({ children }: LayoutProps<"/teacher"
           { label: "문제 은행", icon: <IconBook />, href: "/teacher/bank" },
           { label: "숙제", icon: <IconClipboard />, href: "/teacher/homework" },
           { label: "학생 관리", icon: <IconUsers />, href: "/teacher" },
-          { label: "리포트", icon: <IconChart /> },
+          { label: "리포트", icon: <IconChart />, href: "/teacher/report" },
         ]}
       />
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</main>

@@ -39,6 +39,27 @@
   }
 }
 
+/* 인쇄할 때는 다크 모드여도 흰 종이에 검은 글자 */
+@media print {
+  :root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-2: #f1f2f5;
+    --ink: #0e1220;
+    --ink-soft: #5b6275;
+    --ink-faint: #9aa0ae;
+    --line: #e4e6ec;
+    --accent: #4f46e5;
+    --accent-soft: #eef0ff;
+    --good: #0f9f6e;
+    --bad: #e5484d;
+    --bad-soft: #fff0f0;
+    --warn: #d99100;
+    --warn-soft: #fff8e6;
+  }
+}
+
 @theme inline {
   --color-bg: var(--bg);
   --color-surface: var(--surface);
@@ -385,4 +406,13 @@ body {
   border-radius: 10px;
   background: var(--surface);
   color: var(--ink);
+}
+
+/* 학부모 리포트 소제목 */
+.report-h {
+  font-size: 15px;
+  font-weight: 700;
+  padding-left: 10px;
+  border-left: 3px solid var(--ink);
+  line-height: 1.3;
 }
