@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "./db";
+import { describe, logError } from "./errorLog";
 
 /**
  * 전체 백업: 모든 표를 JSON 하나로 (gzip 압축해서 내려받는다).
@@ -102,6 +103,7 @@ export function backupStream(): ReadableStream<Uint8Array> {
         ctl.close();
       } catch (e) {
         console.error("백업 오류", e);
+        await logError({ source: "server", place: "전체 백업", ...describe(e), who: "teacher" });
         ctl.error(e);
       }
     },

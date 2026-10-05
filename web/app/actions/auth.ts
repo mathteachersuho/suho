@@ -5,6 +5,7 @@ import { createSession, deleteSession } from "@/lib/session";
 import { sameSecret, verifyPassword } from "@/lib/password";
 import { clearFailures, lockedMinutes, loginRules, recordFailure } from "@/lib/loginGuard";
 import { getPasswordHash } from "@/lib/students";
+import { reportError } from "@/lib/reportError";
 
 export type LoginState = { error?: string } | undefined;
 
@@ -29,7 +30,7 @@ export async function studentLogin(_: LoginState, form: FormData): Promise<Login
     }
     await clearFailures(rules);
   } catch (e) {
-    console.error("학생 로그인 오류", e);
+    await reportError("학생 로그인", e);
     return { error: "잠시 연결이 안 돼요. 조금 뒤에 다시 해 주세요." };
   }
   await createSession({ role: "student", studentId: id }, hash);
@@ -51,7 +52,7 @@ export async function teacherLogin(_: LoginState, form: FormData): Promise<Login
     }
     await clearFailures(rules);
   } catch (e) {
-    console.error("선생님 로그인 오류", e);
+    await reportError("선생님 로그인", e);
     return { error: "잠시 연결이 안 돼요. 조금 뒤에 다시 해 주세요." };
   }
   await createSession({ role: "teacher" });

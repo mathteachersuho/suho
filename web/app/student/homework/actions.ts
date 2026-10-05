@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { submitHomework } from "@/lib/homework";
 import { requireStudent } from "@/lib/session";
+import { reportError } from "@/lib/reportError";
 
 export async function submitAction(hwId: string, answers: Record<string, string>) {
   const me = await requireStudent();
@@ -19,7 +20,7 @@ export async function submitAction(hwId: string, answers: Record<string, string>
     }
     return r;
   } catch (e) {
-    console.error("숙제 제출 오류", e);
+    await reportError("숙제 제출", e);
     return { ok: false as const, error: "제출하지 못했어요. 잠시 뒤 다시 눌러 주세요." };
   }
 }

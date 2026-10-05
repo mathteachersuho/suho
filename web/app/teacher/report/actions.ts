@@ -10,6 +10,7 @@ import { getSavedReport, saveReport, setReportShare } from "@/lib/savedReports";
 import { requireTeacher } from "@/lib/session";
 import { getStudent } from "@/lib/students";
 import { typeStats } from "@/lib/study";
+import { reportError } from "@/lib/reportError";
 
 type ExamValues = Record<"takenOn" | "kind" | "name" | "score" | "maxScore" | "memo", string>;
 // 실패하면 입력한 값을 돌려줘서 칸이 비지 않게 한다
@@ -66,7 +67,7 @@ export async function reportDraftAction(studentId: string, from: string, to: str
     if (!analysis && !comment) return { error: "AI가 초안을 만들지 못했어요. 다시 눌러 주세요." };
     return { analysis, comment };
   } catch (e) {
-    if (!(e instanceof AiError)) console.error("리포트 초안 오류", e);
+    if (!(e instanceof AiError)) await reportError("리포트 AI 초안", e);
     return { error: e instanceof AiError ? e.message : "초안을 만들지 못했어요. 다시 눌러 주세요." };
   }
 }
@@ -103,7 +104,7 @@ export async function analyzeExamAction(
     revalidatePath(`/teacher/report/${encodeURIComponent(studentId)}`);
     return { analysis: a };
   } catch (e) {
-    if (!(e instanceof AiError)) console.error("시험지 분석 오류", e);
+    if (!(e instanceof AiError)) await reportError("시험지 분석", e);
     return { error: e instanceof AiError ? e.message : "분석하지 못했어요. 다시 눌러 주세요." };
   }
 }

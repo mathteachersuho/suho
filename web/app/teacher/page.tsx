@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { IconChart, IconDownload, IconStar, IconUsers } from "@/components/Icons";
 import { backupAge } from "@/lib/backup";
+import { unseenErrors } from "@/lib/errorLog";
 import { listStudents } from "@/lib/students";
 import { deleteStudent, updateStudent } from "./actions";
 import { AddStudentForm, DeleteStudentButton, ResetPasswordButton } from "./StudentForms";
 
 export default async function TeacherHome() {
-  const [students, { days: backupDays }] = await Promise.all([listStudents(), backupAge()]);
+  const [students, { days: backupDays }, newErrors] = await Promise.all([listStudents(), backupAge(), unseenErrors()]);
   // 백업을 받은 지 일주일이 넘었거나 한 번도 안 받았으면 알려 준다 (학생이 있을 때만)
   const backupDue = students.length > 0 && (backupDays === null || backupDays >= 7);
   const groups = new Map<string, typeof students>();
@@ -28,6 +29,10 @@ export default async function TeacherHome() {
             <IconDownload />
             데이터 백업
           </Link>
+          <Link href="/teacher/errors" className="btn-soft px-3 py-2">
+            오류 기록
+            {newErrors > 0 && <span className="rounded-full bg-bad px-1.5 text-xs font-semibold tabular-nums text-white">{newErrors}</span>}
+          </Link>
           <dl className="flex gap-2">
           <div className="rounded-xl border border-line bg-surface px-4 py-2">
             <dt className="text-xs text-ink-faint">학생</dt>
@@ -46,6 +51,14 @@ export default async function TeacherHome() {
           <IconDownload className="h-4 w-4 shrink-0 text-accent" />
           <span className="flex-1">{backupDays === null ? "아직 백업을 받은 적이 없어요." : `마지막 백업이 ${backupDays}일 전이에요.`} 전체 백업을 받아 두세요.</span>
           <span className="font-medium text-accent">백업하기</span>
+        </Link>
+      )}
+
+      {newErrors > 0 && (
+        <Link href="/teacher/errors" className="flex items-center gap-3 rounded-2xl border border-bad/30 bg-bad-soft px-5 py-3 text-sm hover:opacity-90">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-bad text-xs font-bold text-white">!</span>
+          <span className="flex-1">확인하지 않은 오류가 {newErrors}건 있어요. 학생이 어떤 화면에서 막혔는지 확인해 보세요.</span>
+          <span className="font-medium text-bad">오류 보기</span>
         </Link>
       )}
 

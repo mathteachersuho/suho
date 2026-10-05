@@ -6,6 +6,7 @@ import { createHomework, deleteHomework, hwTags, markResults, MARKS, tagResults,
 import { renderProblemHtml } from "@/lib/mathText";
 import { getProblems } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
+import { reportError } from "@/lib/reportError";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const ids = (v: unknown, max: number) =>
@@ -35,8 +36,8 @@ export async function createHomeworkAction(input: {
     memo: s(input.memo, 300),
     studentIds: ids(input.studentIds, 300),
     problemIds: ids(input.problemIds, 60),
-  }).catch((e) => {
-    console.error("숙제 저장 오류", e);
+  }).catch(async (e) => {
+    await reportError("숙제 내기", e);
     return { ok: false as const, error: "저장하지 못했어요. 잠시 뒤 다시 해 주세요." };
   });
   if (!r.ok) return { error: r.error };
@@ -65,7 +66,7 @@ export async function markAction(
     revalidatePath(`/student/homework/${hwId}`);
     return { ok: true as const, n };
   } catch (e) {
-    console.error("채점 저장 오류", e);
+    await reportError("채점 저장", e);
     return { ok: false as const, error: "저장하지 못했어요. 잠시 뒤 다시 해 주세요." };
   }
 }

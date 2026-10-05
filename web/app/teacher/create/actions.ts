@@ -10,6 +10,8 @@ import { renderProblemHtml } from "@/lib/mathText";
 import { requireTeacher } from "@/lib/session";
 import { listTaxonomy, taxonomyId } from "@/lib/taxonomy";
 import type { SavePayload, SaveResult, Source } from "./types";
+import { reportError } from "@/lib/reportError";
+import { after } from "next/server";
 
 const MAX_IMAGE = 6_000_000; // base64 글자 수
 const MAX_TEXT = 20_000;
@@ -22,7 +24,7 @@ function cleanImage(v: unknown): string | undefined {
 }
 const cleanText = (v: unknown, max = MAX_TEXT) => (typeof v === "string" ? v.slice(0, max) : "");
 const fail = (e: unknown) => {
-  if (!(e instanceof AiError)) console.error(e);
+  if (!(e instanceof AiError)) after(() => reportError("문제 만들기", e));
   return e instanceof AiError ? e.message : "처리하지 못했어요. 다시 눌러 주세요.";
 };
 
@@ -155,7 +157,7 @@ export async function saveAction(p: SavePayload): Promise<SaveResult> {
   } catch (e) {
     // 같은 저장이 동시에 두 번 들어온 경우: 먼저 들어온 쪽이 저장했다
     if ((e as { code?: string }).code === "23505") return { ok: true, ids, duplicate: true };
-    console.error(e);
+    await reportError("문제 저장", e);
     return { ok: false, error: "저장하지 못했어요. 아무것도 저장되지 않았으니 다시 눌러 주세요." };
   }
 }

@@ -238,3 +238,21 @@ alter table login_attempts enable row level security;
 
 create index if not exists homework_students_student_idx on homework_students (student_id);
 create index if not exists homework_problems_problem_idx on homework_problems (problem_id);
+
+-- ---------------------------------------------------------------
+-- 오류 기록: 서버·학생 화면에서 난 오류를 모아 선생님 화면(/teacher/errors)에 보여 준다.
+-- source: server(화면 그리기·저장) / browser(학생·선생님 브라우저), who: 'teacher' 또는 학생 아이디
+-- ---------------------------------------------------------------
+create table if not exists error_logs (
+  id         bigint generated always as identity primary key,
+  at         timestamptz not null default now(),
+  source     text not null default '',
+  place      text not null default '',
+  message    text not null default '',
+  detail     text not null default '',
+  who        text not null default '',
+  user_agent text not null default '',
+  seen       boolean not null default false
+);
+create index if not exists error_logs_at_idx on error_logs (at desc);
+alter table error_logs enable row level security;
