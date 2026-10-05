@@ -1,6 +1,6 @@
 import "server-only";
 import { AiError, gemini, geminiJson } from "./ai/clients";
-import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, type GenKind, type Generated } from "./ai/prompts";
+import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, type EditTarget, type GenKind, type Generated } from "./ai/prompts";
 import { DIFFICULTIES } from "./difficulty";
 import type { TaxRow } from "./taxonomy";
 
@@ -26,8 +26,14 @@ export async function generateOne(kind: GenKind, text: string, detailed: boolean
 }
 
 /** 말로 적은 요청대로 문제 고치기 */
-export async function editOne(current: Generated, instruction: string, imageB64?: string): Promise<Generated> {
-  const out = parseProblem(await gemini(editPrompt(current, instruction, !!imageB64), imageB64));
+export async function editOne(current: Generated, instruction: string, imageB64?: string, target: EditTarget = "problem"): Promise<Generated> {
+  const img = target === "problem" ? imageB64 : undefined;
+  const out = parseProblem(await gemini(editPrompt(current, instruction, !!img, target), img));
+  // 풀이만 고칠 때는 AI가 문제를 건드렸더라도 원래 문제를 그대로 둔다
+  if (target === "solution") {
+    if (!out.solution.trim() && !out.answer.trim()) throw new AiError("고친 풀이가 비어 있어요. 요청을 조금 바꿔 다시 해 보세요.");
+    return { question: current.question, answer: out.answer || current.answer, solution: out.solution || current.solution };
+  }
   if (!out.question.trim()) throw new AiError("고친 문제가 비어 있어요. 요청을 조금 바꿔 다시 해 보세요.");
   return out;
 }
