@@ -16,6 +16,7 @@
   --good: #0f9f6e;
   --bad: #e5484d;
   --bad-soft: #fff0f0;
+  --warn: #d99100;
   --warn-soft: #fff8e6;
 }
 @media (prefers-color-scheme: dark) {
@@ -33,6 +34,7 @@
     --good: #34d399;
     --bad: #ff6b6f;
     --bad-soft: #2a1517;
+    --warn: #f5c04a;
     --warn-soft: #2a2312;
   }
 }
@@ -51,6 +53,7 @@
   --color-good: var(--good);
   --color-bad: var(--bad);
   --color-bad-soft: var(--bad-soft);
+  --color-warn: var(--warn);
   --color-warn-soft: var(--warn-soft);
   --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
 }

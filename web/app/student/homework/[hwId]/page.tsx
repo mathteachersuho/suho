@@ -6,6 +6,8 @@ import { getStudentHomework } from "@/lib/homework";
 import { dueLabel } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import { requireStudent } from "@/lib/session";
+import { starredIds } from "@/lib/study";
+import StarButton from "../../study/StarButton";
 import SolveForm from "./SolveForm";
 
 export const metadata: Metadata = { title: "숙제 풀기 · 수학클래스룸" };
@@ -26,6 +28,7 @@ export default async function SolveHomework({ params }: PageProps<"/student/home
   const byP = new Map(results.map((r) => [r.problemId, r]));
   const submitted = results.length > 0;
   const ok = results.filter((r) => r.correct === "Y").length;
+  const stars = submitted ? await starredIds(me.studentId) : new Set<string>();
 
   return (
     <div className="space-y-6 pb-10">
@@ -54,7 +57,10 @@ export default async function SolveHomework({ params }: PageProps<"/student/home
                 <span className="text-lg font-medium text-ink-soft"> / {problems.length}</span>
               </p>
             </div>
-            <p className="ml-auto text-sm text-ink-soft">틀린 문제는 풀이를 보고 다시 풀어 보세요.</p>
+            <p className="ml-auto text-right text-sm text-ink-soft">
+              틀린 문제는 <Link href="/student/wrong" className="underline">오답노트</Link>에 모여요.
+              <br className="hidden sm:inline" /> 다시 보고 싶은 문제는 중요 표시를 눌러 두세요.
+            </p>
           </div>
           <ol className="space-y-3">
             {problems.map((p, i) => {
@@ -65,6 +71,9 @@ export default async function SolveHomework({ params }: PageProps<"/student/home
                   <div className="mb-2 flex items-center gap-2">
                     <span className="font-semibold">{i + 1}번</span>
                     <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${m.cls}`}>{m.text}</span>
+                    <span className="ml-auto">
+                      <StarButton id={p.id} starred={stars.has(p.id)} />
+                    </span>
                   </div>
                   <div className="problem-body" dangerouslySetInnerHTML={{ __html: renderProblemHtml(p.question) }} />
                   <p className="mt-3 text-sm">

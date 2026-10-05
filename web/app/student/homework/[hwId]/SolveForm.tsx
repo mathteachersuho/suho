@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { submitAction } from "../actions";
-import AnswerInput from "./AnswerInput";
+import AnswerInput from "@/components/AnswerInput";
 
 const listeners = new Set<() => void>();
 function subscribe(fn: () => void) {
