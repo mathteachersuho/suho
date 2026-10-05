@@ -1,6 +1,6 @@
 import Link from "next/link";
 import ProblemCard from "@/components/ProblemCard";
-import { IconBook, IconSparkle } from "@/components/Icons";
+import { IconBook, IconNote, IconSparkle } from "@/components/Icons";
 import { bankOutline, PAGE_SIZE, searchProblems, type BankFilter } from "@/lib/problems";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import BankFilters from "./BankFilters";
@@ -89,6 +89,14 @@ export default async function BankPage({ searchParams }: { searchParams: SP }) {
               no={(page - 1) * PAGE_SIZE + i + 1}
               action={
                 <div className="flex shrink-0 gap-1.5">
+                  <Link
+                    href={`/teacher/bank/${encodeURIComponent(p.id)}?back=${encodeURIComponent(pageHref(page))}`}
+                    className="btn shrink-0 border border-line bg-surface px-2.5 py-1.5 text-ink-soft hover:bg-surface-2 hover:text-ink"
+                    aria-label={`${(page - 1) * PAGE_SIZE + i + 1}번 문제 고치기`}
+                  >
+                    <IconNote />
+                    <span className="sr-only sm:not-sr-only">고치기</span>
+                  </Link>
                   <DeleteProblem id={p.id} no={(page - 1) * PAGE_SIZE + i + 1} />
                   <CartToggle id={p.id} />
                 </div>

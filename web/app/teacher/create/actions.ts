@@ -8,7 +8,7 @@ import { db } from "@/lib/db";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import { renderProblemHtml } from "@/lib/mathText";
 import { requireTeacher } from "@/lib/session";
-import { listTaxonomy } from "@/lib/taxonomy";
+import { listTaxonomy, taxonomyId } from "@/lib/taxonomy";
 import type { SavePayload, SaveResult, Source } from "./types";
 
 const MAX_IMAGE = 6_000_000; // base64 글자 수
@@ -126,15 +126,7 @@ export async function saveAction(p: SavePayload): Promise<SaveResult> {
       for (const r of rows) {
         const key = [r.grade, r.unit, r.type, r.frame].join("\u0000");
         if (taxIds.has(key)) continue;
-        const [t] = await sql`
-          with ins as (
-            insert into taxonomy (grade, unit, type, frame, description)
-            values (${r.grade}, ${r.unit}, ${r.type}, ${r.frame}, ${r.description})
-            on conflict (grade, unit, type, frame) do nothing returning id)
-          select id from ins union all
-          select id from taxonomy where grade = ${r.grade} and unit = ${r.unit} and type = ${r.type} and frame = ${r.frame}
-          limit 1`;
-        taxIds.set(key, Number(t.id));
+        taxIds.set(key, await taxonomyId(sql, r));
       }
       const first = rows[0];
       await sql`

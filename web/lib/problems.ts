@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "./db";
+import { taxonomyId, type TaxRow } from "./taxonomy";
 
 export type Problem = {
   id: string;
@@ -104,4 +105,38 @@ export async function problemUsage(id: string): Promise<ProblemUsage | null> {
 export async function deleteProblem(id: string) {
   const rows = await db()`delete from problems where id = ${id} returning id`;
   return rows.length > 0;
+}
+
+export type ProblemEdit = {
+  question: string;
+  answer: string;
+  solution: string;
+  difficulty: string;
+  verified: boolean;
+  cls: TaxRow;
+};
+
+/** 고치기 화면용: 문제 하나 + 문제틀 설명 */
+export async function getProblemForEdit(id: string) {
+  const [r] = await db()`
+    select p.*, coalesce(t.description, '') as description,
+      (select count(*) from homework_problems hp where hp.problem_id = p.id)::int as homework
+    from problems p left join taxonomy t on t.id = p.taxonomy_id
+    where p.id = ${id}`;
+  if (!r) return null;
+  return { ...toProblem(r), description: r.description as string, homework: r.homework as number };
+}
+
+/** 저장된 문제를 고친다. 분류가 유형표에 없으면 새로 넣는다. 숙제 기록은 그대로 둔다. */
+export async function updateProblem(id: string, e: ProblemEdit) {
+  return db().begin(async (sql) => {
+    const taxId = await taxonomyId(sql, e.cls);
+    const rows = await sql`
+      update problems set
+        question = ${e.question}, answer = ${e.answer}, solution = ${e.solution},
+        difficulty = ${e.difficulty}, verified = ${e.verified}, taxonomy_id = ${taxId},
+        grade = ${e.cls.grade}, unit = ${e.cls.unit}, type = ${e.cls.type}, frame = ${e.cls.frame}
+      where id = ${id} returning id`;
+    return rows.length > 0;
+  });
 }
