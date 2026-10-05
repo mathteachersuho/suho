@@ -14,7 +14,7 @@ export default async function StudentLayout({ children }: LayoutProps<"/student"
         who={me.name || me.studentId}
         items={[
           { label: "홈", icon: <IconHome />, href: "/student" },
-          { label: "숙제", icon: <IconClipboard /> },
+          { label: "숙제", icon: <IconClipboard />, href: "/student/homework" },
           { label: "오답노트", icon: <IconNote /> },
           { label: "중요 문제", icon: <IconStar /> },
         ]}
