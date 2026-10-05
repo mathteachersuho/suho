@@ -2,7 +2,7 @@ import "server-only";
 import { AiError, gemini, geminiJson } from "./ai/clients";
 import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, type EditTarget, type GenKind, type Generated, type Variation } from "./ai/prompts";
 import { DIFFICULTIES } from "./difficulty";
-import { figuresToBlocks, renderFigureBlocks } from "./figure";
+import { figuresToBlocks, renderFigureBlocks, shadeBehind } from "./figure";
 import { brief, fingerprint, sameProblem, type Fingerprint } from "./similar";
 import { sameTypeProblems } from "./problems";
 import { reportError } from "./reportError";
@@ -23,8 +23,12 @@ export type Suggestion = {
 
 export type CardResult = { ok: true; data: Generated } | { ok: false; error: string };
 
-/** AI가 쓴 <좌표그림> 블록을 정확한 SVG로 바꾼다 */
-const drawFigures = (g: Generated): Generated => ({ question: renderFigureBlocks(g.question), answer: g.answer, solution: renderFigureBlocks(g.solution) });
+/** AI가 쓴 <좌표그림> 블록을 정확한 SVG로 바꾸고, 직접 그린 SVG의 색칠은 맨 뒤로 */
+const drawFigures = (g: Generated): Generated => ({
+  question: shadeBehind(renderFigureBlocks(g.question)),
+  answer: g.answer,
+  solution: shadeBehind(renderFigureBlocks(g.solution)),
+});
 
 export async function generateOne(kind: GenKind, text: string, detailed: boolean, imageB64?: string, v: Variation = {}): Promise<Generated> {
   const out = drawFigures(parseProblem(await gemini(problemPrompt(kind, text, detailed, v), kind === 0 ? imageB64 : undefined)));
