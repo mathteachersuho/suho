@@ -204,3 +204,22 @@ create index if not exists problems_search_idx
 -- 웹앱 1단계에서 추가: 학생 이름(또는 별명). 예전 앱은 이 칸을 쓰지 않으므로 영향이 없다.
 -- ---------------------------------------------------------------
 alter table students add column if not exists name text not null default '';
+
+-- ---------------------------------------------------------------
+-- 웹앱에서 추가: 저장한 학부모 리포트 (학생·기간마다 하나).
+-- share_token 이 있으면 /r/<token> 주소로 로그인 없이 그 리포트만 볼 수 있다. 끄면 null.
+-- ---------------------------------------------------------------
+create table if not exists reports (
+  id          text primary key,
+  student_id  text not null references students (student_id) on update cascade on delete cascade,
+  from_date   date not null,
+  to_date     date not null,
+  analysis    text not null default '',
+  comment     text not null default '',
+  share_token text unique,
+  shared_at   timestamptz,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  unique (student_id, from_date, to_date)
+);
+alter table reports enable row level security;

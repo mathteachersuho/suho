@@ -6,6 +6,7 @@ import { examPrompt } from "@/lib/ai/examPrompt";
 import { reportPrompt } from "@/lib/ai/reportPrompt";
 import { todaySeoul } from "@/lib/hwFormat";
 import { addExam, buildReport, deleteExam, EXAM_KINDS, getExam, parseAnalysis, setExamAnalysis, type ExamAnalysis } from "@/lib/report";
+import { getSavedReport, saveReport, setReportShare } from "@/lib/savedReports";
 import { requireTeacher } from "@/lib/session";
 import { getStudent } from "@/lib/students";
 import { typeStats } from "@/lib/study";
@@ -105,4 +106,35 @@ export async function analyzeExamAction(
     if (!(e instanceof AiError)) console.error("시험지 분석 오류", e);
     return { error: e instanceof AiError ? e.message : "분석하지 못했어요. 다시 눌러 주세요." };
   }
+}
+
+export type SavedState = { id?: string; updatedAt?: string; token?: string | null; error?: string };
+
+async function checkPeriod(studentId: string, from: string, to: string) {
+  if (!DAY.test(from) || !DAY.test(to) || isNaN(Date.parse(from)) || isNaN(Date.parse(to)) || from > to) return "기간이 올바르지 않아요.";
+  if (!(await getStudent(studentId))) return "학생을 찾지 못했어요.";
+  return "";
+}
+
+/** 문제 분석 · 종합 의견을 서버에 저장한다 (학생·기간마다 하나). */
+export async function saveReportAction(studentId: string, from: string, to: string, analysis: string, comment: string): Promise<SavedState> {
+  await requireTeacher();
+  const bad = await checkPeriod(studentId, from, to);
+  if (bad) return { error: bad };
+  const r = await saveReport(studentId, from, to, String(analysis ?? ""), String(comment ?? ""));
+  revalidatePath(`/teacher/report/${encodeURIComponent(studentId)}`);
+  return { id: r.id, updatedAt: r.updatedAt, token: r.shareToken };
+}
+
+/** 학부모 링크 켜기(지금 글을 저장하고 새 링크) · 끄기(예전 링크는 바로 막힌다). */
+export async function shareReportAction(studentId: string, from: string, to: string, on: boolean, analysis = "", comment = ""): Promise<SavedState> {
+  await requireTeacher();
+  const bad = await checkPeriod(studentId, from, to);
+  if (bad) return { error: bad };
+  const r = on ? await saveReport(studentId, from, to, String(analysis ?? ""), String(comment ?? "")) : await getSavedReport(studentId, from, to);
+  if (!r) return { error: "저장한 리포트가 없어요." };
+  const token = await setReportShare(studentId, r.id, on);
+  if (token === undefined) return { error: "리포트를 찾지 못했어요." };
+  revalidatePath(`/teacher/report/${encodeURIComponent(studentId)}`);
+  return { id: r.id, updatedAt: r.updatedAt, token };
 }
