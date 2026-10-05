@@ -243,8 +243,16 @@ def storage_backend():
 
 
 @st.cache_resource(show_spinner=False)
-def _db_connect(url):
+def _db_connect_cached(url, _stamp):
+    # dbconn.py가 바뀌면(_stamp가 달라지면) 모듈을 다시 읽고 연결 객체를 새로 만든다.
+    # 이렇게 하지 않으면 코드를 새로 올린 뒤에도 예전 코드의 연결 객체가 남아 AttributeError가 난다.
+    import importlib
+    importlib.reload(dbconn)
     return dbconn.Db(url)
+
+
+def _db_connect(url):
+    return _db_connect_cached(url, os.path.getmtime(dbconn.__file__))
 
 
 def _db_url():
