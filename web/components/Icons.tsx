@@ -38,3 +38,5 @@ export const IconLink = ({ className }: P) =>
   base(<><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1" /><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1" /></>, className);
 export const IconSave = ({ className }: P) =>
   base(<><path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2Z" /><path d="M8 3v5h7V3M8 21v-7h8v7" /></>, className);
+export const IconDownload = ({ className }: P) =>
+  base(<><path d="M12 4v11M7 10.5l5 5 5-5M4 20h16" /></>, className);

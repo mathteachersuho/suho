@@ -1,11 +1,14 @@
 import Link from "next/link";
-import { IconChart, IconUsers } from "@/components/Icons";
+import { IconChart, IconDownload, IconUsers } from "@/components/Icons";
+import { backupAge } from "@/lib/backup";
 import { listStudents } from "@/lib/students";
 import { deleteStudent, updateStudent } from "./actions";
 import { AddStudentForm, DeleteStudentButton, ResetPasswordButton } from "./StudentForms";
 
 export default async function TeacherHome() {
-  const students = await listStudents();
+  const [students, { days: backupDays }] = await Promise.all([listStudents(), backupAge()]);
+  // 백업을 받은 지 일주일이 넘었거나 한 번도 안 받았으면 알려 준다 (학생이 있을 때만)
+  const backupDue = students.length > 0 && (backupDays === null || backupDays >= 7);
   const groups = new Map<string, typeof students>();
   for (const s of students) {
     const key = s.classId || "";
@@ -20,7 +23,12 @@ export default async function TeacherHome() {
           <p className="eyebrow">Students</p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">학생 관리</h1>
         </div>
-        <dl className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/teacher/backup" className="btn-soft px-3 py-2">
+            <IconDownload />
+            데이터 백업
+          </Link>
+          <dl className="flex gap-2">
           <div className="rounded-xl border border-line bg-surface px-4 py-2">
             <dt className="text-xs text-ink-faint">학생</dt>
             <dd className="text-lg font-semibold tabular-nums">{students.length}</dd>
@@ -29,8 +37,17 @@ export default async function TeacherHome() {
             <dt className="text-xs text-ink-faint">반</dt>
             <dd className="text-lg font-semibold tabular-nums">{classes.length}</dd>
           </div>
-        </dl>
+          </dl>
+        </div>
       </div>
+
+      {backupDue && (
+        <Link href="/teacher/backup" className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-5 py-3 text-sm hover:bg-surface-2">
+          <IconDownload className="h-4 w-4 shrink-0 text-accent" />
+          <span className="flex-1">{backupDays === null ? "아직 백업을 받은 적이 없어요." : `마지막 백업이 ${backupDays}일 전이에요.`} 전체 백업을 받아 두세요.</span>
+          <span className="font-medium text-accent">백업하기</span>
+        </Link>
+      )}
 
       <AddStudentForm classes={classes} />
 
