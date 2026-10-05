@@ -223,3 +223,18 @@ create table if not exists reports (
   unique (student_id, from_date, to_date)
 );
 alter table reports enable row level security;
+
+-- ---------------------------------------------------------------
+-- 로그인 막기(비밀번호를 계속 넣어 보는 것 방지)와 학생별 숙제 찾기 속도
+-- key: 's:<학생 아이디>', 'ip:<주소>', 't:<주소>'(선생님)
+-- ---------------------------------------------------------------
+create table if not exists login_attempts (
+  key          text primary key,
+  fails        integer not null default 0,
+  last_at      timestamptz not null default now(),
+  locked_until timestamptz
+);
+alter table login_attempts enable row level security;
+
+create index if not exists homework_students_student_idx on homework_students (student_id);
+create index if not exists homework_problems_problem_idx on homework_problems (problem_id);

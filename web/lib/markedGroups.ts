@@ -16,6 +16,10 @@ export function parseMarkFilter(sp: Record<string, string | string[] | undefined
   return MARK_KINDS.map((k) => k.key).filter((k) => raw.includes(k));
 }
 
+/** ?u=중2-1|일차함수 → 펼친 단원 줄 */
+export const parseMarkOpen = (sp: Record<string, string | string[] | undefined>) => (typeof sp.u === "string" ? sp.u.slice(0, 120) : "");
+export const unitKey = (term: string, unit: string) => `${term}|${unit}`;
+
 /** 고른 표시 중 하나라도 있는 문제 (아무것도 안 골랐으면 전부) */
 export const matchMarks = <T extends Item>(items: T[], f: MarkKind[]) => (f.length ? items.filter((x) => f.some((k) => x[k])) : items);
 

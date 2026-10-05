@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { IconCheck } from "@/components/Icons";
 import { Row } from "@/components/WrongSections";
-import { groupByUnit, MARK_KINDS, matchMarks, type MarkKind } from "@/lib/markedGroups";
+import { groupByUnit, MARK_KINDS, matchMarks, unitKey, type MarkKind } from "@/lib/markedGroups";
 
 type Item = { id: string; grade: string; semester: string; unit: string; mine: boolean; teacher: boolean; hard: boolean };
 
@@ -9,11 +9,12 @@ const ANCHOR = "marked-list";
 
 /**
  * 중요 문제 목록. 위에서 표시 종류(선생님 중요 · 내가 중요 · 어려움)를 체크하면 그 문제만 남고,
- * 아래에 학년-학기 · 단원별 줄이 나와 누르면 문제가 펼쳐진다. keep 은 주소에 함께 남길 다른 값(예: 오답 보기).
+ * 아래에 학년-학기 · 단원별 줄이 나와 누르면 문제가 펼쳐진다(open = 펼친 단원, 주소의 u). keep 은 주소에 함께 남길 다른 값(예: 오답 보기).
  */
 export default function MarkedSections<T extends Item>({
   items,
   f,
+  open = "",
   baseHref,
   keep = {},
   mineLabel = "내가 중요",
@@ -21,14 +22,16 @@ export default function MarkedSections<T extends Item>({
 }: {
   items: T[];
   f: MarkKind[];
+  open?: string;
   baseHref: string;
   keep?: Record<string, string>;
   mineLabel?: string;
   card: (item: T, no: number) => React.ReactNode;
 }) {
-  const href = (next: MarkKind[]) => {
+  const href = (next: MarkKind[], u = open) => {
     const p = new URLSearchParams(keep);
     if (next.length) p.set("f", next.join(","));
+    if (u) p.set("u", u);
     const q = p.toString();
     return `${baseHref}${q ? `?${q}` : ""}#${ANCHOR}`;
   };
@@ -69,11 +72,15 @@ export default function MarkedSections<T extends Item>({
               <span className="text-ink">{g.term}</span>
               <span className="font-normal text-ink-faint">{g.units.reduce((a, u) => a + u.list.length, 0)}문제</span>
             </h3>
-            {g.units.map((u) => (
-              <Row key={u.unit} title={u.unit} count={u.list.length} tone="neutral">
-                <ol className="space-y-3">{u.list.map((it, i) => card(it, i + 1))}</ol>
-              </Row>
-            ))}
+            {g.units.map((u) => {
+              const key = unitKey(g.term, u.unit);
+              const on = open === key;
+              return (
+                <Row key={u.unit} title={u.unit} count={u.list.length} tone="neutral" open={on} href={href(f, on ? "" : key)}>
+                  {on && <ol className="space-y-3">{u.list.map((it, i) => card(it, i + 1))}</ol>}
+                </Row>
+              );
+            })}
           </section>
         ))
       )}

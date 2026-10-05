@@ -7,7 +7,7 @@ import WrongSections from "@/components/WrongSections";
 import { dayLabel, TAG_STYLE } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import { getStudent } from "@/lib/students";
-import { parseMarkFilter } from "@/lib/markedGroups";
+import { parseMarkFilter, parseMarkOpen } from "@/lib/markedGroups";
 import { homeworkProgress, markedProblems, typeStats, wrongNotes, type MarkedItem, type WrongItem } from "@/lib/study";
 import { parseWrongQuery } from "@/lib/wrongGroups";
 
@@ -21,8 +21,9 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
   const q = parseWrongQuery(sp);
   const f = parseMarkFilter(sp);
   // 두 목록이 서로의 고른 값을 지우지 않게 주소에 함께 남긴다
-  const keepWrong: Record<string, string> = { view: q.view, ...(q.term && { term: q.term }), ...(q.unit && { unit: q.unit }) };
-  const keepMarks: Record<string, string> = f.length ? { f: f.join(",") } : {};
+  const keepWrong: Record<string, string> = { view: q.view, ...(q.term && { term: q.term }), ...(q.unit && { unit: q.unit }), ...(q.day && { day: q.day }) };
+  const openUnit = parseMarkOpen(sp);
+  const keepMarks: Record<string, string> = { ...(f.length ? { f: f.join(",") } : {}), ...(openUnit && { u: openUnit }) };
   const s = await getStudent(id);
   if (!s) notFound();
   const [stats, wrong, hw, marked] = await Promise.all([typeStats(id), wrongNotes(id, false), homeworkProgress(id), markedProblems(id)]);
@@ -139,6 +140,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
           <MarkedSections
             items={marked}
             f={f}
+            open={openUnit}
             baseHref={`/teacher/students/${encodeURIComponent(id)}`}
             keep={keepWrong}
             mineLabel="학생이 중요"

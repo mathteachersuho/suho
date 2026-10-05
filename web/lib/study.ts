@@ -51,6 +51,12 @@ const received = (studentId: string) => db()`
   select hp.problem_id from homework_problems hp
   join homework_students hs on hs.hw_id = hp.hw_id and hs.student_id = ${studentId}`;
 
+/** 받았지만 아직 내지 않은 숙제의 문제 id들 (하위 질의) — 내기 전에는 정답을 보여 주면 안 된다 */
+const notSubmitted = (studentId: string) => db()`
+  select hp.problem_id from homework_problems hp
+  join homework_students hs on hs.hw_id = hp.hw_id and hs.student_id = ${studentId}
+  where not exists (select 1 from hw_results r where r.hw_id = hs.hw_id and r.student_id = hs.student_id)`;
+
 /**
  * 오답노트: 숙제에서 틀린(N) 문제와 선생님이 '어려워함'으로 표시한 문제, 최근 순. 같은 문제가 여러 번이면 가장 최근 것 하나만.
  * 문제마다 비슷한 문제(같은 묶음 → 같은 문제틀 순서, 아직 받지 않은 것) 2개까지 붙인다.
@@ -121,7 +127,8 @@ export type MarkedItem = StudyProblem & {
 export async function markedProblems(studentId: string): Promise<MarkedItem[]> {
   const rows = await db()`
     with marks as (
-      select problem_id, created_at as at, true as mine, false as teacher, false as hard from stars where student_id = ${studentId}
+      select problem_id, created_at as at, true as mine, false as teacher, false as hard from stars
+      where student_id = ${studentId} and problem_id not in (${notSubmitted(studentId)}) -- 숙제로 다시 받아 아직 안 낸 문제는 잠시 숨김
       union all
       select problem_id, updated_at, false, '중요' = any(tags), '어려워함' = any(tags) from hw_results
       where student_id = ${studentId} and tags && array['중요', '어려워함']
@@ -146,17 +153,20 @@ export async function starredIds(studentId: string): Promise<Set<string>> {
 
 /** 학생이 볼 수 있는 문제인가: 숙제로 받은 문제이거나, 받은 문제와 같은 묶음·같은 문제틀인 문제 */
 export async function canSee(studentId: string, problemId: string) {
+  // 낸 숙제의 문제, 또는 그 문제와 같은 묶음·문제틀인 비슷한 문제. 아직 내지 않은 숙제의 문제는 빼고.
   const [r] = await db()`
     select exists(
       select 1 from problems q
-      where q.id = ${problemId} and (
-        q.id in (${received(studentId)})
-        or exists (
-          select 1 from problems w
-          where w.id in (${received(studentId)})
-            and ((w.set_id is not null and q.set_id = w.set_id) or (w.frame <> '' and q.type = w.type and q.frame = w.frame))
+      where q.id = ${problemId}
+        and q.id not in (${notSubmitted(studentId)})
+        and (
+          q.id in (${received(studentId)})
+          or exists (
+            select 1 from problems w
+            where w.id in (${received(studentId)})
+              and ((w.set_id is not null and q.set_id = w.set_id) or (w.frame <> '' and q.type = w.type and q.frame = w.frame))
+          )
         )
-      )
     ) as ok`;
   return !!r?.ok;
 }

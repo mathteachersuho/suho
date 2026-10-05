@@ -3,13 +3,14 @@
 type Item = { id: string; grade: string; semester: string; unit: string; type: string; day: string; hwId: string; hwTitle: string };
 
 export type WrongView = "date" | "type";
-export type WrongQuery = { view: WrongView; term: string; unit: string };
+export type WrongQuery = { view: WrongView; term: string; unit: string; day: string }; // day: 날짜별에서 펼친 날
 
 const str = (v: unknown) => (typeof v === "string" ? v.slice(0, 80) : "");
 export const parseWrongQuery = (sp: Record<string, string | string[] | undefined>): WrongQuery => ({
   view: sp.view === "type" ? "type" : "date",
   term: str(sp.term),
   unit: str(sp.unit),
+  day: typeof sp.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.day) ? sp.day : "",
 });
 
 function groupBy<T>(xs: T[], key: (x: T) => string) {

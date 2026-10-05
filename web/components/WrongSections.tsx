@@ -46,28 +46,71 @@ export default function WrongSections<T extends Item>({
           </Link>
         ))}
       </div>
-      {q.view === "date" ? <ByDate items={items} card={card} /> : <ByType items={items} q={q} href={href} card={card} />}
+      {q.view === "date" ? <ByDate items={items} q={q} href={href} card={card} /> : <ByType items={items} q={q} href={href} card={card} />}
     </div>
   );
 }
 
-export function Row({ title, count, sub, tone = "bad", children }: { title: string; count: number; sub?: string; tone?: "bad" | "neutral"; children: React.ReactNode }) {
+/**
+ * 누르면 펼쳐지는 줄. href 를 주면 주소로 열고 닫는다 (열린 줄의 문제만 그려서 오답이 많아도 화면이 가볍다).
+ * href 가 없으면 브라우저 안에서만 펼친다.
+ */
+export function Row({
+  title,
+  count,
+  sub,
+  tone = "bad",
+  href,
+  open = false,
+  children,
+}: {
+  title: string;
+  count: number;
+  sub?: string;
+  tone?: "bad" | "neutral";
+  href?: string; // 누르면 갈 주소 (열려 있으면 닫는 주소)
+  open?: boolean;
+  children: React.ReactNode;
+}) {
+  const head = (
+    <>
+      <span className="min-w-0 flex-1">
+        <span className="block font-semibold">{title}</span>
+        {sub && <span className="block truncate text-xs text-ink-faint">{sub}</span>}
+      </span>
+      <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-sm font-semibold tabular-nums ${tone === "bad" ? "bg-bad-soft text-bad" : "bg-surface-2 text-ink-soft"}`}>{count}</span>
+      <IconDown className={`h-4 w-4 shrink-0 text-ink-faint transition-transform ${open ? "rotate-180" : "group-open:rotate-180"}`} />
+    </>
+  );
+  const headCls = "flex cursor-pointer list-none items-center gap-3 rounded-2xl px-4 py-3.5 hover:bg-surface-2";
+  if (href)
+    return (
+      <div className={open ? "" : "rounded-2xl border border-line bg-surface"}>
+        <Link href={href} scroll={false} aria-expanded={open} className={`${headCls} ${open ? "border border-line bg-surface" : ""}`}>
+          {head}
+        </Link>
+        {open && <div className="space-y-4 pt-3">{children}</div>}
+      </div>
+    );
   return (
     <details className="group rounded-2xl border border-line bg-surface open:bg-transparent open:border-transparent">
-      <summary className="flex cursor-pointer list-none items-center gap-3 rounded-2xl px-4 py-3.5 hover:bg-surface-2 group-open:border group-open:border-line group-open:bg-surface [&::-webkit-details-marker]:hidden">
-        <span className="min-w-0 flex-1">
-          <span className="block font-semibold">{title}</span>
-          {sub && <span className="block truncate text-xs text-ink-faint">{sub}</span>}
-        </span>
-        <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-sm font-semibold tabular-nums ${tone === "bad" ? "bg-bad-soft text-bad" : "bg-surface-2 text-ink-soft"}`}>{count}</span>
-        <IconDown className="h-4 w-4 shrink-0 text-ink-faint transition-transform group-open:rotate-180" />
-      </summary>
+      <summary className={`${headCls} group-open:border group-open:border-line group-open:bg-surface [&::-webkit-details-marker]:hidden`}>{head}</summary>
       <div className="space-y-4 pt-3">{children}</div>
     </details>
   );
 }
 
-function ByDate<T extends Item>({ items, card }: { items: T[]; card: (item: T, no: number) => React.ReactNode }) {
+function ByDate<T extends Item>({
+  items,
+  q,
+  href,
+  card,
+}: {
+  items: T[];
+  q: WrongQuery;
+  href: (p: Record<string, string>) => string;
+  card: (item: T, no: number) => React.ReactNode;
+}) {
   const days = groupByDate(items);
   return (
     <div className="space-y-2">
@@ -75,8 +118,16 @@ function ByDate<T extends Item>({ items, card }: { items: T[]; card: (item: T, n
       {days.map((d) => {
         let no = 0;
         return (
-          <Row key={d.key} title={dayLabel(d.key)} count={d.list.length} sub={d.subs.map((s) => s.title).join(" · ")}>
-            {d.subs.map((s) => (
+          <Row
+            key={d.key}
+            title={dayLabel(d.key)}
+            count={d.list.length}
+            sub={d.subs.map((s) => s.title).join(" · ")}
+            open={q.day === d.key}
+            href={href(q.day === d.key ? { view: "date" } : { view: "date", day: d.key })}
+          >
+            {q.day === d.key &&
+              d.subs.map((s) => (
               <div key={s.key} className="space-y-2">
                 {d.subs.length > 1 && (
                   <h3 className="flex items-baseline gap-2 px-1 text-sm font-semibold text-ink-soft">

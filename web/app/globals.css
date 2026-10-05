@@ -101,8 +101,9 @@ body {
 @utility btn-danger {
   @apply btn border border-line bg-surface text-bad hover:bg-bad-soft;
 }
+/* 휴대폰에서는 16px: 그보다 작으면 아이폰이 입력할 때 화면을 확대한다 */
 @utility field {
-  @apply w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[15px] text-ink outline-none transition placeholder:text-ink-faint focus:border-accent focus:ring-4 focus:ring-accent/15;
+  @apply w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 text-base text-ink sm:text-[15px] outline-none transition placeholder:text-ink-faint focus:border-accent focus:ring-4 focus:ring-accent/15;
 }
 @utility card {
   @apply rounded-2xl border border-line bg-surface p-5 sm:p-6;
