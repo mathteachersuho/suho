@@ -64,7 +64,8 @@ const TYPE_INSTRUCTION: Record<GenKind, string> = {
 const KIND_NAME: Record<GenKind, string> = { 0: "원본 문제 다시 쓰기", 1: "1번 기본 다지기 문제", 2: "2번 실력 키우기 문제" };
 
 /** 같은 종류를 여러 개 만들 때: 몇 번째인지, 이미 만든 문제(겹치면 안 되는 것) */
-export type Variation = { index?: number; total?: number; avoid?: string[] };
+/** bank = 문제 은행에 이미 있는 같은 유형 문제 (겹치지 않게) */
+export type Variation = { index?: number; total?: number; avoid?: string[]; bank?: string[] };
 
 /** 여러 문제를 만들 때 번호마다 바꾸는 방향 (같은 문제가 덜 나오게) */
 const VARY = [
@@ -86,8 +87,12 @@ function variationText(kind: GenKind, v: Variation) {
       `- 이 문제는 같은 종류 ${v.total}문제 중 ${v.index}번째다. 다른 번호 문제와 숫자·조건·상황이 겹치지 않게, ${v.index}번째에 맞는 서로 다른 값과 접근을 골라라.`,
       `- 원본과 똑같은 문제나 원본 숫자를 그대로 쓴 문제는 안 된다. 이번 문제는 이렇게 바꿔라: ${VARY[((v.index ?? 1) - 1) % VARY.length]}`,
     );
+  if (v.bank?.length)
+    lines.push(
+      `- 아래는 문제 은행에 이미 있는 같은 유형 문제다. 이것들과 숫자·조건·답이 같은 문제를 만들지 마라. 상황이나 말만 바꾸고 숫자와 답이 같으면 같은 문제다.\n${v.bank.map((q, i) => `(은행 ${i + 1}) ${q}`).join("\n")}`,
+    );
   if (v.avoid?.length)
-    lines.push(`- 아래 문제들은 이미 만들었다. 이것들과 숫자·조건이 같거나 거의 같은 문제를 만들지 마라.\n${v.avoid.map((q, i) => `(${i + 1}) ${q}`).join("\n")}`);
+    lines.push(`- 아래 문제들은 이미 만들었다. 이것들과 숫자·조건이 같거나 거의 같은 문제를 만들지 마라. 상황이나 말만 바꾸고 숫자와 답이 같으면 같은 문제다.\n${v.avoid.map((q, i) => `(${i + 1}) ${q}`).join("\n")}`);
   return lines.length ? `\n[여러 문제 만들기]\n${lines.join("\n")}\n` : "";
 }
 

@@ -128,6 +128,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
   const [error, setError] = useState("");
   const [cards, setCards] = useState<Card[] | null>(null);
   const [rebuilt, setRebuilt] = useState(true);
+  const [bankChecked, setBankChecked] = useState(0);
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [cls, setCls] = useState<Classification>(EMPTY_CLS);
   const [semester, setSemester] = useState("");
@@ -177,7 +178,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
         setError(r.error ?? "");
         return;
       }
-      const { original, originalRebuilt, basic, advanced, suggestion: sug } = r.result;
+      const { original, originalRebuilt, basic, advanced, suggestion: sug, bankChecked: checked } = r.result;
       const diff = sug?.difficulty || "중";
       const up = DIFFICULTIES[Math.min(DIFFICULTIES.indexOf(diff as (typeof DIFFICULTIES)[number]) + 1, 2)];
       const base = { include: true, verified: false, editing: false, busy: false };
@@ -189,6 +190,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
         ...advanced.map((c, i) => ({ ...base, key: `a${i}`, source: "AI 실력" as const, label: `실력 키우기${num(advanced, i)}`, ...fromCard(c), difficulty: up, include: c.ok })),
       ]);
       setRebuilt(originalRebuilt);
+      setBankChecked(checked);
       setSuggestion(sug);
       const next = sug ? { grade: sug.grade, unit: sug.unit, type: sug.type, frame: sug.frame, description: sug.description } : EMPTY_CLS;
       setCls(next);
@@ -369,6 +371,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
                   <p className="text-xs text-ink-faint">
                     AI 제안: {[suggestion.grade, suggestion.unit, suggestion.type, suggestion.frame].join(" › ")}
                     {suggestion.isNewFrame ? " (새 문제틀)" : " (기존 문제틀)"}
+                    {bankChecked > 0 && ` · 은행의 같은 유형 ${bankChecked}문제와 겹치지 않게 만들었어요`}
                   </p>
                 ) : (
                   <p className="text-xs text-bad">AI가 분류하지 못했어요. 직접 적어 주세요.</p>
