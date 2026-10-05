@@ -38,19 +38,20 @@ const KIND: Record<Source, 0 | 1 | 2> = { 원본: 0, "AI 기본": 1, "AI 실력"
 const EMPTY_CLS: Classification = { grade: "", unit: "", type: "", frame: "", description: "" };
 const SEMESTERS = ["1학기", "2학기", "공통"];
 
-// 만들 유사문제 수 (종류마다 0~5). 이 컴퓨터에 기억해 두고 다음에도 쓴다.
-const MAX_PER_KIND = 5;
-const COUNT_KEY = "create-counts";
+// 만들 유사문제 수 (종류마다 0~10, 처음에는 기본 7개·실력 3개). 이 컴퓨터에 기억해 두고 다음에도 쓴다.
+const MAX_PER_KIND = 10;
+const COUNT_KEY = "create-counts-v2"; // 기본값을 7·3으로 바꾸면서 새 이름 (예전 1·1 기억은 쓰지 않는다)
 type Counts = { basic: number; advanced: number };
-const DEFAULT_COUNTS = '{"basic":1,"advanced":1}';
+const DEFAULT = { basic: 7, advanced: 3 };
+const DEFAULT_COUNTS = JSON.stringify(DEFAULT);
 const countListeners = new Set<() => void>();
 function readCounts(raw: string): Counts {
   try {
     const v = JSON.parse(raw);
-    const n = (x: unknown) => (Number.isInteger(x) ? Math.min(Math.max(x as number, 0), MAX_PER_KIND) : 1);
-    return { basic: n(v.basic), advanced: n(v.advanced) };
+    const n = (x: unknown, d: number) => (Number.isInteger(x) ? Math.min(Math.max(x as number, 0), MAX_PER_KIND) : d);
+    return { basic: n(v.basic, DEFAULT.basic), advanced: n(v.advanced, DEFAULT.advanced) };
   } catch {
-    return { basic: 1, advanced: 1 };
+    return DEFAULT;
   }
 }
 function useCounts(): [Counts, (c: Counts) => void] {
@@ -343,7 +344,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
             <button type="button" className="btn-main ml-auto" disabled={!text.trim() || genPending} onClick={generate}>
               {genPending ? (
                 <>
-                  <Spinner /> 만드는 중… (보통 10~30초{counts.basic + counts.advanced > 4 ? ", 문제가 많으면 더 걸려요" : ""})
+                  <Spinner /> 만드는 중… (보통 20~60초{counts.basic + counts.advanced > 4 ? ", 같은 문제가 있으면 다시 만들어서 더 걸릴 수 있어요" : ""})
                 </>
               ) : (
                 <>

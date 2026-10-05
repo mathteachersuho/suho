@@ -3,6 +3,7 @@ import { AiError, gemini, geminiJson } from "./ai/clients";
 import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, type EditTarget, type GenKind, type Generated, type Variation } from "./ai/prompts";
 import { DIFFICULTIES } from "./difficulty";
 import { figuresToBlocks, renderFigureBlocks } from "./figure";
+import { brief, fingerprint, sameProblem, type Fingerprint } from "./similar";
 import type { TaxRow } from "./taxonomy";
 
 export const SEMESTERS = ["1학기", "2학기", "공통"] as const;
@@ -73,11 +74,17 @@ export async function classify(text: string, taxonomy: TaxRow[]): Promise<Sugges
 const msg = (e: unknown) => (e instanceof AiError ? e.message : "만들지 못했어요. 다시 눌러 주세요.");
 
 /** 한 번에 만들 수 있는 유사문제 수 (종류마다) */
-export const MAX_PER_KIND = 5;
+export const MAX_PER_KIND = 10;
 export type Counts = { basic: number; advanced: number };
 
-/** 원본 다시 쓰기, 기본 다지기 n개, 실력 키우기 m개, 분류를 한꺼번에 (동시에) 만든다. 하나가 실패해도 나머지는 돌려준다. */
-export async function generateAll(text: string, detailed: boolean, imageB64: string | undefined, taxonomy: TaxRow[], counts: Counts = { basic: 1, advanced: 1 }) {
+/** 같은 문제 확인 뒤 다시 만들기는 이 시간 안에서만 (화면 기다림 상한 120초) */
+const REDO_BEFORE_MS = 65_000;
+const REDO_ROUNDS = 2;
+
+/** 원본 다시 쓰기, 기본 다지기 n개, 실력 키우기 m개, 분류를 한꺼번에 (동시에) 만든다. 하나가 실패해도 나머지는 돌려준다.
+ *  다 만든 뒤 원본이나 다른 문제와 같은 문제가 있으면, 겹친 문제를 알려 주고 그 문제만 다시 만든다. */
+export async function generateAll(text: string, detailed: boolean, imageB64: string | undefined, taxonomy: TaxRow[], counts: Counts = { basic: 7, advanced: 3 }) {
+  const started = Date.now();
   const many = (kind: 1 | 2, n: number) => Array.from({ length: n }, (_, i) => generateOne(kind, text, detailed, undefined, { index: i + 1, total: n }));
   const [p0, cls, basic, advanced] = await Promise.all([
     Promise.allSettled([generateOne(0, text, detailed, imageB64)]).then(([r]) => r),
@@ -88,12 +95,48 @@ export async function generateAll(text: string, detailed: boolean, imageB64: str
   const card = (r: PromiseSettledResult<Generated>): CardResult =>
     r.status === "fulfilled" ? { ok: true, data: r.value } : { ok: false, error: msg(r.reason) };
   if (p0.status === "rejected") console.error("원본 다시 쓰기 실패", p0.reason);
+  const original = p0.status === "fulfilled" ? p0.value : { question: text, answer: "", solution: "" };
+  const cards = { 1: basic.map(card), 2: advanced.map(card) };
+  await removeDuplicates(cards, original.question, text, detailed, counts, started);
   return {
     // 원본 다시 쓰기가 실패하면 인식한 글자를 그대로 원본으로 쓴다 (Streamlit 과 같게)
-    original: p0.status === "fulfilled" ? p0.value : { question: text, answer: "", solution: "" },
+    original,
     originalRebuilt: p0.status === "fulfilled",
-    basic: basic.map(card),
-    advanced: advanced.map(card),
+    basic: cards[1],
+    advanced: cards[2],
     suggestion: cls,
   };
+}
+
+/** 같은 문제를 찾아 그 칸만 다시 만든다 (cards 를 바로 고친다). 다시 만들어도 같으면 마지막 것을 그대로 둔다. */
+async function removeDuplicates(cards: Record<1 | 2, CardResult[]>, originalQ: string, text: string, detailed: boolean, counts: Counts, started: number) {
+  const kept: { fp: Fingerprint; q: string }[] = [originalQ, text].map((q) => ({ fp: fingerprint(q), q }));
+  const isDup = (q: string) => {
+    const fp = fingerprint(q);
+    return kept.some((k) => sameProblem(fp, k.fp));
+  };
+  const keep = (q: string) => kept.push({ fp: fingerprint(q), q });
+  let redo: { kind: 1 | 2; i: number }[] = [];
+  for (const kind of [1, 2] as const)
+    cards[kind].forEach((c, i) => {
+      if (!c.ok) return;
+      if (isDup(c.data.question)) redo.push({ kind, i });
+      else keep(c.data.question);
+    });
+  for (let round = 0; round < REDO_ROUNDS && redo.length && Date.now() - started < REDO_BEFORE_MS; round++) {
+    const avoid = kept.slice(1).map((k) => brief(k.q)).slice(-12); // 인식한 원본 글자는 문제 안에 이미 있다
+    const total = (kind: 1 | 2) => (kind === 1 ? counts.basic : counts.advanced);
+    const again = await Promise.allSettled(
+      redo.map(({ kind, i }) => generateOne(kind, text, detailed, undefined, { index: i + 1, total: total(kind), avoid })),
+    );
+    const next: typeof redo = [];
+    again.forEach((r, j) => {
+      const { kind, i } = redo[j];
+      if (r.status === "rejected") return; // 다시 만들기가 실패하면 처음 것을 둔다
+      cards[kind][i] = { ok: true, data: r.value };
+      if (isDup(r.value.question)) next.push(redo[j]);
+      else keep(r.value.question);
+    });
+    redo = next;
+  }
 }
