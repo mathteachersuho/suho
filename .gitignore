@@ -1,4 +1,2 @@
-__pycache__/
-*.pyc
-.streamlit/secrets.toml
 .env
+.devcontainer/claude
