@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createHomework, deleteHomework, markResults, MARKS, type Mark } from "@/lib/homework";
+import { createHomework, deleteHomework, hwTags, markResults, MARKS, tagResults, type Mark } from "@/lib/homework";
 import { renderProblemHtml } from "@/lib/mathText";
 import { getProblems } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
@@ -44,15 +44,25 @@ export async function createHomeworkAction(input: {
   return { hwId: r.hwId };
 }
 
-export async function markAction(hwId: string, marks: { studentId: string; problemId: string; correct: Mark }[]) {
+export async function markAction(
+  hwId: string,
+  marks: { studentId: string; problemId: string; correct: Mark }[],
+  tags: { studentId: string; problemId: string; tags: string[] }[] = [],
+) {
   await requireTeacher();
   const clean = (Array.isArray(marks) ? marks : [])
     .slice(0, 5000)
     .filter((m) => m && typeof m.studentId === "string" && typeof m.problemId === "string" && MARKS.includes(m.correct));
+  const cleanTags = (Array.isArray(tags) ? tags : [])
+    .slice(0, 5000)
+    .filter((t) => t && typeof t.studentId === "string" && typeof t.problemId === "string")
+    .map((t) => ({ studentId: t.studentId, problemId: t.problemId, tags: hwTags(t.tags) }));
   try {
-    const n = await markResults(s(hwId, 40), clean);
+    // 채점을 먼저 저장해야 종이 숙제처럼 새로 생긴 칸에도 표시가 붙는다
+    const n = (await markResults(s(hwId, 40), clean)) + (await tagResults(s(hwId, 40), cleanTags));
     revalidatePath(`/teacher/homework/${hwId}`);
     revalidatePath("/teacher/homework");
+    revalidatePath(`/student/homework/${hwId}`);
     return { ok: true as const, n };
   } catch (e) {
     console.error("채점 저장 오류", e);

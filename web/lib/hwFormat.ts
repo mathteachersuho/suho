@@ -19,3 +19,9 @@ export function dayLabel(day: string) {
   const w = "일월화수목금토"[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
   return `${m}월 ${d}일 (${w})`;
 }
+
+/** 선생님이 숙제 문제에 붙이는 표시의 모양: 중요 ★, 어려워함 ! */
+export const TAG_STYLE: Record<string, { icon: string; cls: string }> = {
+  중요: { icon: "★", cls: "bg-warn-soft text-warn" },
+  어려워함: { icon: "!", cls: "bg-accent-soft text-accent" },
+};

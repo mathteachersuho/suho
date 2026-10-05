@@ -11,7 +11,7 @@ export function reportPrompt(name: string, r: ReportData) {
   const done = r.hw.filter((h) => h.submitted).length;
   const hw = r.hw.map((h) => `- ${h.day} ${h.title}: ${h.submitted ? `${h.right}/${h.total}` : "안 냄"}`).join("\n") || "(없음)";
   const units = r.units.map((u) => `${u.unit} ${u.right}/${u.total}`).join(", ") || "(없음)";
-  const weak = r.weak.map((t) => `${t.unit} › ${t.type} ${t.right}/${t.total}`).join(", ") || "뚜렷한 약점 없음";
+  const weak = r.weak.map((t) => `${t.unit} › ${t.type} ${t.right}/${t.total}${t.hard ? ` (선생님이 어려워함 표시 ${t.hard}문제)` : ""}`).join(", ") || "뚜렷한 약점 없음";
   const wrong =
     r.wrong.map((w) => `- [${w.day}] ${w.unit} › ${w.type} | ${short(w.question)} | 학생 답: ${w.myAnswer || "(빈칸)"} | 정답: ${short(w.answer, 60)}`).join("\n") ||
     "(없음)";
@@ -34,7 +34,7 @@ export function reportPrompt(name: string, r: ReportData) {
 - 날짜별 숙제 점수 (맞힌 수/문제 수):
 ${hw}
 - 단원별 (맞힌 수/푼 수): ${units}
-- 정답률이 낮은 유형 (맞힌 수/푼 수): ${weak}
+- 정답률이 낮거나 어려워한 유형 (맞힌 수/푼 수): ${weak}
 - 최근 틀린 문제:
 ${wrong}
 - 시험:

@@ -1,3 +1,4 @@
+import { TAG_STYLE } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import type { StudyProblem } from "@/lib/study";
 import Retry from "./Retry";
@@ -13,6 +14,8 @@ export default function StudyCard({
   myAnswer,
   from,
   similar = [],
+  tags = [],
+  right = false,
 }: {
   p: StudyProblem;
   no: number;
@@ -20,6 +23,8 @@ export default function StudyCard({
   myAnswer?: string;
   from?: string;
   similar?: StudyProblem[];
+  tags?: string[]; // 선생님 표시
+  right?: boolean; // 맞았지만 어려워한 문제
 }) {
   return (
     <li className="card space-y-3 p-4 sm:p-5">
@@ -27,6 +32,15 @@ export default function StudyCard({
         <div className="min-w-0 flex-1">
           <p className="font-semibold">{no}</p>
           <p className="text-xs text-ink-faint">{[tag(p), from].filter(Boolean).join(" · ")}</p>
+          {tags.length > 0 && (
+            <p className="mt-1.5 flex flex-wrap gap-1">
+              {tags.map((t) => (
+                <span key={t} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${TAG_STYLE[t]?.cls ?? ""}`}>
+                  {TAG_STYLE[t]?.icon} 선생님: {t}
+                </span>
+              ))}
+            </p>
+          )}
         </div>
         <StarButton id={p.id} starred={starred} />
       </div>
@@ -34,7 +48,8 @@ export default function StudyCard({
       {myAnswer !== undefined && (
         <p className="text-sm">
           <span className="text-ink-soft">그때 쓴 답 </span>
-          <span className="font-medium text-bad">{myAnswer || "(빈칸)"}</span>
+          <span className={`font-medium ${right ? "text-good" : "text-bad"}`}>{myAnswer || "(빈칸)"}</span>
+          {right && <span className="text-ink-soft"> · 맞았지만 어려워했던 문제예요</span>}
         </p>
       )}
       <div className="flex flex-wrap items-start gap-2">

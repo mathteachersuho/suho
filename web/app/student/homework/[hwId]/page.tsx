@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { IconArrow } from "@/components/Icons";
 import { getStudentHomework } from "@/lib/homework";
-import { dueLabel } from "@/lib/hwFormat";
+import { dueLabel, TAG_STYLE } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import { requireStudent } from "@/lib/session";
 import { starredIds } from "@/lib/study";
@@ -71,6 +71,11 @@ export default async function SolveHomework({ params }: PageProps<"/student/home
                   <div className="mb-2 flex items-center gap-2">
                     <span className="font-semibold">{i + 1}번</span>
                     <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${m.cls}`}>{m.text}</span>
+                    {r?.tags.map((t) => (
+                      <span key={t} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${TAG_STYLE[t].cls}`} title="선생님 표시">
+                        {TAG_STYLE[t].icon} {t}
+                      </span>
+                    ))}
                     <span className="ml-auto">
                       <StarButton id={p.id} starred={stars.has(p.id)} />
                     </span>
