@@ -1,6 +1,6 @@
 import Link from "next/link";
 import ProblemCard from "@/components/ProblemCard";
-import { IconBook } from "@/components/Icons";
+import { IconBook, IconSparkle } from "@/components/Icons";
 import { bankOutline, PAGE_SIZE, searchProblems, type BankFilter } from "@/lib/problems";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import BankFilters from "./BankFilters";
@@ -35,10 +35,16 @@ export default async function BankPage({ searchParams }: { searchParams: SP }) {
 
   return (
     <div className="space-y-6 pb-24">
-      <div>
-        <p className="eyebrow">Problem bank</p>
-        <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">문제 은행</h1>
-        <p className="mt-1 text-sm text-ink-soft">문제를 골라 담은 뒤 아래 막대에서 학습지를 만들어 인쇄하세요.</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="eyebrow">Problem bank</p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">문제 은행</h1>
+          <p className="mt-1 text-sm text-ink-soft">문제를 골라 담은 뒤 아래 막대에서 학습지를 만들어 인쇄하세요.</p>
+        </div>
+        <Link href="/teacher/create" className="btn-soft py-2">
+          <IconSparkle />
+          문제 만들기
+        </Link>
       </div>
 
       <BankFilters key={pageHref(1)} outline={outline} current={f} />
@@ -70,7 +76,7 @@ export default async function BankPage({ searchParams }: { searchParams: SP }) {
           </span>
           <p className="mt-3 font-semibold">{filtered ? "조건에 맞는 문제가 없어요" : "아직 저장된 문제가 없어요"}</p>
           <p className="text-sm text-ink-soft">
-            {filtered ? "고른 조건을 줄여 보세요." : "Streamlit 앱에서 문제를 만들어 저장하면 여기에 나타나요."}
+            {filtered ? "고른 조건을 줄여 보세요." : "문제 만들기에서 사진으로 문제를 만들어 저장하면 여기에 나타나요."}
           </p>
         </div>
       ) : (
