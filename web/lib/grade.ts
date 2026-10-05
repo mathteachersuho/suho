@@ -250,6 +250,8 @@ const WS_RE = new RegExp(`${WS}+`, "g");
 export function normAnswer(s: string): string[] {
   s = String(s || "");
   for (const [a, b] of REPLACES) s = s.replaceAll(a, b);
+  // 웹앱에만 있는 규칙: 답 칸 버튼으로 넣은 √ 를 sqrt 로 (√3, √x, √(2x+1))
+  s = s.replace(/√\s*\(/g, "sqrt(").replace(/√\s*(\p{Nd}+(?:\.\p{Nd}+)?|[A-Za-z])/gu, "sqrt($1)");
   s = s.replace(/\\leq?(?![a-z])/g, "<=");
   s = s.replace(/\\geq?(?![a-z])/g, ">=");
   s = s.replace(/\\sqrt\{([^{}]*)\}/g, "sqrt($1)");
@@ -487,7 +489,8 @@ function ev(n: Node, env: Map<string, number>, depth: number): number {
 
 function evalExpr(expr: string, env: Map<string, number>): number | null {
   let e = expr.replaceAll("sqrt", "§").replaceAll("pi", "π");
-  e = e.replace(/(?<=[\p{Nd})a-zπ])(?=[a-zπ(])/gu, "*");
+  // 웹앱에서 고침: 3sqrt(3) 처럼 sqrt 앞의 곱셈 생략도 계산한다 (Streamlit 판은 이 경우 계산 못 해서 ? 로 남겼다)
+  e = e.replace(/(?<=[\p{Nd})a-zπ])(?=[a-zπ(§])/gu, "*");
   e = e.replace(/§\*\(/g, "§(").replaceAll("§", "sqrt").replaceAll("^", "**");
   try {
     return ev(parse(tokenize(e)), env, 1);
