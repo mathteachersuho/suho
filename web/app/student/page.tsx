@@ -1,18 +1,19 @@
+import { IconArrow, IconChart, IconClipboard, IconNote, IconStar } from "@/components/Icons";
 import { requireStudent } from "@/lib/session";
 import { getStudent } from "@/lib/students";
 
 const TILES = [
-  { emoji: "📝", title: "오늘의 숙제", desc: "선생님이 낸 숙제를 풀고 바로 채점해요", color: "from-grape to-[#a48bff]" },
-  { emoji: "📒", title: "오답노트", desc: "틀린 문제와 비슷한 문제를 다시 풀어요", color: "from-bubble to-[#ffa8cf]" },
-  { emoji: "⭐", title: "중요 문제함", desc: "내가 별표한 문제를 모아 봐요", color: "from-[#ffb800] to-sunny" },
-  { emoji: "📈", title: "내 기록", desc: "맞힌 문제와 자라는 실력을 확인해요", color: "from-mint to-sky" },
+  { icon: IconClipboard, title: "오늘의 숙제", desc: "선생님이 낸 숙제를 풀고 바로 채점해요", wide: true },
+  { icon: IconNote, title: "오답노트", desc: "틀린 문제와 같은 유형을 다시 풀어요", wide: false },
+  { icon: IconStar, title: "중요 문제", desc: "별표한 문제만 모아 봐요", wide: false },
+  { icon: IconChart, title: "내 기록", desc: "유형별 정답률과 성장 흐름을 확인해요", wide: true },
 ];
 
 function greeting() {
   const h = Number(new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: "Asia/Seoul" }).format(new Date()));
-  if (h < 12) return "좋은 아침";
-  if (h < 18) return "반가워";
-  return "오늘도 수고했어";
+  if (h < 12) return "좋은 아침이에요";
+  if (h < 18) return "안녕하세요";
+  return "오늘도 수고했어요";
 }
 
 export default async function StudentHome() {
@@ -21,27 +22,36 @@ export default async function StudentHome() {
   const name = me?.name || s.studentId;
 
   return (
-    <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-grape via-[#9b6bff] to-bubble p-6 text-white shadow-[0_8px_0_var(--grape-dark)]">
-        <p className="text-white/80">{me?.classId ? `${me.classId} · ` : ""}@{s.studentId}</p>
-        <h1 className="mt-1 font-display text-3xl sm:text-4xl">
-          {greeting()}, {name}! 👋
+    <div className="space-y-8">
+      <section>
+        <p className="eyebrow normal-case tracking-normal">
+          {me?.classId ? `${me.classId} · ` : ""}@{s.studentId}
+        </p>
+        <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">
+          {greeting()}, <span className="text-accent">{name}</span>
         </h1>
-        <p className="mt-2 text-white/90">오늘도 한 문제씩 차근차근 해 보자.</p>
-        <span aria-hidden="true" className="absolute -right-4 -bottom-6 font-display text-9xl text-white/15">
-          π
-        </span>
+        <p className="mt-2 text-ink-soft">오늘 할 일부터 하나씩 끝내 봐요.</p>
       </section>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-3">
         {TILES.map((t) => (
-          <div key={t.title} className="card relative overflow-hidden">
-            <div className={`mb-3 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br text-2xl ${t.color}`}>
-              {t.emoji}
+          <div
+            key={t.title}
+            className={`group relative flex min-h-32 flex-col justify-between rounded-2xl border border-line bg-surface p-5 ${t.wide ? "sm:col-span-2" : ""}`}
+          >
+            <div className="flex items-start justify-between">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface-2 text-ink">
+                <t.icon className="h-5 w-5" />
+              </span>
+              <span className="rounded-full border border-line px-2 py-0.5 text-[11px] font-medium text-ink-faint">곧 열려요</span>
             </div>
-            <h2 className="font-display text-xl">{t.title}</h2>
-            <p className="text-sm text-ink-soft">{t.desc}</p>
-            <span className="absolute top-4 right-4 rounded-full bg-bg px-2.5 py-1 text-xs font-bold text-ink-soft">곧 열려요</span>
+            <div className="mt-4 sm:mt-6">
+              <h2 className="flex items-center gap-1 font-semibold">
+                {t.title}
+                <IconArrow className="h-4 w-4 text-ink-faint" />
+              </h2>
+              <p className="mt-0.5 text-sm text-ink-soft">{t.desc}</p>
+            </div>
           </div>
         ))}
       </div>

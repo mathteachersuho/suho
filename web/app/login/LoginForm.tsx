@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { studentLogin, teacherLogin } from "@/app/actions/auth";
+import { IconArrow } from "@/components/Icons";
 
 export default function LoginForm() {
   const [who, setWho] = useState<"student" | "teacher">("student");
@@ -10,13 +11,16 @@ export default function LoginForm() {
   const [sState, sAction, sPending] = useActionState(studentLogin, undefined);
   const [tState, tAction, tPending] = useActionState(teacherLogin, undefined);
 
+  const error = (msg?: string) =>
+    msg && <p className="rounded-lg bg-bad-soft px-3 py-2 text-sm font-medium text-bad">{msg}</p>;
+
   return (
     <div>
-      <div role="tablist" className="mb-6 grid grid-cols-2 gap-1 rounded-2xl bg-bg p-1">
+      <div role="tablist" className="mb-5 grid grid-cols-2 rounded-xl bg-surface-2 p-1 text-sm">
         {(
           [
-            ["student", "🎒 학생"],
-            ["teacher", "🧑‍🏫 선생님"],
+            ["student", "학생"],
+            ["teacher", "선생님"],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -25,8 +29,8 @@ export default function LoginForm() {
             aria-selected={who === key}
             type="button"
             onClick={() => setWho(key)}
-            className={`rounded-xl py-2.5 font-bold transition ${
-              who === key ? "bg-white text-grape shadow" : "text-ink-soft hover:text-ink"
+            className={`rounded-lg py-2 font-semibold transition ${
+              who === key ? "bg-surface text-ink shadow-sm" : "text-ink-soft hover:text-ink"
             }`}
           >
             {label}
@@ -37,35 +41,35 @@ export default function LoginForm() {
       {who === "student" ? (
         <form action={sAction} className="space-y-3">
           <label className="block">
-            <span className="mb-1 block text-sm font-bold text-ink-soft">아이디</span>
-            <input name="studentId" value={studentId} onChange={(e) => setStudentId(e.target.value)} className="field" autoComplete="username" placeholder="선생님이 알려준 아이디" required />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-sm font-bold text-ink-soft">비밀번호</span>
+            <span className="mb-1.5 block text-sm font-medium text-ink-soft">아이디</span>
             <input
-              name="password"
-              type="password"
-              inputMode="numeric"
+              name="studentId"
+              value={studentId}
+              onChange={(e) => setStudentId(e.target.value)}
               className="field"
-              autoComplete="current-password"
-              placeholder="숫자 6자리"
+              autoComplete="username"
+              autoCapitalize="none"
               required
             />
           </label>
-          {sState?.error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-bold text-rose-500">{sState.error}</p>}
-          <button className="btn-main w-full text-lg" disabled={sPending}>
-            {sPending ? "들어가는 중…" : "들어가기 🚀"}
+          <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-ink-soft">비밀번호</span>
+            <input name="password" type="password" inputMode="numeric" className="field" autoComplete="current-password" required />
+          </label>
+          {error(sState?.error)}
+          <button className="btn-main w-full py-3" disabled={sPending}>
+            {sPending ? "확인 중…" : <>로그인 <IconArrow /></>}
           </button>
         </form>
       ) : (
         <form action={tAction} className="space-y-3">
           <label className="block">
-            <span className="mb-1 block text-sm font-bold text-ink-soft">선생님 비밀번호</span>
+            <span className="mb-1.5 block text-sm font-medium text-ink-soft">선생님 비밀번호</span>
             <input name="password" type="password" className="field" autoComplete="current-password" required />
           </label>
-          {tState?.error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm font-bold text-rose-500">{tState.error}</p>}
-          <button className="btn-main w-full text-lg" disabled={tPending}>
-            {tPending ? "들어가는 중…" : "선생님으로 들어가기"}
+          {error(tState?.error)}
+          <button className="btn-main w-full py-3" disabled={tPending}>
+            {tPending ? "확인 중…" : <>선생님으로 로그인 <IconArrow /></>}
           </button>
         </form>
       )}
