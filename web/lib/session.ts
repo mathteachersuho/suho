@@ -3,8 +3,20 @@ import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { SignJWT, jwtVerify } from "jose";
+import { createHash, createHmac } from "node:crypto";
+import { getPasswordHash } from "./students";
 
 export type Session = { role: "teacher" } | { role: "student"; studentId: string };
+
+// 비밀번호가 바뀌면 예전 로그인을 끊기 위해, 로그인할 때의 비밀번호 지문(pv)을 쿠키에 함께 넣는다.
+// 학생: 저장된 비밀번호 해시의 지문 → 선생님이 새 비밀번호를 만들면 그 학생의 다른 기기 로그인이 끊긴다.
+// 선생님: TEACHER_PASSWORD의 지문 → Vercel에서 비밀번호를 바꾸면 모든 선생님 로그인이 끊긴다.
+export const studentPv = (hash: string) => createHash("sha256").update(hash).digest("base64url").slice(0, 16);
+const teacherPv = () =>
+  createHmac("sha256", key())
+    .update(process.env.TEACHER_PASSWORD || "")
+    .digest("base64url")
+    .slice(0, 16);
 
 const COOKIE = "session";
 const DAYS = 14;
@@ -15,9 +27,11 @@ function key() {
   return new TextEncoder().encode(secret);
 }
 
-export async function createSession(session: Session) {
+/** 학생은 저장된 비밀번호 해시(hash)를 함께 넘긴다. */
+export async function createSession(session: Session, hash = "") {
   const expires = new Date(Date.now() + DAYS * 864e5);
-  const token = await new SignJWT({ ...session })
+  const pv = session.role === "teacher" ? teacherPv() : studentPv(hash);
+  const token = await new SignJWT({ ...session, pv })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(expires)
@@ -39,13 +53,16 @@ export async function deleteSession() {
 export const getSession = cache(async (): Promise<Session | null> => {
   const token = (await cookies()).get(COOKIE)?.value;
   if (!token) return null;
+  let payload;
   try {
-    const { payload } = await jwtVerify(token, key(), { algorithms: ["HS256"] });
-    if (payload.role === "teacher") return { role: "teacher" };
-    if (payload.role === "student" && typeof payload.studentId === "string")
-      return { role: "student", studentId: payload.studentId };
+    ({ payload } = await jwtVerify(token, key(), { algorithms: ["HS256"] }));
   } catch {
-    // 만료됐거나 위조된 쿠키
+    return null; // 만료됐거나 위조된 쿠키
+  }
+  if (payload.role === "teacher") return payload.pv === teacherPv() ? { role: "teacher" } : null;
+  if (payload.role === "student" && typeof payload.studentId === "string") {
+    const hash = await getPasswordHash(payload.studentId); // 지워진 학생이면 null
+    if (hash && payload.pv === studentPv(hash)) return { role: "student", studentId: payload.studentId };
   }
   return null;
 });

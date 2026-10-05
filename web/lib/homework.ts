@@ -86,12 +86,16 @@ export type ClassHomework = HomeworkSummary & { day: string }; // day: 낸 날(�
 export async function listHomeworkByClass(limit = 300): Promise<ClassHomework[]> {
   const rows = await db()`
     with recent as (select * from homework order by created_at desc limit ${limit}),
+    res as (
+      select r.hw_id, r.student_id, count(*) as n, count(*) filter (where r.correct = 'Y') as y
+      from hw_results r join recent h on h.hw_id = r.hw_id
+      group by r.hw_id, r.student_id
+    ),
     per as (
-      select hs.hw_id, coalesce(s.class_id, '') as class_id, hs.student_id,
-        (select count(*) from hw_results r where r.hw_id = hs.hw_id and r.student_id = hs.student_id) as n,
-        (select count(*) from hw_results r where r.hw_id = hs.hw_id and r.student_id = hs.student_id and r.correct = 'Y') as y
+      select hs.hw_id, coalesce(s.class_id, '') as class_id, hs.student_id, coalesce(res.n, 0) as n, coalesce(res.y, 0) as y
       from homework_students hs join recent h on h.hw_id = hs.hw_id
       left join students s on s.student_id = hs.student_id
+      left join res on res.hw_id = hs.hw_id and res.student_id = hs.student_id
     )
     select h.hw_id, h.title, h.due_date::text as due, coalesce(per.class_id, '') as class_id, h.memo, h.created_at,
       (h.created_at at time zone 'Asia/Seoul')::date::text as day,

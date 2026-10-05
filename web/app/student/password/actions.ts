@@ -2,7 +2,7 @@
 
 import { db } from "@/lib/db";
 import { hashPassword, verifyPassword } from "@/lib/password";
-import { requireStudent } from "@/lib/session";
+import { createSession, requireStudent } from "@/lib/session";
 import { getPasswordHash } from "@/lib/students";
 
 export type PwState = { ok?: string; error?: string } | undefined;
@@ -24,10 +24,13 @@ export async function changeMyPassword(_: PwState, form: FormData): Promise<PwSt
       await slow();
       return { error: "지금 비밀번호가 맞지 않아요." };
     }
-    await db()`update students set password_hash = ${await hashPassword(next)} where student_id = ${me.studentId}`;
+    const newHash = await hashPassword(next);
+    await db()`update students set password_hash = ${newHash} where student_id = ${me.studentId}`;
+    // 이 기기는 로그인을 그대로 두고, 다른 기기의 예전 로그인은 끊는다.
+    await createSession({ role: "student", studentId: me.studentId }, newHash);
   } catch (e) {
     console.error("비밀번호 바꾸기 오류", e);
     return { error: "저장하지 못했어요. 잠시 뒤 다시 해 주세요." };
   }
-  return { ok: "비밀번호를 바꿨어요. 다음 로그인부터 새 비밀번호를 쓰세요." };
+  return { ok: "비밀번호를 바꿨어요. 다른 기기에서 로그인해 둔 것은 끊겼어요." };
 }

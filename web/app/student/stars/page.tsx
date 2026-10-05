@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { IconStar } from "@/components/Icons";
 import MarkedSections from "@/components/MarkedSections";
-import { parseMarkFilter } from "@/lib/markedGroups";
+import { parseMarkFilter, parseMarkOpen } from "@/lib/markedGroups";
 import { requireStudent } from "@/lib/session";
 import { markedProblems } from "@/lib/study";
 import StudyCard from "../study/StudyCard";
@@ -11,7 +11,8 @@ export const metadata: Metadata = { title: "중요 문제 · 수학클래스룸"
 
 export default async function Stars({ searchParams }: PageProps<"/student/stars">) {
   const me = await requireStudent();
-  const f = parseMarkFilter(await searchParams);
+  const sp = await searchParams;
+  const f = parseMarkFilter(sp);
   const items = await markedProblems(me.studentId);
   return (
     <div className="space-y-6">
@@ -35,6 +36,7 @@ export default async function Stars({ searchParams }: PageProps<"/student/stars"
         <MarkedSections
           items={items}
           f={f}
+          open={parseMarkOpen(sp)}
           baseHref="/student/stars"
           card={(p, no) => (
             <StudyCard
