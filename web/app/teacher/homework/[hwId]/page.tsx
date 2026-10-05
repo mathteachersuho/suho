@@ -51,7 +51,7 @@ export default async function HomeworkDetail({ params, searchParams }: PageProps
       <section className="space-y-2">
         <h2 className="font-semibold">학생별 채점 · 표시</h2>
         <p className="text-sm text-ink-soft">
-          종이로 걷은 숙제도 여기서 O/X만 넣으면 돼요. 학생이 어려워했거나 꼭 다시 봐야 할 문제는 ★ 중요 · ! 어려워함으로 표시해 두세요. 바꾼 뒤 &lsquo;저장&rsquo;을 누르세요.
+          종이로 걷은 숙제도 여기서 O/X만 넣으면 돼요. 학생이 어려워했거나 꼭 다시 봐야 할 문제는 ★ 중요 · ! 어려움으로 표시해 두세요. 바꾼 뒤 &lsquo;저장&rsquo;을 누르세요.
         </p>
         <MarkGrid
           hwId={hw.hwId}

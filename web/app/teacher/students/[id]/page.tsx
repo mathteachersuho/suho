@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { IconArrow, IconChart } from "@/components/Icons";
+import MarkedSections from "@/components/MarkedSections";
 import WrongSections from "@/components/WrongSections";
 import { dayLabel, TAG_STYLE } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import { getStudent } from "@/lib/students";
-import { homeworkProgress, typeStats, wrongNotes, type WrongItem } from "@/lib/study";
+import { parseMarkFilter } from "@/lib/markedGroups";
+import { homeworkProgress, markedProblems, typeStats, wrongNotes, type MarkedItem, type WrongItem } from "@/lib/study";
 import { parseWrongQuery } from "@/lib/wrongGroups";
 
 export const metadata: Metadata = { title: "학생 기록 · 수학클래스룸" };
@@ -15,10 +17,15 @@ const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : null);
 
 export default async function StudentRecord({ params, searchParams }: PageProps<"/teacher/students/[id]">) {
   const id = decodeURIComponent((await params).id).slice(0, 40);
-  const q = parseWrongQuery(await searchParams);
+  const sp = await searchParams;
+  const q = parseWrongQuery(sp);
+  const f = parseMarkFilter(sp);
+  // 두 목록이 서로의 고른 값을 지우지 않게 주소에 함께 남긴다
+  const keepWrong: Record<string, string> = { view: q.view, ...(q.term && { term: q.term }), ...(q.unit && { unit: q.unit }) };
+  const keepMarks: Record<string, string> = f.length ? { f: f.join(",") } : {};
   const s = await getStudent(id);
   if (!s) notFound();
-  const [stats, wrong, hw] = await Promise.all([typeStats(id), wrongNotes(id, false), homeworkProgress(id)]);
+  const [stats, wrong, hw, marked] = await Promise.all([typeStats(id), wrongNotes(id, false), homeworkProgress(id), markedProblems(id)]);
   const graded = stats.reduce((a, t) => a + t.right + t.wrong, 0);
   const right = stats.reduce((a, t) => a + t.right, 0);
   const weak = stats.filter((t) => t.wrong > 0);
@@ -45,7 +52,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
       <dl className="grid grid-cols-3 gap-2">
         <Stat label="낸 숙제" value={`${hw.done}/${hw.given}`} />
         <Stat label="정답률" value={pct(right, graded) === null ? "－" : `${pct(right, graded)}%`} />
-        <Stat label="틀림·어려워함" value={String(wrong.length)} />
+        <Stat label="틀림·어려움" value={String(wrong.length)} />
       </dl>
 
       <section className="card">
@@ -62,7 +69,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
                   <th className="py-2 pr-3 font-medium">유형</th>
                   <th className="py-2 pr-3 text-right font-medium">푼 문제</th>
                   <th className="py-2 pr-3 text-right font-medium">틀림</th>
-                  <th className="py-2 pr-3 text-right font-medium">어려워함</th>
+                  <th className="py-2 pr-3 text-right font-medium">어려움</th>
                   <th className="py-2 font-medium">정답률</th>
                 </tr>
               </thead>
@@ -107,7 +114,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-bold tracking-tight">틀린 문제 · 어려워한 문제</h2>
+        <h2 className="text-lg font-bold tracking-tight">틀린 문제 · 어려운 문제</h2>
         {!wrong.length ? (
           <p className="card text-sm text-ink-soft">숙제에서 틀린 문제가 없어요.</p>
         ) : (
@@ -115,11 +122,61 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
             items={wrong}
             q={q}
             baseHref={`/teacher/students/${encodeURIComponent(id)}`}
+            keep={keepMarks}
             card={(it, no) => <WrongCard key={it.id} it={it} no={no} meta={q.view === "date" ? it.type : `${dayLabel(it.day)} ${it.hwTitle}`} />}
           />
         )}
       </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-lg font-bold tracking-tight">중요 문제</h2>
+          <p className="mt-0.5 text-sm text-ink-soft">선생님이 숙제에서 중요·어려움으로 표시한 문제와 학생이 직접 중요 표시한 문제예요. 학생 화면의 중요 문제와 같아요.</p>
+        </div>
+        {!marked.length ? (
+          <p className="card text-sm text-ink-soft">표시한 문제가 없어요.</p>
+        ) : (
+          <MarkedSections
+            items={marked}
+            f={f}
+            baseHref={`/teacher/students/${encodeURIComponent(id)}`}
+            keep={keepWrong}
+            mineLabel="학생이 중요"
+            card={(it, no) => <MarkedCard key={it.id} it={it} no={no} />}
+          />
+        )}
+      </section>
     </div>
+  );
+}
+
+function MarkedCard({ it, no }: { it: MarkedItem; no: number }) {
+  const tags = [it.teacher && "중요", it.hard && "어려워함"].filter((t): t is string => !!t);
+  return (
+    <li className="card space-y-3 p-4 sm:p-5">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">{no}</p>
+          <p className="text-xs text-ink-faint">{[it.type, it.frame, it.difficulty && `난이도 ${it.difficulty}`].filter(Boolean).join(" · ")}</p>
+          <p className="mt-1.5 flex flex-wrap gap-1">
+            {tags.map((t) => (
+              <span key={t} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${TAG_STYLE[t].cls}`}>
+                {TAG_STYLE[t].icon} {TAG_STYLE[t].label}
+              </span>
+            ))}
+            {it.mine && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-ink-soft">☆ 학생이 중요</span>}
+          </p>
+        </div>
+        <Link href={`/teacher/bank/${encodeURIComponent(it.id)}`} className="btn-soft shrink-0 px-2.5 py-1.5 text-sm">
+          문제 고치기
+        </Link>
+      </div>
+      <div className="problem-body" dangerouslySetInnerHTML={{ __html: renderProblemHtml(it.question) }} />
+      <div className="flex gap-1.5 border-t border-line pt-3 text-sm">
+        <span className="shrink-0 text-ink-soft">정답</span>
+        <div className="problem-body font-medium" dangerouslySetInnerHTML={{ __html: renderProblemHtml(it.answer) }} />
+      </div>
+    </li>
   );
 }
 
@@ -143,7 +200,7 @@ function WrongCard({ it, no, meta }: { it: WrongItem; no: number; meta: string }
             <p className="mt-1.5 flex flex-wrap gap-1">
               {it.tags.map((t) => (
                 <span key={t} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${TAG_STYLE[t]?.cls ?? ""}`}>
-                  {TAG_STYLE[t]?.icon} {t}
+                  {TAG_STYLE[t]?.icon} {TAG_STYLE[t]?.label ?? t}
                 </span>
               ))}
             </p>

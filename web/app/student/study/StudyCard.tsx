@@ -36,7 +36,7 @@ export default function StudyCard({
             <p className="mt-1.5 flex flex-wrap gap-1">
               {tags.map((t) => (
                 <span key={t} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${TAG_STYLE[t]?.cls ?? ""}`}>
-                  {TAG_STYLE[t]?.icon} 선생님: {t}
+                  {TAG_STYLE[t]?.icon} 선생님: {TAG_STYLE[t]?.label ?? t}
                 </span>
               ))}
             </p>
@@ -49,7 +49,7 @@ export default function StudyCard({
         <p className="text-sm">
           <span className="text-ink-soft">그때 쓴 답 </span>
           <span className={`font-medium ${right ? "text-good" : "text-bad"}`}>{myAnswer || "(빈칸)"}</span>
-          {right && <span className="text-ink-soft"> · 맞았지만 어려워했던 문제예요</span>}
+          {right && <span className="text-ink-soft"> · 맞았지만 어려웠던 문제예요</span>}
         </p>
       )}
       <div className="flex flex-wrap items-start gap-2">

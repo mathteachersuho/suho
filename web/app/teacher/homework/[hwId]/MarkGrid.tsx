@@ -21,10 +21,10 @@ const tone: Record<Mark, string> = {
 const MODES: { mode: Mode; label: string; help: string }[] = [
   { mode: "mark", label: "채점", help: "칸을 누를 때마다 O → X → ? → 빈칸으로 바뀌어요." },
   { mode: "중요", label: "★ 중요", help: "칸을 누르면 중요 표시가 붙었다 떨어져요. 번호를 누르면 그 문제를 낸 학생 모두에게 붙어요." },
-  { mode: "어려워함", label: "! 어려워함", help: "칸을 누르면 어려워함 표시가 붙었다 떨어져요. 어려워한 문제는 맞았어도 오답노트에 들어가요." },
+  { mode: "어려워함", label: "! 어려움", help: "칸을 누르면 어려움 표시가 붙었다 떨어져요. 어려움 표시한 문제는 맞았어도 오답노트에 들어가요." },
 ];
 
-/** 학생 × 문제 O/X 표. 채점과 중요·어려워함 표시를 바꾸고 한 번에 저장한다. 표시는 낸(또는 채점한) 칸에만 붙는다. */
+/** 학생 × 문제 O/X 표. 채점과 중요·어려움 표시를 바꾸고 한 번에 저장한다. 표시는 낸(또는 채점한) 칸에만 붙는다. */
 export default function MarkGrid({
   hwId,
   problems,
@@ -137,7 +137,7 @@ export default function MarkGrid({
                     <button
                       type="button"
                       onClick={() => clickColumn(p.id)}
-                      aria-label={`${i + 1}번 낸 학생 모두 ${mode}`}
+                      aria-label={`${i + 1}번 낸 학생 모두 ${TAG_STYLE[mode].label}`}
                       className="w-full rounded-md px-1 py-1 hover:bg-surface hover:text-ink"
                     >
                       {i + 1}
@@ -171,7 +171,7 @@ export default function MarkGrid({
                           type="button"
                           onClick={() => clickCell(s.studentId, p.id)}
                           title={r?.answer ? `학생 답: ${r.answer}` : "학생 답 없음"}
-                          aria-label={`${s.name || s.studentId} ${i + 1}번: ${MARK_LABEL[m] || "빈칸"}${tags.length ? `, ${tags.join(", ")}` : ""}`}
+                          aria-label={`${s.name || s.studentId} ${i + 1}번: ${MARK_LABEL[m] || "빈칸"}${tags.length ? `, ${tags.map((t) => TAG_STYLE[t].label).join(", ")}` : ""}`}
                           className={`relative flex h-12 w-full min-w-12 flex-col items-center justify-center rounded-lg hover:bg-surface-2 ${changed ? "ring-2 ring-accent/60" : ""} ${off ? "opacity-40" : ""}`}
                         >
                           <span className={`text-base font-bold leading-none ${tone[m]}`}>{MARK_LABEL[m] || "·"}</span>
@@ -213,7 +213,7 @@ export default function MarkGrid({
           </button>
         )}
         {msg && <p className={`text-sm ${msg.ok ? "text-good" : "text-bad"}`}>{msg.text}</p>}
-        <p className="ml-auto text-xs text-ink-faint">O 맞음 · X 틀림 · ? 확인 필요 · ★ 중요 · ! 어려워함</p>
+        <p className="ml-auto text-xs text-ink-faint">O 맞음 · X 틀림 · ? 확인 필요 · ★ 중요 · ! 어려움</p>
       </div>
     </div>
   );
