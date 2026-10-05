@@ -34,3 +34,7 @@ export const IconUp = ({ className }: P) => base(<path d="m6 15 6-6 6 6" />, cla
 export const IconDown = ({ className }: P) => base(<path d="m6 9 6 6 6-6" />, className);
 export const IconSparkle = ({ className }: P) =>
   base(<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6" />, className);
+export const IconLink = ({ className }: P) =>
+  base(<><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1" /><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1" /></>, className);
+export const IconSave = ({ className }: P) =>
+  base(<><path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2Z" /><path d="M8 3v5h7V3M8 21v-7h8v7" /></>, className);
