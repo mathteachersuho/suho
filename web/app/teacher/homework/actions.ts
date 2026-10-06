@@ -7,6 +7,8 @@ import { renderProblemHtml } from "@/lib/mathText";
 import { getProblems } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
 import { reportError } from "@/lib/reportError";
+import { getStudent } from "@/lib/students";
+import { weakPlan } from "@/lib/weak";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const ids = (v: unknown, max: number) =>
@@ -76,4 +78,80 @@ export async function deleteHomeworkAction(hwId: string) {
   await deleteHomework(s(hwId, 40));
   revalidatePath("/teacher/homework");
   redirect("/teacher/homework");
+}
+
+export type WeakPreviewType = { grade: string; unit: string; type: string; wrong: number; hard: number; available: number };
+export type WeakPreviewProblem = { id: string; typeIndex: number; tag: string; html: string };
+export type WeakPreview = { studentId: string; types: WeakPreviewType[]; problems: WeakPreviewProblem[]; untyped: number };
+
+/** 약한 유형 숙제: 학생마다 약한 유형과 고른 문제를 미리 보여 준다 */
+export async function weakPlanAction(studentIds: string[], count: number, verifiedOnly: boolean): Promise<WeakPreview[] | { error: string }> {
+  await requireTeacher();
+  const n = Math.min(30, Math.max(1, Math.round(Number(count) || 10)));
+  try {
+    return await Promise.all(
+      ids(studentIds, 60).map(async (studentId) => {
+        const plan = await weakPlan(studentId, n, !!verifiedOnly);
+        // 화면에서는 유형 순서가 아니라 돌아가며 고른 순서(유형이 섞이게)로 보여 준다
+        const problems: WeakPreviewProblem[] = [];
+        for (let round = 0; ; round++) {
+          const row = plan.types.flatMap((t, i) => (t.picked[round] ? [{ p: t.picked[round], i }] : []));
+          if (!row.length) break;
+          for (const { p, i } of row)
+            problems.push({
+              id: p.id,
+              typeIndex: i,
+              tag: [plan.types[i].type, p.frame, p.difficulty && `난이도 ${p.difficulty}`, p.verified && "검수"].filter(Boolean).join(" · "),
+              html: renderProblemHtml(p.question),
+            });
+        }
+        return {
+          studentId,
+          types: plan.types.map((t) => ({ grade: t.grade, unit: t.unit, type: t.type, wrong: t.wrong, hard: t.hard, available: t.available })),
+          problems,
+          untyped: plan.untyped,
+        };
+      }),
+    );
+  } catch (e) {
+    await reportError("약한 유형 찾기", e);
+    return { error: "문제를 고르지 못했어요. 잠시 뒤 다시 해 주세요." };
+  }
+}
+
+/** 약한 유형 숙제: 학생마다 따로 숙제를 하나씩 낸다 (학생마다 문제가 다르니까) */
+export async function createWeakHomeworkAction(input: {
+  title: string;
+  dueDate: string;
+  memo: string;
+  plans: { studentId: string; problemIds: string[] }[];
+}): Promise<{ error: string; made: number } | { made: number }> {
+  await requireTeacher();
+  const due = s(input.dueDate, 10);
+  const title = s(input.title, 40) || "약한 유형 숙제";
+  const plans = (Array.isArray(input.plans) ? input.plans : []).slice(0, 60);
+  let made = 0;
+  for (const pl of plans) {
+    const st = await getStudent(s(pl?.studentId, 40));
+    const problemIds = ids(pl?.problemIds, 60);
+    if (!st || !problemIds.length) continue;
+    const r = await createHomework({
+      title: `${title} · ${st.name || st.studentId}`,
+      dueDate: /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : "",
+      classId: st.classId,
+      memo: s(input.memo, 300),
+      studentIds: [st.studentId],
+      problemIds,
+    }).catch(async (e) => {
+      await reportError("약한 유형 숙제 내기", e);
+      return { ok: false as const, error: "저장하지 못했어요." };
+    });
+    if (!r.ok) {
+      revalidatePath("/teacher/homework");
+      return { error: `${st.name || st.studentId} 숙제를 내지 못했어요. ${made}명은 냈어요. 잠시 뒤 다시 해 주세요.`, made };
+    }
+    made++;
+  }
+  revalidatePath("/teacher/homework");
+  return { made };
 }

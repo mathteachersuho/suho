@@ -31,8 +31,8 @@ export const HW_TAGS = ["중요", "어려워함"] as const;
 export type HwTag = (typeof HW_TAGS)[number];
 export const hwTags = (v: unknown): HwTag[] => (Array.isArray(v) ? HW_TAGS.filter((t) => v.includes(t)) : []);
 
-/** 'hw' + 시각(ms). Apps Script 판과 같은 모양 */
-const newHwId = () => `hw${Date.now()}`;
+/** 'hw' + 시각(ms) + 짧은 임의 글자 (여러 학생 숙제를 한 번에 낼 때 겹치지 않게) */
+const newHwId = () => `hw${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
 
 export async function createHomework(input: {
   title: string;

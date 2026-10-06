@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { IconArrow, IconChart } from "@/components/Icons";
+import { IconArrow, IconChart, IconSparkle } from "@/components/Icons";
 import MarkedSections from "@/components/MarkedSections";
 import WrongSections from "@/components/WrongSections";
 import { dayLabel, TAG_STYLE } from "@/lib/hwFormat";
@@ -43,10 +43,16 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
             <h1 className="text-2xl font-bold tracking-tight">{s.name || s.studentId}</h1>
             <p className="text-sm text-ink-faint">{[s.classId, `@${s.studentId}`].filter(Boolean).join(" · ")}</p>
           </div>
-          <Link href={`/teacher/report/${encodeURIComponent(id)}`} className="btn-soft px-3 py-2">
-            <IconChart />
-            학부모 리포트
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/teacher/homework/weak?s=${encodeURIComponent(id)}`} className="btn-soft px-3 py-2">
+              <IconSparkle />
+              약한 유형 숙제
+            </Link>
+            <Link href={`/teacher/report/${encodeURIComponent(id)}`} className="btn-soft px-3 py-2">
+              <IconChart />
+              학부모 리포트
+            </Link>
+          </div>
         </div>
       </div>
 
