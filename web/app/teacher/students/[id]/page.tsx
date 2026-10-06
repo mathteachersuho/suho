@@ -53,7 +53,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
             <p className="text-sm text-ink-faint">{[s.classId, `@${s.studentId}`].filter(Boolean).join(" · ")}</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Link href={`/teacher/homework/weak?s=${encodeURIComponent(id)}`} className="btn-soft px-3 py-2">
+            <Link href={`/teacher/homework/new?mode=weak&s=${encodeURIComponent(id)}`} className="btn-soft px-3 py-2">
               <IconSparkle />
               약한 유형 숙제
             </Link>
@@ -126,7 +126,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
         {dueCount > 0 && (
           <p className="mt-3 flex flex-wrap items-center gap-2 text-sm">
             <span className="font-semibold text-bad">오늘 복습할 유형 {dueCount}개</span>
-            <Link href={`/teacher/homework/weak?s=${encodeURIComponent(id)}`} className="text-accent underline">
+            <Link href={`/teacher/homework/new?mode=weak&s=${encodeURIComponent(id)}`} className="text-accent underline">
               약한 유형 숙제로 내기
             </Link>
           </p>

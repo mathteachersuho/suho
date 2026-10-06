@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { IconClipboard, IconPlus, IconSparkle } from "@/components/Icons";
+import { IconClipboard, IconPlus } from "@/components/Icons";
 import { listHomeworkByClass, type ClassHomework } from "@/lib/homework";
 import { dayLabel, dueLabel, todaySeoul } from "@/lib/hwFormat";
 import { dueStudents } from "@/lib/review";
@@ -41,10 +41,6 @@ export default async function HomeworkList({ searchParams }: { searchParams: Pro
           <p className="mt-1 text-sm text-ink-soft">반별로, 반 안에서는 낸 날짜별로 보여요. 숙제를 누르면 학생별 O/X를 보고 고칠 수 있어요.</p>
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
-          <Link href="/teacher/homework/weak" className="btn-soft">
-            <IconSparkle />
-            약한 유형 숙제
-          </Link>
           <Link href="/teacher/homework/new" className="btn-main">
             <IconPlus />
             숙제 내기
@@ -58,7 +54,7 @@ export default async function HomeworkList({ searchParams }: { searchParams: Pro
             <span className="font-semibold">오늘 복습할 학생 {due.size}명</span>
             <span className="text-ink-soft"> · 전에 틀린 유형을 다시 풀 날이 됐어요</span>
           </p>
-          <Link href="/teacher/homework/weak?due=1" className="btn-accent ml-auto px-3 py-1.5 text-sm">
+          <Link href="/teacher/homework/new?mode=weak&due=1" className="btn-accent ml-auto px-3 py-1.5 text-sm">
             복습 숙제 내기
           </Link>
         </div>
@@ -70,9 +66,9 @@ export default async function HomeworkList({ searchParams }: { searchParams: Pro
             <IconClipboard className="h-5 w-5" />
           </span>
           <p className="mt-3 font-semibold">아직 낸 숙제가 없어요</p>
-          <p className="mt-1 text-sm text-ink-soft">문제 은행에서 문제를 담은 뒤 아래쪽 막대의 &lsquo;숙제로 내기&rsquo;를 누르세요.</p>
-          <Link href="/teacher/bank" className="btn-soft mt-4">
-            문제 은행으로
+          <p className="mt-1 text-sm text-ink-soft">&lsquo;숙제 내기&rsquo;에서 받는 학생과 문제를 고르면 돼요.</p>
+          <Link href="/teacher/homework/new" className="btn-soft mt-4">
+            숙제 내기
           </Link>
         </div>
       ) : (
