@@ -256,3 +256,9 @@ create table if not exists error_logs (
 );
 create index if not exists error_logs_at_idx on error_logs (at desc);
 alter table error_logs enable row level security;
+
+-- ---------------------------------------------------------------
+-- 웹앱에서 추가: 틀린 이유. 선생님이 숙제 채점 표에서 틀렸거나 어려워한 칸에 고른다. '' = 안 고름
+-- ---------------------------------------------------------------
+alter table hw_results add column if not exists reason text not null default ''
+  check (reason in ('', '계산 실수', '개념 부족', '문제 이해'));

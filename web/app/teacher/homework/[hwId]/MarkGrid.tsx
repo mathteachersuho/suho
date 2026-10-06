@@ -2,11 +2,11 @@
 
 import { useState, useTransition } from "react";
 import type { HwResult, HwTag, Mark, Repeat } from "@/lib/homework";
-import { MARK_LABEL, TAG_STYLE } from "@/lib/hwFormat";
+import { MARK_LABEL, REASON_SHORT, REASONS, TAG_STYLE, type Reason } from "@/lib/hwFormat";
 import { markAction } from "../actions";
 
 type Stu = { studentId: string; name: string; classId: string };
-type Mode = "mark" | HwTag;
+type Mode = "mark" | HwTag | "reason";
 const NEXT: Record<Mark, Mark> = { "": "Y", Y: "N", N: "?", "?": "" };
 const key = (s: string, p: string) => `${s}\u0000${p}`;
 const same = (a: HwTag[], b: HwTag[]) => a.length === b.length && a.every((t) => b.includes(t));
@@ -22,7 +22,10 @@ const MODES: { mode: Mode; label: string; help: string }[] = [
   { mode: "mark", label: "채점", help: "칸을 누를 때마다 O → X → ? → 빈칸으로 바뀌어요." },
   { mode: "중요", label: "★ 중요", help: "칸을 누르면 중요 표시가 붙었다 떨어져요. 번호를 누르면 그 문제를 낸 학생 모두에게 붙어요." },
   { mode: "어려워함", label: "! 어려움", help: "칸을 누르면 어려움 표시가 붙었다 떨어져요. 어려움 표시한 문제는 맞았어도 오답노트에 들어가요." },
+  { mode: "reason", label: "틀린 이유", help: "틀렸거나 어려움인 칸을 누를 때마다 계산 실수 → 개념 부족 → 문제 이해 → 없음으로 바뀌어요. 학부모 리포트에 쓰여요." },
 ];
+/** 없음 → 계산 실수 → 개념 부족 → 문제 이해 → 없음 */
+const nextReason = (r: Reason | ""): Reason | "" => REASONS[(REASONS as readonly string[]).indexOf(r) + 1] ?? "";
 
 /** 학생 × 문제 O/X 표. 채점과 중요·어려움 표시를 바꾸고 한 번에 저장한다. 표시는 낸(또는 채점한) 칸에만 붙는다. */
 export default function MarkGrid({
@@ -42,14 +45,18 @@ export default function MarkGrid({
   const [mode, setMode] = useState<Mode>("mark");
   const [edits, setEdits] = useState<Map<string, Mark>>(new Map());
   const [tagEdits, setTagEdits] = useState<Map<string, HwTag[]>>(new Map());
+  const [reasonEdits, setReasonEdits] = useState<Map<string, Reason | "">>(new Map());
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pending, start] = useTransition();
 
   const markOf = (s: string, p: string): Mark => edits.get(key(s, p)) ?? saved.get(key(s, p))?.correct ?? "";
   const tagsOf = (s: string, p: string): HwTag[] => tagEdits.get(key(s, p)) ?? saved.get(key(s, p))?.tags ?? [];
+  const reasonOf = (s: string, p: string): Reason | "" => reasonEdits.get(key(s, p)) ?? saved.get(key(s, p))?.reason ?? "";
+  // 틀린 이유는 틀렸거나(X) 어려움 표시한 칸에만
+  const canReason = (s: string, p: string) => markOf(s, p) === "N" || tagsOf(s, p).includes("어려워함");
   // 결과 줄이 있거나 이번에 O/X를 넣는 칸만 표시할 수 있다
   const canTag = (s: string, p: string) => saved.has(key(s, p)) || markOf(s, p) !== "";
-  const nChanges = edits.size + tagEdits.size;
+  const nChanges = edits.size + tagEdits.size + reasonEdits.size;
 
   const cycle = (s: string, p: string) => {
     setMsg(null);
@@ -78,11 +85,23 @@ export default function MarkGrid({
   };
   const clickCell = (s: string, p: string) => {
     if (mode === "mark") return cycle(s, p);
+    if (mode === "reason") {
+      if (!canReason(s, p)) return setMsg({ ok: false, text: "틀렸거나(X) 어려움 표시한 칸에만 이유를 고를 수 있어요." });
+      setMsg(null);
+      return setReasonEdits((e) => {
+        const n = new Map(e);
+        const k = key(s, p);
+        const next = nextReason(reasonOf(s, p));
+        if (next === (saved.get(k)?.reason ?? "")) n.delete(k);
+        else n.set(k, next);
+        return n;
+      });
+    }
     if (!canTag(s, p)) return setMsg({ ok: false, text: "아직 안 낸 칸이에요. 학생이 내거나 O/X를 넣은 뒤에 표시할 수 있어요." });
     setTag([[s, p]], mode, !tagsOf(s, p).includes(mode));
   };
   const clickColumn = (p: string) => {
-    if (mode === "mark") return;
+    if (mode === "mark" || mode === "reason") return;
     const cells = students.filter((s) => canTag(s.studentId, p)).map((s) => [s.studentId, p] as [string, string]);
     if (!cells.length) return setMsg({ ok: false, text: "이 문제를 낸 학생이 아직 없어요." });
     setTag(cells, mode, !cells.every(([s]) => tagsOf(s, p).includes(mode)));
@@ -97,10 +116,15 @@ export default function MarkGrid({
         const [studentId, problemId] = k.split("\u0000");
         return { studentId, problemId, tags: t };
       });
-      const r = await markAction(hwId, marks, tags);
+      const reasons = [...reasonEdits].map(([k, reason]) => {
+        const [studentId, problemId] = k.split("\u0000");
+        return { studentId, problemId, reason };
+      });
+      const r = await markAction(hwId, marks, tags, reasons);
       if (r.ok) {
         setEdits(new Map());
         setTagEdits(new Map());
+        setReasonEdits(new Map());
         setMsg({ ok: true, text: "저장했어요." });
       } else setMsg({ ok: false, text: r.error });
     });
@@ -133,13 +157,13 @@ export default function MarkGrid({
               <th className="sticky left-0 bg-surface-2 px-3 py-2 text-left font-medium">학생</th>
               {problems.map((p, i) => (
                 <th key={p.id} className="min-w-14 px-1 py-1 text-center font-medium tabular-nums">
-                  {mode === "mark" ? (
+                  {mode === "mark" || mode === "reason" ? (
                     i + 1
                   ) : (
                     <button
                       type="button"
                       onClick={() => clickColumn(p.id)}
-                      aria-label={`${i + 1}번 낸 학생 모두 ${TAG_STYLE[mode].label}`}
+                      aria-label={`${i + 1}번 낸 학생 모두 ${TAG_STYLE[mode as HwTag].label}`}
                       className="w-full rounded-md px-1 py-1 hover:bg-surface hover:text-ink"
                     >
                       {i + 1}
@@ -165,8 +189,9 @@ export default function MarkGrid({
                     const m = markOf(s.studentId, p.id);
                     const r = saved.get(k);
                     const tags = tagsOf(s.studentId, p.id);
-                    const changed = edits.has(k) || tagEdits.has(k);
-                    const off = mode !== "mark" && !canTag(s.studentId, p.id);
+                    const changed = edits.has(k) || tagEdits.has(k) || reasonEdits.has(k);
+                    const off = mode === "reason" ? !canReason(s.studentId, p.id) : mode !== "mark" && !canTag(s.studentId, p.id);
+                    const reason = canReason(s.studentId, p.id) ? reasonOf(s.studentId, p.id) : "";
                     const again = repeats[k];
                     const tip = [
                       r?.answer ? `학생 답: ${r.answer}` : "학생 답 없음",
@@ -180,13 +205,16 @@ export default function MarkGrid({
                           type="button"
                           onClick={() => clickCell(s.studentId, p.id)}
                           title={tip}
-                          aria-label={`${s.name || s.studentId} ${i + 1}번: ${MARK_LABEL[m] || "빈칸"}${tags.length ? `, ${tags.map((t) => TAG_STYLE[t].label).join(", ")}` : ""}${again ? `, ${again.n}번째` : ""}`}
+                          aria-label={`${s.name || s.studentId} ${i + 1}번: ${MARK_LABEL[m] || "빈칸"}${tags.length ? `, ${tags.map((t) => TAG_STYLE[t].label).join(", ")}` : ""}${again ? `, ${again.n}번째` : ""}${reason ? `, 틀린 이유 ${reason}` : ""}`}
                           className={`relative flex h-12 w-full min-w-12 flex-col items-center justify-center rounded-lg hover:bg-surface-2 ${changed ? "ring-2 ring-accent/60" : ""} ${off ? "opacity-40" : ""}`}
                         >
                           <span className={`text-base font-bold leading-none ${tone[m]}`}>{MARK_LABEL[m] || "·"}</span>
                           {r?.answer && <span className="mt-1 max-w-16 truncate text-[11px] leading-none text-ink-faint">{r.answer}</span>}
                           {again && (
                             <span className="absolute left-0.5 top-0.5 rounded bg-warn-soft px-1 text-[10px] font-bold leading-4 text-warn">{again.n}회</span>
+                          )}
+                          {reason && (
+                            <span className="absolute bottom-0.5 right-0.5 rounded bg-surface-2 px-1 text-[10px] font-semibold leading-4 text-ink-soft">{REASON_SHORT[reason]}</span>
                           )}
                           {tags.length > 0 && (
                             <span className="absolute right-0.5 top-0.5 flex gap-0.5">
@@ -219,6 +247,7 @@ export default function MarkGrid({
             onClick={() => {
               setEdits(new Map());
               setTagEdits(new Map());
+              setReasonEdits(new Map());
             }}
           >
             되돌리기
@@ -226,7 +255,7 @@ export default function MarkGrid({
         )}
         {msg && <p className={`text-sm ${msg.ok ? "text-good" : "text-bad"}`}>{msg.text}</p>}
         <p className="ml-auto text-xs text-ink-faint">
-          O 맞음 · X 틀림 · ? 확인 필요 · ★ 중요 · ! 어려움{Object.keys(repeats).length > 0 && " · 2회 = 이 학생이 두 번째 푸는 문제 (선생님 화면에만 보여요)"}
+          O 맞음 · X 틀림 · ? 확인 필요 · ★ 중요 · ! 어려움 · 계산·개념·이해 = 틀린 이유{Object.keys(repeats).length > 0 && " · 2회 = 이 학생이 두 번째 푸는 문제 (선생님 화면에만 보여요)"}
         </p>
       </div>
     </div>

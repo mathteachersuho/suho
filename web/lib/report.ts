@@ -1,5 +1,7 @@
 import "server-only";
 import { db } from "./db";
+import { reasonReady } from "./homework";
+import { isReason, REASONS, type Reason } from "./hwFormat";
 
 /*
  * 학부모 리포트: 기간 안의 숙제 결과·시험 점수를 모은다.
@@ -159,6 +161,7 @@ export type WeakType = {
   right: number;
   hard: number; // 선생님이 '어려워함'으로 표시한 문제 수
 };
+export type ReasonCount = { reason: Reason; n: number };
 export type ReportWrong = {
   id: string;
   day: string;
@@ -167,6 +170,7 @@ export type ReportWrong = {
   question: string;
   answer: string;
   myAnswer: string;
+  reason: Reason | "";
 };
 
 export type ReportData = {
@@ -179,6 +183,7 @@ export type ReportData = {
   units: UnitStat[];
   weak: WeakType[];
   wrong: ReportWrong[];
+  reasons: ReasonCount[]; // 기간 안에 틀렸거나 어려워한 칸의 틀린 이유 개수 (선생님이 고른 것만)
 };
 
 export async function buildReport(
@@ -187,7 +192,8 @@ export async function buildReport(
   to: string,
 ): Promise<ReportData> {
   const sql = db();
-  const [hwRows, exams, unitRows, typeRows, wrongRows] = await Promise.all([
+  const ready = await reasonReady();
+  const [hwRows, exams, unitRows, typeRows, wrongRows, reasonRows] = await Promise.all([
     sql`
       select h.hw_id, h.title, (h.created_at at time zone 'Asia/Seoul')::date::text as day,
         (select count(*) from homework_problems p where p.hw_id = h.hw_id)::int as total,
@@ -215,11 +221,20 @@ export async function buildReport(
       group by p.unit, p.type`,
     sql`
       select distinct on (h.created_at, p.id) p.id, p.unit, p.type, p.question, p.answer, r.answer as my_answer,
+        ${ready ? sql`r.reason` : sql`''`} as reason,
         (h.created_at at time zone 'Asia/Seoul')::date::text as day
       from hw_results r join homework h on h.hw_id = r.hw_id join problems p on p.id = r.problem_id
       where r.student_id = ${studentId} and r.correct = 'N' and (h.created_at at time zone 'Asia/Seoul')::date between ${from}::date and ${to}::date
       order by h.created_at desc, p.id
       limit 10`,
+    ready
+      ? sql`
+      select r.reason, count(*)::int as n
+      from hw_results r join homework h on h.hw_id = r.hw_id
+      where r.student_id = ${studentId} and r.reason <> '' and (r.correct = 'N' or '어려워함' = any(r.tags))
+        and (h.created_at at time zone 'Asia/Seoul')::date between ${from}::date and ${to}::date
+      group by r.reason`
+      : [],
   ]);
   const hw = hwRows.map((r) => ({
     hwId: r.hw_id as string,
@@ -265,6 +280,8 @@ export async function buildReport(
       question: r.question as string,
       answer: r.answer as string,
       myAnswer: r.my_answer as string,
+      reason: isReason(r.reason) ? r.reason : "",
     })),
+    reasons: REASONS.map((reason) => ({ reason, n: Number(reasonRows.find((x) => x.reason === reason)?.n ?? 0) })).filter((x) => x.n > 0),
   };
 }

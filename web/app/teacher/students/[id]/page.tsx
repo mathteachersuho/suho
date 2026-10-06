@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { IconArrow, IconChart, IconSparkle } from "@/components/Icons";
 import MarkedSections from "@/components/MarkedSections";
 import WrongSections from "@/components/WrongSections";
-import { dayLabel, TAG_STYLE } from "@/lib/hwFormat";
+import { dayLabel, REASONS, TAG_STYLE } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import { getStudent } from "@/lib/students";
 import { parseMarkFilter, parseMarkOpen } from "@/lib/markedGroups";
@@ -29,7 +29,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
   if (!s) notFound();
   const [stats, wrong, hw, marked, reviews] = await Promise.all([
     typeStats(id),
-    wrongNotes(id, false),
+    wrongNotes(id, false, true),
     homeworkProgress(id),
     markedProblems(id),
     reviewStates([id]).then((m) => m.get(id) ?? []),
@@ -143,7 +143,16 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-bold tracking-tight">틀린 문제 · 어려운 문제</h2>
+        <div>
+          <h2 className="text-lg font-bold tracking-tight">틀린 문제 · 어려운 문제</h2>
+          {wrong.some((w) => w.reason) && (
+            <p className="mt-0.5 text-sm text-ink-soft">
+              틀린 이유{" "}
+              {REASONS.map((r) => `${r} ${wrong.filter((w) => w.reason === r).length}`).join(" · ")}
+              {wrong.some((w) => !w.reason) && ` · 안 고름 ${wrong.filter((w) => !w.reason).length}`}
+            </p>
+          )}
+        </div>
         {!wrong.length ? (
           <p className="card text-sm text-ink-soft">숙제에서 틀린 문제가 없어요.</p>
         ) : (
@@ -226,13 +235,14 @@ function WrongCard({ it, no, meta }: { it: WrongItem; no: number; meta: string }
         <div className="min-w-0 flex-1">
           <p className="font-semibold">{no}</p>
           <p className="text-xs text-ink-faint">{[meta, it.frame, it.difficulty && `난이도 ${it.difficulty}`, it.starred && "학생이 중요 표시"].filter(Boolean).join(" · ")}</p>
-          {it.tags.length > 0 && (
+          {(it.tags.length > 0 || it.reason) && (
             <p className="mt-1.5 flex flex-wrap gap-1">
               {it.tags.map((t) => (
                 <span key={t} className={`rounded-full px-2 py-0.5 text-xs font-semibold ${TAG_STYLE[t]?.cls ?? ""}`}>
                   {TAG_STYLE[t]?.icon} {TAG_STYLE[t]?.label ?? t}
                 </span>
               ))}
+              {it.reason && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-ink-soft">틀린 이유: {it.reason}</span>}
             </p>
           )}
         </div>

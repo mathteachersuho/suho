@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "./db";
 import { gradeAnswer } from "./grade";
+import { isReason, type Reason } from "./hwFormat";
 
 /*
  * 숙제: homework(숙제 하나) + homework_students(받는 학생) + homework_problems(문제와 순서) + hw_results(학생·문제마다 답과 O/X).
@@ -24,7 +25,20 @@ export type HomeworkSummary = {
   correctCount: number; // 모든 학생의 맞은 문제 수 합
 };
 
-export type HwResult = { studentId: string; problemId: string; answer: string; correct: Mark; gradedBy: string; tags: HwTag[] };
+export type HwResult = { studentId: string; problemId: string; answer: string; correct: Mark; gradedBy: string; tags: HwTag[]; reason: Reason | "" };
+
+/**
+ * 틀린 이유 칸(hw_results.reason)이 있는가. db/schema.sql 을 다시 실행하기 전에도 화면이 깨지지 않게 확인한다.
+ * 한 번 있으면 기억하고, 없으면 다음에 다시 본다.
+ */
+let reasonOk = false;
+export async function reasonReady() {
+  if (reasonOk) return true;
+  const [r] = await db()`
+    select exists (select 1 from information_schema.columns where table_name = 'hw_results' and column_name = 'reason') as ok`;
+  reasonOk = !!r?.ok;
+  return reasonOk;
+}
 
 /** 선생님이 숙제 문제에 붙이는 표시 (학생마다). '틀림'은 Streamlit 이 쓰던 값이라 건드리지 않고 그대로 둔다. */
 export const HW_TAGS = ["중요", "어려워함"] as const;
@@ -131,10 +145,11 @@ async function hwProblems(hwId: string): Promise<HomeworkProblem[]> {
 
 async function hwResults(hwId: string, studentId?: string): Promise<HwResult[]> {
   const sql = db();
+  const ready = await reasonReady();
   const rows = await sql`
-    select student_id, problem_id, answer, correct, graded_by, tags from hw_results
+    select student_id, problem_id, answer, correct, graded_by, tags, ${ready ? sql`reason` : sql`''`} as reason from hw_results
     where hw_id = ${hwId} ${studentId ? sql`and student_id = ${studentId}` : sql``}`;
-  return rows.map((r) => ({ studentId: r.student_id, problemId: r.problem_id, answer: r.answer, correct: r.correct as Mark, gradedBy: r.graded_by, tags: hwTags(r.tags) }));
+  return rows.map((r) => ({ studentId: r.student_id, problemId: r.problem_id, answer: r.answer, correct: r.correct as Mark, gradedBy: r.graded_by, tags: hwTags(r.tags), reason: isReason(r.reason) ? r.reason : "" }));
 }
 
 /** 선생님: 숙제 하나의 문제, 받는 학생, 결과 */
@@ -208,6 +223,22 @@ export async function tagResults(hwId: string, tags: { studentId: string; proble
   });
 }
 
+/** 선생님이 틀린 이유를 고른다. 결과 줄이 있는 칸만 바뀐다. reason '' = 지우기 */
+export async function setReasons(hwId: string, list: { studentId: string; problemId: string; reason: Reason | "" }[]) {
+  if (!list.length || !(await reasonReady())) return 0;
+  const sql = db();
+  return sql.begin(async (tx) => {
+    let n = 0;
+    for (const x of list) {
+      const r = await tx`
+        update hw_results set reason = ${x.reason}, updated_at = now()
+        where hw_id = ${hwId} and student_id = ${x.studentId} and problem_id = ${x.problemId}`;
+      n += r.count;
+    }
+    return n;
+  });
+}
+
 /** 학생: 받은 숙제 목록 (최근 순) + 내 결과 요약 */
 export async function studentHomeworkList(studentId: string) {
   const rows = await db()`
@@ -230,7 +261,8 @@ export async function getStudentHomework(studentId: string, hwId: string) {
     where h.hw_id = ${hwId}`;
   if (!h) return null;
   const [problems, results] = await Promise.all([hwProblems(hwId), hwResults(hwId, studentId)]);
-  return { hw: toSummary(h), problems, results };
+  // 틀린 이유는 선생님 화면과 리포트에만 쓴다
+  return { hw: toSummary(h), problems, results: results.map((r) => ({ ...r, reason: "" as const })) };
 }
 
 /** 학생 제출: 서버에서 정답과 비교해 채점하고 저장한다. 이미 냈으면 다시 받지 않는다. */
