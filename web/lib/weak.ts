@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "./db";
+import { isDue, reviewKey, reviewLabel, reviewStates } from "./review";
 
 /*
  * 약한 유형 숙제: 학생이 숙제에서 틀렸거나 선생님이 '어려워함'으로 표시한 문제의 유형(학년·단원·유형)을 찾아,
@@ -15,6 +16,7 @@ export type WeakType = {
   type: string;
   wrong: number; // 틀린 문제 수
   hard: number; // 어려워함 표시 수
+  review: { label: string; due: boolean; done: boolean } | null; // 복습 상태 (lib/review.ts)
   available: number; // 은행에 남은 (아직 안 받은) 같은 유형 문제 수
   picked: WeakProblem[];
 };
@@ -27,9 +29,17 @@ const same = (a: TypeKey, b: TypeKey) => a.grade === b.grade && a.unit === b.uni
 const PER_TYPE = 30;
 
 /**
- * chosen 이 있으면 선생님이 고른 유형(그 순서대로)으로만 고르고, 없으면 찾은 약한 유형을 많이 틀린 순으로 쓴다.
+ * chosen 이 있으면 선생님이 고른 유형(그 순서대로)으로만 고른다.
+ * 없으면 찾은 약한 유형 중 졸업하지 않은 것을 쓴다: 복습 날이 된 유형 먼저, 그다음 많이 틀린 순.
+ * dueOnly 면 복습 날이 된 유형만.
  */
-export async function weakPlan(studentId: string, count: number, verifiedOnly: boolean, chosen?: TypeKey[] | null): Promise<WeakPlan> {
+export async function weakPlan(
+  studentId: string,
+  count: number,
+  verifiedOnly: boolean,
+  chosen?: TypeKey[] | null,
+  dueOnly = false,
+): Promise<WeakPlan> {
   const sql = db();
   const weak = await sql`
     with mine as (
@@ -46,13 +56,29 @@ export async function weakPlan(studentId: string, count: number, verifiedOnly: b
     from mine m join problems p on p.id = m.problem_id
     group by p.grade, p.unit, p.type
     order by 2 * count(*) filter (where m.wrong) + count(*) filter (where m.hard) desc, max(m.created_at) desc`;
+  const states = new Map(((await reviewStates([studentId])).get(studentId) ?? []).map((r) => [reviewKey(r), r]));
+  const reviewOf = (k: TypeKey) => {
+    const r = states.get(reviewKey(k));
+    return r ? { label: reviewLabel(r), due: isDue(r), done: r.done, dueDay: r.due } : null;
+  };
   const detected = weak
     .filter((w) => w.type)
-    .map((w) => ({ grade: w.grade as string, unit: w.unit as string, type: w.type as string, wrong: w.wrong as number, hard: w.hard as number }));
+    .map((w) => {
+      const k = { grade: w.grade as string, unit: w.unit as string, type: w.type as string };
+      return { ...k, wrong: w.wrong as number, hard: w.hard as number, review: reviewOf(k) };
+    });
   const untyped = weak.filter((w) => !w.type).reduce((a, w) => a + (w.ids as string[]).length, 0);
+  const auto = detected
+    .filter((d) => !d.review?.done && (!dueOnly || d.review?.due))
+    .map((d, i) => ({ d, i }))
+    // 복습 날이 된 유형 먼저 (오래 밀린 것부터), 나머지는 많이 틀린 순 그대로
+    .sort((a, b) => Number(!!b.d.review?.due) - Number(!!a.d.review?.due) || (a.d.review?.due ? a.d.review.dueDay.localeCompare(b.d.review!.dueDay) : 0) || a.i - b.i)
+    .map(({ d }) => d);
   const typed = chosen
-    ? chosen.filter((k, i) => k.type && chosen.findIndex((x) => same(x, k)) === i).map((k) => detected.find((d) => same(d, k)) ?? { ...k, wrong: 0, hard: 0 })
-    : detected;
+    ? chosen
+        .filter((k, i) => k.type && chosen.findIndex((x) => same(x, k)) === i)
+        .map((k) => detected.find((d) => same(d, k)) ?? { ...k, wrong: 0, hard: 0, review: reviewOf(k) })
+    : auto;
   if (!typed.length) return { types: [], detected, untyped };
 
   const wrongIds = weak.flatMap((w) => w.ids as string[]);
@@ -106,6 +132,7 @@ export async function weakPlan(studentId: string, count: number, verifiedOnly: b
       type: w.type,
       wrong: w.wrong,
       hard: w.hard,
+      review: w.review && { label: w.review.label, due: w.review.due, done: w.review.done },
       available: avail[i],
       picked: picked[i],
     })),

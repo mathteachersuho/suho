@@ -3,6 +3,7 @@ import Link from "next/link";
 import { IconClipboard, IconPlus, IconSparkle } from "@/components/Icons";
 import { listHomeworkByClass, type ClassHomework } from "@/lib/homework";
 import { dayLabel, dueLabel, todaySeoul } from "@/lib/hwFormat";
+import { dueStudents } from "@/lib/review";
 
 export const metadata: Metadata = { title: "숙제 · 수학클래스룸" };
 
@@ -23,7 +24,7 @@ function groupBy<T>(xs: T[], key: (x: T) => string) {
 
 export default async function HomeworkList({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const sp = await searchParams;
-  const rows = await listHomeworkByClass();
+  const [rows, due] = await Promise.all([listHomeworkByClass(), dueStudents()]);
   const byClass = groupBy(rows, (h) => h.classId);
   const classes = [...byClass.keys()].sort(byKo);
   const want = typeof sp.class === "string" ? sp.class : undefined;
@@ -50,6 +51,18 @@ export default async function HomeworkList({ searchParams }: { searchParams: Pro
           </Link>
         </div>
       </div>
+
+      {due.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-accent/30 bg-accent-soft px-4 py-3">
+          <p className="text-sm">
+            <span className="font-semibold">오늘 복습할 학생 {due.size}명</span>
+            <span className="text-ink-soft"> · 전에 틀린 유형을 다시 풀 날이 됐어요</span>
+          </p>
+          <Link href="/teacher/homework/weak?due=1" className="btn-accent ml-auto px-3 py-1.5 text-sm">
+            복습 숙제 내기
+          </Link>
+        </div>
+      )}
 
       {!rows.length ? (
         <div className="card text-center">

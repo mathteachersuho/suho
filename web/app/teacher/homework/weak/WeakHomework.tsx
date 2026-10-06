@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { IconArrow, IconClipboard, IconPlus, IconSearch, IconX } from "@/components/Icons";
 import StudentPicker, { type PickStudent } from "@/components/StudentPicker";
 import { addDays } from "@/lib/hwFormat";
@@ -20,20 +20,23 @@ export default function WeakHomework({
   today,
   initial,
   outline,
+  review = false,
 }: {
   students: PickStudent[];
   today: string;
   initial: string[];
   outline: OutlineRow[];
+  review?: boolean; // 복습 숙제로 들어옴: 복습할 학생을 골라 두고 복습 날이 된 유형만
 }) {
   const [picked, setPicked] = useState<Set<string>>(new Set(initial));
   const [count, setCount] = useState(10);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const [dueOnly, setDueOnly] = useState(review);
   const [plans, setPlans] = useState<WeakPreview[] | null>(null);
   const [removed, setRemoved] = useState<Set<string>>(new Set()); // "학생/문제"
   const [chosen, setChosen] = useState<Record<string, Key[]>>({}); // 선생님이 직접 고른 유형 (학생마다)
   const [refining, setRefining] = useState("");
-  const [title, setTitle] = useState(`${Number(today.slice(5, 7))}/${Number(today.slice(8, 10))} 약한 유형 숙제`);
+  const [title, setTitle] = useState(`${Number(today.slice(5, 7))}/${Number(today.slice(8, 10))} ${review ? "복습 숙제" : "약한 유형 숙제"}`);
   const [due, setDue] = useState(addDays(today, 2));
   const [memo, setMemo] = useState("");
   const [error, setError] = useState("");
@@ -57,12 +60,21 @@ export default function WeakHomework({
     setError("");
     const order = students.filter((s) => picked.has(s.studentId)).map((s) => s.studentId);
     startFind(async () => {
-      const r = await weakPlanAction(order, count, verifiedOnly, chosen);
+      const r = await weakPlanAction(order, count, verifiedOnly, chosen, dueOnly);
       if ("error" in r) return setError(r.error);
       setRemoved(new Set());
       setPlans(r);
     });
   };
+
+  // 복습 숙제로 들어오면 골라 둔 학생으로 바로 찾는다
+  const started = useRef(false);
+  useEffect(() => {
+    if (review && initial.length && !started.current) {
+      started.current = true;
+      find();
+    }
+  });
 
   // 한 학생의 유형을 바꾸면 그 학생 문제만 다시 고른다. keys 가 null 이면 찾은 약한 유형으로 되돌린다.
   const refine = async (studentId: string, keys: Key[] | null) => {
@@ -72,7 +84,7 @@ export default function WeakHomework({
     setChosen(next);
     setRefining(studentId);
     setError("");
-    const r = await weakPlanAction([studentId], count, verifiedOnly, next);
+    const r = await weakPlanAction([studentId], count, verifiedOnly, next, dueOnly);
     setRefining("");
     if ("error" in r) return setError(r.error);
     setPlans((ps) => (ps ?? []).map((p) => (p.studentId === studentId ? r[0] : p)));
@@ -111,6 +123,14 @@ export default function WeakHomework({
         <p className="mt-1 text-sm text-ink-soft">
           학생이 숙제에서 틀렸거나 어려움으로 표시한 문제의 유형을 찾아, 문제 은행에서 아직 안 받은 같은 유형 문제로 학생마다 따로 숙제를 내요.
         </p>
+        <p className="mt-1 text-sm text-ink-soft">
+          틀린 유형은 3일, 7일, 14일 뒤에 다시 복습할 날이 와요. 복습에서 세 번 맞히면 졸업하고, 또 틀리면 3일 뒤부터 다시 시작해요.
+        </p>
+        {review && (
+          <p className="mt-2 rounded-xl bg-accent-soft px-3 py-2 text-sm">
+            {initial.length ? `오늘 복습할 유형이 있는 학생 ${initial.length}명을 골라 두었어요.` : "오늘 복습할 학생이 없어요."}
+          </p>
+        )}
       </div>
 
       {sent ? (
@@ -159,6 +179,18 @@ export default function WeakHomework({
                   className="h-4 w-4 accent-accent"
                 />
                 검수한 문제만
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={dueOnly}
+                  onChange={(e) => {
+                    setDueOnly(e.target.checked);
+                    reset();
+                  }}
+                  className="h-4 w-4 accent-accent"
+                />
+                복습 날이 된 유형만
               </label>
               <button type="button" className="btn-main ml-auto" disabled={!picked.size || finding} onClick={find}>
                 <IconSearch />
@@ -273,6 +305,7 @@ function StudentPlan({
             {chips.map((t) => {
               const active = onSet.has(keyOf(t));
               const stat = [t.wrong && `틀림 ${t.wrong}`, t.hard && `어려움 ${t.hard}`, active && `은행 ${t.available}`].filter(Boolean).join(" · ");
+              const rv = t.review;
               return (
                 <li key={keyOf(t)}>
                   <button
@@ -286,6 +319,15 @@ function StudentPlan({
                   >
                     <span className="font-semibold">{t.type}</span>
                     {stat && <span className={active ? "text-ink-soft" : ""}> · {stat}</span>}
+                    {rv && (
+                      <span
+                        className={`ml-1.5 inline-block rounded-full px-1.5 font-medium ${
+                          rv.due ? "bg-bad-soft text-bad" : rv.done ? "bg-surface-2 text-good" : "bg-surface-2 text-ink-soft"
+                        }`}
+                      >
+                        {rv.label}
+                      </span>
+                    )}
                   </button>
                 </li>
               );
