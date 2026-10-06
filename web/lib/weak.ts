@@ -7,6 +7,7 @@ import { db } from "./db";
  * 같은 묶음(틀린 문제와 함께 만든 유사문제) → 같은 문제틀 → 검수한 문제 → 최신 순으로 먼저 고른다.
  */
 
+export type TypeKey = { grade: string; unit: string; type: string };
 export type WeakProblem = { id: string; question: string; frame: string; difficulty: string; verified: boolean };
 export type WeakType = {
   grade: string;
@@ -17,12 +18,18 @@ export type WeakType = {
   available: number; // 은행에 남은 (아직 안 받은) 같은 유형 문제 수
   picked: WeakProblem[];
 };
-export type WeakPlan = { types: WeakType[]; untyped: number };
+/** types: 문제를 고른 유형들, detected: 숙제 결과에서 찾은 약한 유형 전부 (선생님이 끈 것 포함) */
+export type WeakPlan = { types: WeakType[]; detected: Omit<WeakType, "available" | "picked">[]; untyped: number };
+
+const same = (a: TypeKey, b: TypeKey) => a.grade === b.grade && a.unit === b.unit && a.type === b.type;
 
 /** 유형마다 미리 가져올 후보 수 (한 학생 숙제는 많아야 30문제) */
 const PER_TYPE = 30;
 
-export async function weakPlan(studentId: string, count: number, verifiedOnly: boolean): Promise<WeakPlan> {
+/**
+ * chosen 이 있으면 선생님이 고른 유형(그 순서대로)으로만 고르고, 없으면 찾은 약한 유형을 많이 틀린 순으로 쓴다.
+ */
+export async function weakPlan(studentId: string, count: number, verifiedOnly: boolean, chosen?: TypeKey[] | null): Promise<WeakPlan> {
   const sql = db();
   const weak = await sql`
     with mine as (
@@ -39,11 +46,16 @@ export async function weakPlan(studentId: string, count: number, verifiedOnly: b
     from mine m join problems p on p.id = m.problem_id
     group by p.grade, p.unit, p.type
     order by 2 * count(*) filter (where m.wrong) + count(*) filter (where m.hard) desc, max(m.created_at) desc`;
-  const typed = weak.filter((w) => w.type);
+  const detected = weak
+    .filter((w) => w.type)
+    .map((w) => ({ grade: w.grade as string, unit: w.unit as string, type: w.type as string, wrong: w.wrong as number, hard: w.hard as number }));
   const untyped = weak.filter((w) => !w.type).reduce((a, w) => a + (w.ids as string[]).length, 0);
-  if (!typed.length) return { types: [], untyped };
+  const typed = chosen
+    ? chosen.filter((k, i) => k.type && chosen.findIndex((x) => same(x, k)) === i).map((k) => detected.find((d) => same(d, k)) ?? { ...k, wrong: 0, hard: 0 })
+    : detected;
+  if (!typed.length) return { types: [], detected, untyped };
 
-  const wrongIds = typed.flatMap((w) => w.ids as string[]);
+  const wrongIds = weak.flatMap((w) => w.ids as string[]);
   const ords = typed.map((_, i) => i);
   const cands = await sql`
     select t.ord, c.id, c.question, c.frame, c.difficulty, c.verified, c.avail
@@ -87,6 +99,7 @@ export async function weakPlan(studentId: string, count: number, verifiedOnly: b
     if (!took) break;
   }
   return {
+    detected,
     types: typed.map((w, i) => ({
       grade: w.grade,
       unit: w.unit,

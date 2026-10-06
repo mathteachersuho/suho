@@ -8,7 +8,7 @@ import { getProblems } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
 import { reportError } from "@/lib/reportError";
 import { getStudent } from "@/lib/students";
-import { weakPlan } from "@/lib/weak";
+import { weakPlan, type TypeKey } from "@/lib/weak";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const ids = (v: unknown, max: number) =>
@@ -82,16 +82,37 @@ export async function deleteHomeworkAction(hwId: string) {
 
 export type WeakPreviewType = { grade: string; unit: string; type: string; wrong: number; hard: number; available: number };
 export type WeakPreviewProblem = { id: string; typeIndex: number; tag: string; html: string };
-export type WeakPreview = { studentId: string; types: WeakPreviewType[]; problems: WeakPreviewProblem[]; untyped: number };
+export type WeakPreview = {
+  studentId: string;
+  types: WeakPreviewType[]; // 문제를 고른 유형
+  detected: Omit<WeakPreviewType, "available">[]; // 숙제 결과에서 찾은 약한 유형 전부
+  chosen: boolean; // 선생님이 유형을 직접 골랐는가
+  problems: WeakPreviewProblem[];
+  untyped: number;
+};
+
+const typeKeys = (v: unknown): TypeKey[] | null =>
+  Array.isArray(v)
+    ? v
+        .filter((k) => k && typeof k.type === "string")
+        .slice(0, 20)
+        .map((k) => ({ grade: s(k.grade, 20), unit: s(k.unit, 60), type: s(k.type, 80) }))
+    : null;
 
 /** 약한 유형 숙제: 학생마다 약한 유형과 고른 문제를 미리 보여 준다 */
-export async function weakPlanAction(studentIds: string[], count: number, verifiedOnly: boolean): Promise<WeakPreview[] | { error: string }> {
+export async function weakPlanAction(
+  studentIds: string[],
+  count: number,
+  verifiedOnly: boolean,
+  chosen: Record<string, TypeKey[]> = {}, // 학생마다 선생님이 고른 유형 (없으면 찾은 약한 유형)
+): Promise<WeakPreview[] | { error: string }> {
   await requireTeacher();
   const n = Math.min(30, Math.max(1, Math.round(Number(count) || 10)));
   try {
     return await Promise.all(
       ids(studentIds, 60).map(async (studentId) => {
-        const plan = await weakPlan(studentId, n, !!verifiedOnly);
+        const keys = typeKeys(chosen && typeof chosen === "object" ? chosen[studentId] : null);
+        const plan = await weakPlan(studentId, n, !!verifiedOnly, keys);
         // 화면에서는 유형 순서가 아니라 돌아가며 고른 순서(유형이 섞이게)로 보여 준다
         const problems: WeakPreviewProblem[] = [];
         for (let round = 0; ; round++) {
@@ -108,6 +129,8 @@ export async function weakPlanAction(studentIds: string[], count: number, verifi
         return {
           studentId,
           types: plan.types.map((t) => ({ grade: t.grade, unit: t.unit, type: t.type, wrong: t.wrong, hard: t.hard, available: t.available })),
+          detected: plan.detected,
+          chosen: !!keys,
           problems,
           untyped: plan.untyped,
         };
