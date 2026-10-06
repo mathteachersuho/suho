@@ -4,7 +4,8 @@ import { Logo } from "./Brand";
 import { IconKey, IconLogout } from "./Icons";
 import NavLinks from "./NavLinks";
 
-export type NavItem = { label: string; icon?: React.ReactNode; href?: string };
+/** dot = 확인할 것이 있다는 작은 점 */
+export type NavItem = { label: string; icon?: React.ReactNode; href?: string; dot?: boolean };
 
 const SIDE_BTN =
   "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-ink-soft transition-colors hover:bg-surface-2 hover:text-ink";

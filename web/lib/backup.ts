@@ -57,6 +57,12 @@ export async function backupAge() {
   return { at, days: at ? Math.floor((Date.now() - Date.parse(at)) / 86_400_000) : null };
 }
 
+/** 위쪽 메뉴의 '백업'에 점을 찍을지: 학생이 있는데 일주일 넘게(또는 한 번도) 백업을 안 받았으면 */
+export async function backupDue() {
+  const [{ days }, [row]] = await Promise.all([backupAge(), db()`select exists (select 1 from students) as any`]);
+  return !!row?.any && (days === null || days >= 7);
+}
+
 async function markBackup(at: string) {
   await db()`
     insert into app_settings (key, value) values (${LAST}, ${at})

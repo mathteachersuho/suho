@@ -1,9 +1,11 @@
 import TopBar from "@/components/TopBar";
-import { IconBook, IconChart, IconClipboard, IconSparkle, IconUsers } from "@/components/Icons";
+import { IconBook, IconChart, IconClipboard, IconDownload, IconSparkle, IconUsers } from "@/components/Icons";
+import { backupDue } from "@/lib/backup";
 import { requireTeacher } from "@/lib/session";
 
 export default async function TeacherLayout({ children }: LayoutProps<"/teacher">) {
   await requireTeacher();
+  const due = await backupDue().catch(() => false);
   return (
     <>
       <TopBar
@@ -14,6 +16,7 @@ export default async function TeacherLayout({ children }: LayoutProps<"/teacher"
           { label: "숙제", icon: <IconClipboard />, href: "/teacher/homework" },
           { label: "학생 관리", icon: <IconUsers />, href: "/teacher" },
           { label: "리포트", icon: <IconChart />, href: "/teacher/report" },
+          { label: "백업", icon: <IconDownload />, href: "/teacher/backup", dot: due },
         ]}
       />
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</main>

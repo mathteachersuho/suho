@@ -463,3 +463,8 @@ body {
     padding: 0;
   }
 }
+
+/* 접고 펴는 칸(details)의 화살표: 펼치면 위로 */
+details[open] > summary .chev {
+  rotate: 180deg;
+}
