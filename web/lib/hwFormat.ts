@@ -35,3 +35,9 @@ export function addDays(ymd: string, n: number) {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 }
+
+/** 틀린 이유 (선생님이 채점 표에서 고름). short 는 표 칸에 넣는 짧은 글자 */
+export const REASONS = ["계산 실수", "개념 부족", "문제 이해"] as const;
+export type Reason = (typeof REASONS)[number];
+export const REASON_SHORT: Record<Reason, string> = { "계산 실수": "계산", "개념 부족": "개념", "문제 이해": "이해" };
+export const isReason = (v: unknown): v is Reason => typeof v === "string" && (REASONS as readonly string[]).includes(v);

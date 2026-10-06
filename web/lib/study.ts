@@ -1,6 +1,8 @@
 import "server-only";
 import { db } from "./db";
 import { gradeAnswer } from "./grade";
+import { reasonReady } from "./homework";
+import { isReason, type Reason } from "./hwFormat";
 
 /*
  * 학생 공부 도구: 오답노트(숙제에서 틀린 문제)와 중요 문제(학생이 별표한 문제).
@@ -28,6 +30,7 @@ export type WrongItem = StudyProblem & {
   starred: boolean;
   wrong: boolean; // false 면 맞았지만 선생님이 '어려워함'으로 표시한 문제
   tags: string[]; // 선생님 표시 (중요·어려워함)
+  reason: Reason | ""; // 선생님이 고른 틀린 이유 (선생님 화면에서만 채움)
   similar: StudyProblem[];
 };
 
@@ -61,18 +64,20 @@ const notSubmitted = (studentId: string) => db()`
  * 오답노트: 숙제에서 틀린(N) 문제와 선생님이 '어려워함'으로 표시한 문제, 최근 순. 같은 문제가 여러 번이면 가장 최근 것 하나만.
  * 문제마다 비슷한 문제(같은 묶음 → 같은 문제틀 순서, 아직 받지 않은 것) 2개까지 붙인다.
  */
-export async function wrongNotes(studentId: string, withSimilar = true): Promise<WrongItem[]> {
+export async function wrongNotes(studentId: string, withSimilar = true, withReason = false): Promise<WrongItem[]> {
   const sql = db();
+  const reasonCol = withReason && (await reasonReady()) ? sql`r.reason` : sql`''`;
   const rows = await sql`
     with wrong as (
       select distinct on (r.problem_id) r.problem_id, r.answer as my_answer, h.hw_id, h.title as hw_title,
-        (h.created_at at time zone 'Asia/Seoul')::date::text as day, h.created_at, r.correct = 'N' as is_wrong, r.tags
+        (h.created_at at time zone 'Asia/Seoul')::date::text as day, h.created_at, r.correct = 'N' as is_wrong, r.tags,
+        ${reasonCol} as reason
       from hw_results r join homework h on h.hw_id = r.hw_id
       where r.student_id = ${studentId} and (r.correct = 'N' or '어려워함' = any(r.tags))
       order by r.problem_id, h.created_at desc
     )
     select p.id, p.grade, p.unit, p.type, p.frame, p.difficulty, p.question, p.answer, p.solution, p.set_id,
-      coalesce(u.semester, '') as semester, w.my_answer, w.hw_id, w.hw_title, w.day, w.is_wrong, w.tags,
+      coalesce(u.semester, '') as semester, w.my_answer, w.hw_id, w.hw_title, w.day, w.is_wrong, w.tags, w.reason,
       exists(select 1 from stars s where s.student_id = ${studentId} and s.problem_id = p.id) as starred
     from wrong w join problems p on p.id = w.problem_id
     left join units u on u.grade = p.grade and u.unit = p.unit
@@ -109,6 +114,7 @@ export async function wrongNotes(studentId: string, withSimilar = true): Promise
     starred: r.starred as boolean,
     wrong: r.is_wrong as boolean,
     tags: teacherTags(r.tags),
+    reason: isReason(r.reason) ? r.reason : "",
     similar: byFor.get(r.id as string) ?? [],
   }));
 }

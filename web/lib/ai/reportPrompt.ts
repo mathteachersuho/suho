@@ -13,7 +13,12 @@ export function reportPrompt(name: string, r: ReportData) {
   const units = r.units.map((u) => `${u.unit} ${u.right}/${u.total}`).join(", ") || "(없음)";
   const weak = r.weak.map((t) => `${t.unit} › ${t.type} ${t.right}/${t.total}${t.hard ? ` (선생님이 어려움 표시 ${t.hard}문제)` : ""}`).join(", ") || "뚜렷한 약점 없음";
   const wrong =
-    r.wrong.map((w) => `- [${w.day}] ${w.unit} › ${w.type} | ${short(w.question)} | 학생 답: ${w.myAnswer || "(빈칸)"} | 정답: ${short(w.answer, 60)}`).join("\n") ||
+    r.wrong
+      .map(
+        (w) =>
+          `- [${w.day}] ${w.unit} › ${w.type} | ${short(w.question)} | 학생 답: ${w.myAnswer || "(빈칸)"} | 정답: ${short(w.answer, 60)}${w.reason ? ` | 선생님이 본 틀린 이유: ${w.reason}` : ""}`,
+      )
+      .join("\n") ||
     "(없음)";
   const exams =
     r.exams
@@ -35,6 +40,7 @@ export function reportPrompt(name: string, r: ReportData) {
 ${hw}
 - 단원별 (맞힌 수/푼 수): ${units}
 - 정답률이 낮거나 어려워하는 유형 (맞힌 수/푼 수): ${weak}
+- 선생님이 고른 틀린 이유 (문제 수): ${r.reasons.map((x) => `${x.reason} ${x.n}`).join(", ") || "(고른 것 없음)"}
 - 최근 틀린 문제:
 ${wrong}
 - 시험:
@@ -43,7 +49,7 @@ ${exams}
 [규칙]
 - analysis: 아래 네 칸을 이 순서로, 칸마다 1~3줄. 칸 제목은 그대로 쓰고 내용 줄은 "- "로 시작.
   ■ 자주 틀리는 유형
-  ■ 틀린 원인 (학생 답을 근거로 개념 이해 / 계산 실수 / 문제 해석 중 무엇인지)
+  ■ 틀린 원인 (선생님이 고른 틀린 이유가 있으면 그것을 먼저 근거로, 없으면 학생 답을 보고 개념 이해 / 계산 실수 / 문제 해석 중 무엇인지)
   ■ 시험과 연결해 본 점
   ■ 앞으로의 지도 계획
 - comment: 학부모님께 드리는 존댓말 4~6문장. 잘한 점 → 보완할 점 → 지도 계획 순서.

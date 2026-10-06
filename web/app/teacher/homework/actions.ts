@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createHomework, deleteHomework, hwTags, markResults, MARKS, priorCounts, tagResults, type Mark } from "@/lib/homework";
+import { createHomework, deleteHomework, hwTags, markResults, MARKS, priorCounts, setReasons, tagResults, type Mark } from "@/lib/homework";
+import { isReason } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import { getProblems } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
@@ -57,6 +58,7 @@ export async function markAction(
   hwId: string,
   marks: { studentId: string; problemId: string; correct: Mark }[],
   tags: { studentId: string; problemId: string; tags: string[] }[] = [],
+  reasons: { studentId: string; problemId: string; reason: string }[] = [],
 ) {
   await requireTeacher();
   const clean = (Array.isArray(marks) ? marks : [])
@@ -66,9 +68,14 @@ export async function markAction(
     .slice(0, 5000)
     .filter((t) => t && typeof t.studentId === "string" && typeof t.problemId === "string")
     .map((t) => ({ studentId: t.studentId, problemId: t.problemId, tags: hwTags(t.tags) }));
+  const cleanReasons = (Array.isArray(reasons) ? reasons : [])
+    .slice(0, 5000)
+    .filter((x) => x && typeof x.studentId === "string" && typeof x.problemId === "string")
+    .map((x) => ({ studentId: x.studentId, problemId: x.problemId, reason: isReason(x.reason) ? x.reason : ("" as const) }));
   try {
     // 채점을 먼저 저장해야 종이 숙제처럼 새로 생긴 칸에도 표시가 붙는다
-    const n = (await markResults(s(hwId, 40), clean)) + (await tagResults(s(hwId, 40), cleanTags));
+    const n =
+      (await markResults(s(hwId, 40), clean)) + (await tagResults(s(hwId, 40), cleanTags)) + (await setReasons(s(hwId, 40), cleanReasons));
     revalidatePath(`/teacher/homework/${hwId}`);
     revalidatePath("/teacher/homework");
     revalidatePath(`/student/homework/${hwId}`);
