@@ -25,6 +25,7 @@ export default function NavLinks({ items }: { items: NavItem[] }) {
           >
             {it.icon}
             {it.label}
+            {it.dot && <span className="h-1.5 w-1.5 rounded-full bg-bad" aria-label="확인할 것 있음" />}
           </Link>
         ) : (
           <span
