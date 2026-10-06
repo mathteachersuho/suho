@@ -10,6 +10,7 @@ import { getStudent } from "@/lib/students";
 import { parseMarkFilter, parseMarkOpen } from "@/lib/markedGroups";
 import { homeworkProgress, markedProblems, typeStats, wrongNotes, type MarkedItem, type WrongItem } from "@/lib/study";
 import { parseWrongQuery } from "@/lib/wrongGroups";
+import { isDue, reviewLabel, reviewStates } from "@/lib/review";
 
 export const metadata: Metadata = { title: "학생 기록 · 수학클래스룸" };
 
@@ -26,7 +27,15 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
   const keepMarks: Record<string, string> = { ...(f.length ? { f: f.join(",") } : {}), ...(openUnit && { u: openUnit }) };
   const s = await getStudent(id);
   if (!s) notFound();
-  const [stats, wrong, hw, marked] = await Promise.all([typeStats(id), wrongNotes(id, false), homeworkProgress(id), markedProblems(id)]);
+  const [stats, wrong, hw, marked, reviews] = await Promise.all([
+    typeStats(id),
+    wrongNotes(id, false),
+    homeworkProgress(id),
+    markedProblems(id),
+    reviewStates([id]).then((m) => m.get(id) ?? []),
+  ]);
+  const reviewOf = (unit: string, type: string) => reviews.find((r) => r.unit === unit && r.type === type);
+  const dueCount = reviews.filter((r) => isDue(r)).length;
   const graded = stats.reduce((a, t) => a + t.right + t.wrong, 0);
   const right = stats.reduce((a, t) => a + t.right, 0);
   const weak = stats.filter((t) => t.wrong > 0);
@@ -69,7 +78,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
           <p className="mt-4 text-sm text-ink-soft">아직 낸 숙제가 없어요.</p>
         ) : (
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[30rem] text-sm">
+            <table className="w-full min-w-[36rem] text-sm">
               <thead className="text-left text-xs text-ink-faint">
                 <tr className="border-b border-line">
                   <th className="py-2 pr-3 font-medium">단원</th>
@@ -77,12 +86,14 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
                   <th className="py-2 pr-3 text-right font-medium">푼 문제</th>
                   <th className="py-2 pr-3 text-right font-medium">틀림</th>
                   <th className="py-2 pr-3 text-right font-medium">어려움</th>
-                  <th className="py-2 font-medium">정답률</th>
+                  <th className="py-2 pr-3 font-medium">정답률</th>
+                  <th className="py-2 font-medium">복습</th>
                 </tr>
               </thead>
               <tbody>
                 {stats.map((t) => {
                   const r = pct(t.right, t.right + t.wrong);
+                  const rv = reviewOf(t.unit, t.type);
                   return (
                     <tr key={t.unit + "/" + t.type} className="border-b border-line last:border-0">
                       <td className="py-2 pr-3 text-ink-soft">{t.unit || "-"}</td>
@@ -90,7 +101,7 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
                       <td className="py-2 pr-3 text-right tabular-nums">{t.total}</td>
                       <td className={`py-2 pr-3 text-right tabular-nums ${t.wrong ? "font-semibold text-bad" : "text-ink-faint"}`}>{t.wrong}</td>
                       <td className={`py-2 pr-3 text-right tabular-nums ${t.hard ? "font-semibold text-accent" : "text-ink-faint"}`}>{t.hard}</td>
-                      <td className="py-2">
+                      <td className="py-2 pr-3">
                         {r === null ? (
                           <span className="text-ink-faint">채점 전</span>
                         ) : (
@@ -102,12 +113,23 @@ export default async function StudentRecord({ params, searchParams }: PageProps<
                           </span>
                         )}
                       </td>
+                      <td className={`whitespace-nowrap py-2 text-xs ${rv && isDue(rv) ? "font-semibold text-bad" : rv?.done ? "text-good" : "text-ink-soft"}`}>
+                        {rv ? reviewLabel(rv) : "-"}
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
+        )}
+        {dueCount > 0 && (
+          <p className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-semibold text-bad">오늘 복습할 유형 {dueCount}개</span>
+            <Link href={`/teacher/homework/weak?s=${encodeURIComponent(id)}`} className="text-accent underline">
+              약한 유형 숙제로 내기
+            </Link>
+          </p>
         )}
         {weak.length > 0 && (
           <p className="mt-3 text-sm">

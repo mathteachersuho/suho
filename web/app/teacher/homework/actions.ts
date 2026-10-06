@@ -80,7 +80,15 @@ export async function deleteHomeworkAction(hwId: string) {
   redirect("/teacher/homework");
 }
 
-export type WeakPreviewType = { grade: string; unit: string; type: string; wrong: number; hard: number; available: number };
+export type WeakPreviewType = {
+  grade: string;
+  unit: string;
+  type: string;
+  wrong: number;
+  hard: number;
+  review: { label: string; due: boolean; done: boolean } | null;
+  available: number;
+};
 export type WeakPreviewProblem = { id: string; typeIndex: number; tag: string; html: string };
 export type WeakPreview = {
   studentId: string;
@@ -105,6 +113,7 @@ export async function weakPlanAction(
   count: number,
   verifiedOnly: boolean,
   chosen: Record<string, TypeKey[]> = {}, // 학생마다 선생님이 고른 유형 (없으면 찾은 약한 유형)
+  dueOnly = false, // 복습 날이 된 유형만
 ): Promise<WeakPreview[] | { error: string }> {
   await requireTeacher();
   const n = Math.min(30, Math.max(1, Math.round(Number(count) || 10)));
@@ -112,7 +121,7 @@ export async function weakPlanAction(
     return await Promise.all(
       ids(studentIds, 60).map(async (studentId) => {
         const keys = typeKeys(chosen && typeof chosen === "object" ? chosen[studentId] : null);
-        const plan = await weakPlan(studentId, n, !!verifiedOnly, keys);
+        const plan = await weakPlan(studentId, n, !!verifiedOnly, keys, !!dueOnly);
         // 화면에서는 유형 순서가 아니라 돌아가며 고른 순서(유형이 섞이게)로 보여 준다
         const problems: WeakPreviewProblem[] = [];
         for (let round = 0; ; round++) {
@@ -128,8 +137,15 @@ export async function weakPlanAction(
         }
         return {
           studentId,
-          types: plan.types.map((t) => ({ grade: t.grade, unit: t.unit, type: t.type, wrong: t.wrong, hard: t.hard, available: t.available })),
-          detected: plan.detected,
+          types: plan.types.map((t) => ({ grade: t.grade, unit: t.unit, type: t.type, wrong: t.wrong, hard: t.hard, review: t.review, available: t.available })),
+          detected: plan.detected.map((t) => ({
+            grade: t.grade,
+            unit: t.unit,
+            type: t.type,
+            wrong: t.wrong,
+            hard: t.hard,
+            review: t.review && { label: t.review.label, due: t.review.due, done: t.review.done },
+          })),
           chosen: !!keys,
           problems,
           untyped: plan.untyped,
