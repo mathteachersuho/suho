@@ -28,3 +28,10 @@ export const TAG_STYLE: Record<string, { icon: string; cls: string; label: strin
   중요: { icon: "★", cls: "bg-warn-soft text-warn", label: "중요" },
   어려워함: { icon: "!", cls: "bg-accent-soft text-accent", label: "어려움" },
 };
+
+/** 'YYYY-MM-DD' + n일 */
+export function addDays(ymd: string, n: number) {
+  const d = new Date(ymd + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}

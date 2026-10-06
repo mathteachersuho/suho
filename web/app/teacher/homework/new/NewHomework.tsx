@@ -4,17 +4,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { IconArrow, IconClipboard } from "@/components/Icons";
+import StudentPicker from "@/components/StudentPicker";
+import { addDays } from "@/lib/hwFormat";
 import { cart, useCart } from "@/lib/cart";
 import { cartPreviewAction, createHomeworkAction } from "../actions";
 
 type Stu = { studentId: string; name: string; classId: string };
 type Preview = { id: string; tag: string; html: string };
-
-function addDays(ymd: string, n: number) {
-  const d = new Date(ymd + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
 
 /** 담은 문제로 숙제 내기: 이름, 마감일, 받는 학생(반 단위로 한 번에 고르기), 메모 */
 export default function NewHomework({ students, today }: { students: Stu[]; today: string }) {
@@ -39,25 +35,6 @@ export default function NewHomework({ students, today }: { students: Stu[]; toda
       alive = false;
     };
   }, [key]);
-
-  const classes = [...new Set(students.map((s) => s.classId))].sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b, "ko")));
-  const byClass = (c: string) => students.filter((s) => s.classId === c);
-  const toggle = (id: string) =>
-    setPicked((p) => {
-      const n = new Set(p);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
-  const setClass = (c: string, on: boolean) =>
-    setPicked((p) => {
-      const n = new Set(p);
-      for (const s of byClass(c)) {
-        if (on) n.add(s.studentId);
-        else n.delete(s.studentId);
-      }
-      return n;
-    });
 
   const submit = () => {
     setError("");
@@ -126,43 +103,7 @@ export default function NewHomework({ students, today }: { students: Stu[]; toda
               <h2 className="font-semibold">받는 학생</h2>
               <span className="text-sm text-ink-soft">{picked.size}명 골랐어요</span>
             </div>
-            {!students.length && (
-              <p className="text-sm text-ink-soft">
-                아직 학생이 없어요. <Link href="/teacher" className="text-accent underline">학생 관리</Link>에서 먼저 추가해 주세요.
-              </p>
-            )}
-            {classes.map((c) => {
-              const list = byClass(c);
-              const all = list.every((s) => picked.has(s.studentId));
-              return (
-                <div key={c || "none"} className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{c || "반 없음"}</span>
-                    <button type="button" className="btn-soft px-2.5 py-1 text-xs" onClick={() => setClass(c, !all)}>
-                      {all ? "반 전체 빼기" : "반 전체 고르기"}
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {list.map((s) => {
-                      const on = picked.has(s.studentId);
-                      return (
-                        <button
-                          key={s.studentId}
-                          type="button"
-                          aria-pressed={on}
-                          onClick={() => toggle(s.studentId)}
-                          className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
-                            on ? "border-accent bg-accent text-white" : "border-line bg-surface text-ink hover:bg-surface-2"
-                          }`}
-                        >
-                          {s.name || s.studentId}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
+            <StudentPicker students={students} picked={picked} onChange={setPicked} />
           </section>
 
           <section className="space-y-3">
