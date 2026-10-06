@@ -258,3 +258,41 @@ export async function submitHomework(
     return { ok: true as const, correct: rows.filter((r) => r.correct === "Y").length, total: rows.length };
   });
 }
+
+export type Repeat = { n: number; before: (Mark | "-")[] }; // n: 이번이 몇 번째, before: 전에 받았을 때의 결과 ('-' 안 냄)
+
+/**
+ * 선생님용: 이 숙제에서 학생이 전에 숙제로 받은 적 있는 문제. "학생\u0000문제" → 몇 번째인지와 전 결과.
+ * 이 숙제보다 먼저 낸 숙제만 센다.
+ */
+export async function homeworkRepeats(hwId: string): Promise<Record<string, Repeat>> {
+  const rows = await db()`
+    with me as (select created_at, hw_id from homework where hw_id = ${hwId})
+    select hs.student_id, hp.problem_id, count(*)::int as n,
+      array_agg(coalesce(nullif(r.correct, ''), case when r.problem_id is null then '-' else '' end) order by h.created_at, h.hw_id) as marks
+    from homework h
+    join homework_students hs on hs.hw_id = h.hw_id
+    join homework_problems hp on hp.hw_id = h.hw_id
+    left join hw_results r on r.hw_id = h.hw_id and r.student_id = hs.student_id and r.problem_id = hp.problem_id
+    where hs.student_id in (select student_id from homework_students where hw_id = ${hwId})
+      and hp.problem_id in (select problem_id from homework_problems where hw_id = ${hwId})
+      and (h.created_at, h.hw_id) <= (select created_at, hw_id from me)
+    group by hs.student_id, hp.problem_id
+    having count(*) > 1`;
+  return Object.fromEntries(
+    rows.map((r) => [`${r.student_id}\u0000${r.problem_id}`, { n: r.n as number, before: (r.marks as (Mark | "-")[]).slice(0, -1) }]),
+  );
+}
+
+/** 숙제 내기 전에: 고른 학생이 이 문제들을 전에 숙제로 몇 번 받았는지. 문제 → [학생, 받은 횟수] */
+export async function priorCounts(studentIds: string[], problemIds: string[]): Promise<Record<string, { studentId: string; n: number }[]>> {
+  if (!studentIds.length || !problemIds.length) return {};
+  const rows = await db()`
+    select hp.problem_id, hs.student_id, count(*)::int as n
+    from homework_problems hp join homework_students hs on hs.hw_id = hp.hw_id
+    where hp.problem_id = any(${problemIds}) and hs.student_id = any(${studentIds})
+    group by hp.problem_id, hs.student_id`;
+  const out: Record<string, { studentId: string; n: number }[]> = {};
+  for (const r of rows) (out[r.problem_id as string] ??= []).push({ studentId: r.student_id as string, n: r.n as number });
+  return out;
+}

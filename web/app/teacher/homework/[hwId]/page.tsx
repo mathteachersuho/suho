@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { IconArrow, IconPrinter } from "@/components/Icons";
-import { getHomework } from "@/lib/homework";
+import { getHomework, homeworkRepeats } from "@/lib/homework";
 import { dueLabel } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import DeleteHomework from "./DeleteHomework";
@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "숙제 현황 · 수학클래스룸"
 export default async function HomeworkDetail({ params, searchParams }: PageProps<"/teacher/homework/[hwId]">) {
   const { hwId } = await params;
   const isNew = (await searchParams).new === "1";
-  const data = await getHomework(hwId);
+  const [data, repeats] = await Promise.all([getHomework(hwId), homeworkRepeats(hwId)]);
   if (!data) notFound();
   const { hw, problems, students, results } = data;
   const submitted = new Set(results.map((r) => r.studentId)).size;
@@ -58,6 +58,7 @@ export default async function HomeworkDetail({ params, searchParams }: PageProps
           problems={problems.map((p) => ({ id: p.id, answer: p.answer }))}
           students={students}
           results={results}
+          repeats={repeats}
         />
       </section>
 
@@ -68,6 +69,13 @@ export default async function HomeworkDetail({ params, searchParams }: PageProps
             <li key={p.id} className="card p-4 sm:p-5">
               <p className="mb-2 text-sm font-semibold">
                 {i + 1}번 <span className="font-normal text-ink-faint">{[p.type, p.frame, p.difficulty].filter(Boolean).join(" · ")}</span>
+                {(() => {
+                  const again = students.flatMap((s) => {
+                    const r = repeats[`${s.studentId}\u0000${p.id}`];
+                    return r ? [`${s.name || s.studentId} ${r.n}번째`] : [];
+                  });
+                  return again.length > 0 && <span className="ml-2 rounded bg-warn-soft px-1.5 py-0.5 text-xs font-medium text-warn">다시 푸는 학생: {again.join(", ")}</span>;
+                })()}
               </p>
               <div className="problem-body" dangerouslySetInnerHTML={{ __html: renderProblemHtml(p.question) }} />
               <details className="mt-3 border-t border-line pt-3 text-sm">
