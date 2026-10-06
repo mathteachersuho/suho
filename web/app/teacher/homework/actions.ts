@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createHomework, deleteHomework, hwTags, markResults, MARKS, tagResults, type Mark } from "@/lib/homework";
+import { createHomework, deleteHomework, hwTags, markResults, MARKS, priorCounts, tagResults, type Mark } from "@/lib/homework";
 import { renderProblemHtml } from "@/lib/mathText";
 import { getProblems } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
@@ -19,6 +19,12 @@ export async function cartPreviewAction(problemIds: string[]) {
   await requireTeacher();
   const ps = await getProblems(ids(problemIds, 60));
   return ps.map((p) => ({ id: p.id, tag: [p.type, p.frame, p.difficulty].filter(Boolean).join(" · "), html: renderProblemHtml(p.question) }));
+}
+
+/** 숙제 내기 화면: 고른 학생이 담은 문제를 전에 받은 적 있는지 (선생님에게만 보임) */
+export async function priorCountsAction(studentIds: string[], problemIds: string[]) {
+  await requireTeacher();
+  return priorCounts(ids(studentIds, 300), ids(problemIds, 60));
 }
 
 export async function createHomeworkAction(input: {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import type { HwResult, HwTag, Mark } from "@/lib/homework";
+import type { HwResult, HwTag, Mark, Repeat } from "@/lib/homework";
 import { MARK_LABEL, TAG_STYLE } from "@/lib/hwFormat";
 import { markAction } from "../actions";
 
@@ -30,11 +30,13 @@ export default function MarkGrid({
   problems,
   students,
   results,
+  repeats = {},
 }: {
   hwId: string;
   problems: { id: string; answer: string }[];
   students: Stu[];
   results: HwResult[];
+  repeats?: Record<string, Repeat>; // 전에 받은 적 있는 칸: 몇 번째인지 (선생님 화면에만)
 }) {
   const saved = new Map(results.map((r) => [key(r.studentId, r.problemId), r]));
   const [mode, setMode] = useState<Mode>("mark");
@@ -165,17 +167,27 @@ export default function MarkGrid({
                     const tags = tagsOf(s.studentId, p.id);
                     const changed = edits.has(k) || tagEdits.has(k);
                     const off = mode !== "mark" && !canTag(s.studentId, p.id);
+                    const again = repeats[k];
+                    const tip = [
+                      r?.answer ? `학생 답: ${r.answer}` : "학생 답 없음",
+                      again && `이 학생이 ${again.n}번째 푸는 문제 · 전에: ${again.before.map((b) => (b === "-" ? "안 냄" : MARK_LABEL[b] || "채점 전")).join(", ")}`,
+                    ]
+                      .filter(Boolean)
+                      .join("\n");
                     return (
                       <td key={p.id} className="p-0.5 text-center">
                         <button
                           type="button"
                           onClick={() => clickCell(s.studentId, p.id)}
-                          title={r?.answer ? `학생 답: ${r.answer}` : "학생 답 없음"}
-                          aria-label={`${s.name || s.studentId} ${i + 1}번: ${MARK_LABEL[m] || "빈칸"}${tags.length ? `, ${tags.map((t) => TAG_STYLE[t].label).join(", ")}` : ""}`}
+                          title={tip}
+                          aria-label={`${s.name || s.studentId} ${i + 1}번: ${MARK_LABEL[m] || "빈칸"}${tags.length ? `, ${tags.map((t) => TAG_STYLE[t].label).join(", ")}` : ""}${again ? `, ${again.n}번째` : ""}`}
                           className={`relative flex h-12 w-full min-w-12 flex-col items-center justify-center rounded-lg hover:bg-surface-2 ${changed ? "ring-2 ring-accent/60" : ""} ${off ? "opacity-40" : ""}`}
                         >
                           <span className={`text-base font-bold leading-none ${tone[m]}`}>{MARK_LABEL[m] || "·"}</span>
                           {r?.answer && <span className="mt-1 max-w-16 truncate text-[11px] leading-none text-ink-faint">{r.answer}</span>}
+                          {again && (
+                            <span className="absolute left-0.5 top-0.5 rounded bg-warn-soft px-1 text-[10px] font-bold leading-4 text-warn">{again.n}회</span>
+                          )}
                           {tags.length > 0 && (
                             <span className="absolute right-0.5 top-0.5 flex gap-0.5">
                               {tags.map((t) => (
@@ -213,7 +225,9 @@ export default function MarkGrid({
           </button>
         )}
         {msg && <p className={`text-sm ${msg.ok ? "text-good" : "text-bad"}`}>{msg.text}</p>}
-        <p className="ml-auto text-xs text-ink-faint">O 맞음 · X 틀림 · ? 확인 필요 · ★ 중요 · ! 어려움</p>
+        <p className="ml-auto text-xs text-ink-faint">
+          O 맞음 · X 틀림 · ? 확인 필요 · ★ 중요 · ! 어려움{Object.keys(repeats).length > 0 && " · 2회 = 이 학생이 두 번째 푸는 문제 (선생님 화면에만 보여요)"}
+        </p>
       </div>
     </div>
   );

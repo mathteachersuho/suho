@@ -7,7 +7,7 @@ import { IconArrow, IconClipboard } from "@/components/Icons";
 import StudentPicker from "@/components/StudentPicker";
 import { addDays } from "@/lib/hwFormat";
 import { cart, useCart } from "@/lib/cart";
-import { cartPreviewAction, createHomeworkAction } from "../actions";
+import { cartPreviewAction, createHomeworkAction, priorCountsAction } from "../actions";
 
 type Stu = { studentId: string; name: string; classId: string };
 type Preview = { id: string; tag: string; html: string };
@@ -55,6 +55,22 @@ export default function NewHomework({ students, today }: { students: Stu[]; toda
       router.push(`/teacher/homework/${r.hwId}?new=1`);
     });
   };
+
+  // 고른 학생이 전에 받은 적 있는 문제 (선생님에게만 보임)
+  const [prior, setPrior] = useState<Record<string, { studentId: string; n: number }[]>>({});
+  const pickKey = [...picked].sort().join(",");
+  useEffect(() => {
+    let alive = true;
+    const list = key ? key.split(",") : [];
+    const studs = pickKey ? pickKey.split(",") : [];
+    if (!list.length || !studs.length) {
+      Promise.resolve().then(() => alive && setPrior({}));
+    } else priorCountsAction(studs, list).then((p) => alive && setPrior(p));
+    return () => {
+      alive = false;
+    };
+  }, [key, pickKey]);
+  const nameOf = (id: string) => students.find((s) => s.studentId === id)?.name || id;
 
   const shown = ids.length ? preview : [];
 
@@ -123,6 +139,11 @@ export default function NewHomework({ students, today }: { students: Stu[]; toda
                     <div className="min-w-0 flex-1">
                       {p.tag && <p className="mb-1 text-xs text-ink-faint">{p.tag}</p>}
                       <div className="problem-body line-clamp-4 text-sm" dangerouslySetInnerHTML={{ __html: p.html }} />
+                      {prior[p.id]?.length > 0 && (
+                        <p className="mt-1.5 text-xs text-warn">
+                          다시 푸는 학생: {prior[p.id].map((x) => `${nameOf(x.studentId)} (이번이 ${x.n + 1}번째)`).join(", ")}
+                        </p>
+                      )}
                     </div>
                   </li>
                 ))}
