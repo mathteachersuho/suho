@@ -1,7 +1,7 @@
 // 숫자만 넣는 답 틀이 정답 모양대로 만들어지고 바르게 채점되는지 지키는 시험. 실행: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { answerTemplate, answerTemplateWithValues, countSlots, gradeSlots, toAnswer, type TNode } from "../lib/answerTemplate.ts";
+import { answerTemplate, answerTemplateWithValues, countSlots, gradeSlots, gradeText, toAnswer, type TNode } from "../lib/answerTemplate.ts";
 
 const tpl = (a: string) => {
   const t = answerTemplateWithValues(a);
@@ -85,3 +85,17 @@ test("빈칸이 하나라도 비면 답 글자는 비어 있다", () => {
   assert.equal(toAnswer(t, ["3"]), "");
   assert.equal(toAnswer(t, ["3a", "4"]), "3/4");
 });
+
+const texts: [string, string, "Y" | "N" | "?" | null, string][] = [
+  ["$\\frac{x+1}{2}$", "(x+1)/2", "Y", "정답과 같은 글자"],
+  ["$\\frac{x+1}{2}$", "x/2+1/2", "?", "값은 같고 꼴이 다름 → 선생님 확인"],
+  ["$\\frac{x+1}{2}$", "(x+2)/2", "N", "값이 다름"],
+  ["$\\frac{\\sqrt{3}}{2}$", "√3/2", "Y", "루트 분수 글자"],
+  ["$x^2+3x-4$", "x²+3x-4", "Y", "제곱 기호"],
+  ["$x^2+3x-4$", "(x+4)(x-1)", "?", "인수분해한 꼴"],
+  ["$x^2+3x-4$", "x^2-3x-4", "N", "부호가 다름"],
+  ["$3$", "x=3", null, "조각 수가 다르면 원래 채점"],
+];
+for (const [answer, given, want, why] of texts) {
+  test(`다른 모양으로 쓴 답: ${why}`, () => assert.equal(gradeText(given, tpl(answer)), want));
+}

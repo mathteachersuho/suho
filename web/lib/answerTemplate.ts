@@ -338,7 +338,9 @@ export function evaluate(tpl: TNode[], values: string[]): number[] | null {
         for (const ch of x.v) {
           if (ch === " ") continue;
           if (ch === "π") add("p");
-          else if ("+-()".includes(ch)) add(ch);
+          else if ("+-()/*".includes(ch)) add(ch);
+          else if (ch === "√") add("s");
+          else if (ch === "²" || ch === "³") add(`^(${ch === "²" ? 2 : 3})`);
           else if (ch === "−") add("-");
           else if (ch === "×") add("*");
           else if (ch === "÷") add("/");
@@ -361,6 +363,25 @@ export function evaluate(tpl: TNode[], values: string[]): number[] | null {
     }
   }
   return out.length ? out : null;
+}
+
+/**
+ * 학생이 틀 대신 글자로 쓴 답(x/2+1/2, √3/2 …)을 정답 틀과 비교한다.
+ *  - 정답을 글자로 쓴 것과 같으면 Y
+ *  - 값은 같고 꼴만 다르면 '?' (전개·약분처럼 꼴을 묻는 문제가 있어 선생님이 확인)
+ *  - 값이 다르면 N
+ * 어느 한쪽이라도 계산할 수 없거나 조각 수가 다르면 null (원래 채점 결과를 쓴다).
+ */
+export function gradeText(given: string, tpl: TNode[]): "Y" | "N" | "?" | null {
+  const want = slotKinds(tpl).map((x) => x.v);
+  const norm = (v: string) => v.replace(/\s+/g, "").replace(/[*·]/g, "×").replace(/\^2/g, "²").replace(/\^3/g, "³").replace(/\((√[\w.]+)\)/g, "$1");
+  if (norm(given) === norm(toAnswer(tpl, want))) return "Y";
+  const mine = answerTemplateWithValues(given.replace(/\s+/g, " "));
+  if (!mine) return null;
+  const a = evaluate(tpl, want);
+  const b = evaluate(mine, slotKinds(mine).map((x) => x.v));
+  if (!a || !b || a.length !== b.length) return null;
+  return a.every((x, i) => Math.abs(x - b[i]) <= 1e-9 * Math.max(1, Math.abs(x))) ? "?" : "N";
 }
 
 /** 작은 계산기: + - * / ^ 괄호, s(...) 루트, p 파이, 곱셈 생략 */

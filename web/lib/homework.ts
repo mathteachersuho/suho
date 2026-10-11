@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "./db";
-import { answerTemplateWithValues, countSlots, gradeSlots, toAnswer } from "./answerTemplate";
+import { answerTemplateWithValues, countSlots, gradeSlots, gradeText, toAnswer } from "./answerTemplate";
 import { gradeAnswer } from "./grade";
 import { isReason, type Reason } from "./hwFormat";
 
@@ -294,7 +294,11 @@ export async function submitHomework(
         return { ...base, answer: given, correct: given ? gradeSlots(tpl, vals) : "N" };
       }
       const given = String(answers[p.id as string] ?? "").trim().slice(0, 500);
-      return { ...base, answer: given, correct: gradeAnswer(given, p.answer as string) };
+      let correct = gradeAnswer(given, p.answer as string);
+      // 틀을 만들 수 있는 정답인데 학생이 '다른 모양으로 쓰기'로 낸 답: 값으로 한 번 더 비교한다 (값이 다르면 틀림, 꼴만 다르면 '?')
+      const ans = correct !== "Y" && given ? answerTemplateWithValues(p.answer as string) : null;
+      if (ans) correct = gradeText(given, ans) ?? correct;
+      return { ...base, answer: given, correct };
     });
     if (!rows.length) return { ok: false as const, error: "숙제에 문제가 없어요." };
     await tx`insert into hw_results ${tx(rows, "hw_id", "student_id", "problem_id", "answer", "correct", "graded_by")}`;
