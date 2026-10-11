@@ -23,7 +23,6 @@ export default function DeleteProblem({ id, no }: { id: string; no?: number }) {
       const lines = [`${label}를 문제 은행에서 지울까요? 되돌릴 수 없어요.`];
       if (u.homework) lines.push(`\n· 숙제 ${u.homework}개에 들어 있어요. 그 숙제에서도 빠져요.`);
       if (u.answers) lines.push(`· 학생이 이 문제에 낸 답과 채점 ${u.answers}개도 함께 지워져요.`);
-      if (u.assigned) lines.push(`· 학생 ${u.assigned}명에게 배정한 기록도 지워져요.`);
       if (!confirm(lines.join("\n"))) return;
       const r = await deleteProblemAction(id);
       cart.remove(id);

@@ -95,7 +95,6 @@ export async function weakPlan(
         and not exists (
           select 1 from homework_problems hp join homework_students hs on hs.hw_id = hp.hw_id
           where hp.problem_id = q.id and hs.student_id = ${studentId})
-        and not exists (select 1 from assignments a where a.problem_id = q.id and a.student_id = ${studentId})
       order by
         exists (select 1 from problems w where w.id = any(${wrongIds}) and w.set_id = q.set_id) desc,
         exists (select 1 from problems w where w.id = any(${wrongIds}) and w.type = q.type and w.frame <> '' and w.frame = q.frame) desc,
