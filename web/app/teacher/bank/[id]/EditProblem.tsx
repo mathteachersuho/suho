@@ -11,6 +11,7 @@ import { aiEditAction } from "../../create/actions";
 import AskBox from "../../create/AskBox";
 import ClassPicker from "../../create/ClassPicker";
 import RichEditor from "../../create/RichEditor";
+import AnswerFramePreview from "@/components/AnswerFramePreview";
 import { usePreview } from "../../create/usePreview";
 import { updateProblemAction } from "../actions";
 
@@ -161,6 +162,7 @@ export default function EditProblem({
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-ink-soft">정답</span>
               <textarea value={v.answer} onChange={(e) => set({ answer: e.target.value })} rows={2} className="field font-mono text-sm" />
+              <AnswerFramePreview answer={v.answer} />
             </label>
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-ink-soft">풀이</span>
@@ -170,7 +172,10 @@ export default function EditProblem({
         ) : (
           <>
             <RichEditor label="문제" value={v.question} onChange={(q) => set({ question: q })} minRows={4} />
-            <RichEditor label="정답" value={v.answer} onChange={(a) => set({ answer: a })} minRows={1} />
+            <div>
+              <RichEditor label="정답" value={v.answer} onChange={(a) => set({ answer: a })} minRows={1} />
+              <AnswerFramePreview answer={v.answer} />
+            </div>
             <RichEditor label="풀이" value={v.solution} onChange={(s) => set({ solution: s })} minRows={4} />
           </>
         )}

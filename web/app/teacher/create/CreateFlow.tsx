@@ -9,6 +9,7 @@ import { aiEditAction, generateAction, ocrAction, regenerateAction, saveAction }
 import AskBox from "./AskBox";
 import ClassPicker from "./ClassPicker";
 import RichEditor from "./RichEditor";
+import AnswerFramePreview from "@/components/AnswerFramePreview";
 import { shrinkImage } from "./image";
 import type { Classification, Source } from "./types";
 import { usePreview } from "./usePreview";
@@ -484,6 +485,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
                               <label className="block">
                                 <span className="mb-1 block text-xs font-medium text-ink-soft">정답</span>
                                 <textarea value={c.answer} onChange={(e) => update(i, { answer: e.target.value })} rows={3} className="field font-mono text-sm" />
+                                <AnswerFramePreview answer={c.answer} />
                               </label>
                               <label className="block">
                                 <span className="mb-1 block text-xs font-medium text-ink-soft">풀이</span>
@@ -494,7 +496,10 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
                         ) : (
                           <>
                             <RichEditor label="문제" value={c.question} onChange={(v) => update(i, { question: v })} minRows={4} />
-                            <RichEditor label="정답" value={c.answer} onChange={(v) => update(i, { answer: v })} minRows={1} />
+                            <div>
+                              <RichEditor label="정답" value={c.answer} onChange={(v) => update(i, { answer: v })} minRows={1} />
+                              <AnswerFramePreview answer={c.answer} />
+                            </div>
                             <RichEditor label="풀이" value={c.solution} onChange={(v) => update(i, { solution: v })} minRows={4} />
                           </>
                         )}
