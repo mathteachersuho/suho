@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
+import DifficultyBadge from "@/components/DifficultyBadge";
 import { IconPlus, IconSearch, IconX } from "@/components/Icons";
 import { weakPlanAction, type WeakPreview } from "../actions";
 
@@ -251,7 +252,10 @@ function StudentPlan({
                   <li key={q.id} className="flex gap-3 rounded-xl border border-line p-3">
                     <span className="mt-0.5 shrink-0 font-semibold tabular-nums text-ink-soft">{i + 1}</span>
                     <div className="min-w-0 flex-1">
-                      <p className="mb-1 text-xs text-ink-faint">{q.tag}</p>
+                      <p className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-faint">
+                        <DifficultyBadge level={q.difficulty} />
+                        {q.tag}
+                      </p>
                       <div className="problem-body line-clamp-4 text-sm" dangerouslySetInnerHTML={{ __html: q.html }} />
                     </div>
                     <button type="button" aria-label="이 문제 빼기" title="빼기" className="btn-soft h-8 w-8 shrink-0 p-0" onClick={() => onRemove(q.id)}>

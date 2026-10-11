@@ -1,11 +1,6 @@
 import { renderProblemHtml } from "@/lib/mathText";
 import type { Problem } from "@/lib/problems";
-
-const DIFF_STYLE: Record<string, string> = {
-  하: "text-good border-good/30",
-  중: "text-accent border-accent/30",
-  상: "text-bad border-bad/30",
-};
+import DifficultyBadge from "./DifficultyBadge";
 
 /** 문제 한 개: 분류, 문제, (펼치면) 정답과 풀이. 오른쪽 위 action 칸에 버튼을 넣을 수 있다. */
 export default function ProblemCard({ p, no, action }: { p: Problem; no?: number; action?: React.ReactNode }) {
@@ -18,9 +13,7 @@ export default function ProblemCard({ p, no, action }: { p: Problem; no?: number
             {no !== undefined && <span className="font-semibold text-ink-soft tabular-nums">{no}</span>}
             <span className="truncate">{path || "분류 없음"}</span>
             {p.frame && <span className="rounded bg-surface-2 px-1.5 py-0.5 text-ink-soft">{p.frame}</span>}
-            {p.difficulty && (
-              <span className={`rounded border px-1.5 py-0.5 font-semibold ${DIFF_STYLE[p.difficulty] ?? ""}`}>{p.difficulty}</span>
-            )}
+            <DifficultyBadge level={p.difficulty} />
             {p.verified && <span className="text-good">검토함</span>}
           </p>
         </div>
