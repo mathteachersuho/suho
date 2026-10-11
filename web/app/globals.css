@@ -191,6 +191,11 @@ body {
   font-size: 10.5pt;
   color-scheme: light;
 }
+/* 문제 쪽은 A4 한 장 높이로 고정: 문제가 길면 늘어나지 않고 칸 안에 줄여 넣는다 (Sheet.tsx fitItems) */
+.sheet-page:not(.sheet-answers) {
+  height: 297mm;
+  overflow: hidden;
+}
 .sheet-head {
   display: flex;
   align-items: flex-end;
@@ -212,32 +217,33 @@ body {
 }
 .sheet-grid {
   flex: 1;
+  min-height: 0;
   display: grid;
-  height: calc(297mm - 24mm - 16mm);
 }
+/* 칸 높이는 내용과 상관없이 똑같이 나눈다 (1fr 은 내용이 길면 칸이 늘어나 쪽을 넘긴다) */
 .sheet-grid.per-1 {
-  grid-template-rows: 1fr;
+  grid-template-rows: minmax(0, 1fr);
 }
 .sheet-grid.per-2 {
-  grid-template-rows: 1fr 1fr;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
 }
 .sheet-grid.per-4 {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   column-gap: 6mm;
 }
 /* 5·6문제: 시험지처럼 두 단, 왼쪽 단을 먼저 위에서 아래로 채운다 (5문제는 왼쪽 3, 오른쪽 2) */
 .sheet-grid.per-5,
 .sheet-grid.per-6 {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-auto-flow: column;
   column-gap: 6mm;
 }
 .sheet-grid.per-6 {
-  grid-template-rows: repeat(3, 1fr);
+  grid-template-rows: repeat(3, minmax(0, 1fr));
 }
 .sheet-grid.per-5 {
-  grid-template-rows: repeat(6, 1fr);
+  grid-template-rows: repeat(6, minmax(0, 1fr));
 }
 .sheet-grid.per-5 .sheet-item {
   grid-row: span 2;
@@ -292,11 +298,26 @@ body {
 }
 .sheet-work {
   flex: 1;
-  min-height: 20mm;
+  min-height: 0;
+}
+.sheet-page .mt-figure {
+  margin: 4px 0;
 }
 .sheet-page .mt-figure > div {
   border: none;
   padding: 0;
+}
+/* 쪽당 문제가 많으면 그림부터 작게 (글자는 그대로 두고 칸에 들어가게) */
+.sheet-grid.per-4 .mt-figure svg {
+  max-height: 55mm;
+  width: auto;
+  max-width: 100%;
+}
+.sheet-grid.per-5 .mt-figure svg,
+.sheet-grid.per-6 .mt-figure svg {
+  max-height: 32mm;
+  width: auto;
+  max-width: 100%;
 }
 .sheet-tools {
   position: absolute;

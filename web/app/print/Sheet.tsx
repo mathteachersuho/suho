@@ -1,13 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cart } from "@/lib/cart";
 import { IconArrow, IconDown, IconPrinter, IconUp, IconX } from "@/components/Icons";
 
 export type SheetItem = { id: string; tag: string; question: string; answer: string; solution: string };
 
 const PER_PAGE = [1, 2, 4, 5, 6] as const;
+
+/** 풀이 공간으로 남겨 둘 최소 높이 (쪽당 문제가 많을수록 작게) */
+const WORK_PX: Record<number, number> = { 1: 120, 2: 90, 4: 60, 5: 24, 6: 24 };
+
+/**
+ * 문제 칸마다 문제(번호+지문)가 칸 높이를 넘으면 글자·그림을 같은 비율로 줄여 칸 안에 넣는다.
+ * 쪽 높이는 A4로 고정이라, 이렇게 하면 '쪽당 N문제'가 언제나 A4 한 장에 들어간다.
+ */
+function fitItems(root: HTMLElement | null, per: number) {
+  if (!root) return;
+  for (const item of root.querySelectorAll<HTMLElement>(".sheet-item")) {
+    const fit = item.querySelector<HTMLElement>(".sheet-fit");
+    if (!fit) continue;
+    fit.style.zoom = "1";
+    const cs = getComputedStyle(item);
+    const room = item.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - (WORK_PX[per] ?? 40);
+    const need = fit.scrollHeight;
+    fit.style.zoom = need > room && room > 0 ? String(Math.max(0.45, room / need)) : "1";
+  }
+}
 
 function chunk<T>(xs: T[], n: number) {
   const out: T[][] = [];
@@ -45,6 +65,25 @@ export default function Sheet({ items, defaultTitle, missing }: { items: SheetIt
   };
 
   const pages = chunk(list, per);
+
+  // 문제가 칸보다 길면 줄여 넣는다. 그림·글꼴이 늦게 불러와져도, 인쇄 직전에도 다시 맞춘다.
+  const wrap = useRef<HTMLDivElement>(null);
+  const key = `${per}|${order.join(",")}|${title}`;
+  useLayoutEffect(() => fitItems(wrap.current, per), [key, per]);
+  useEffect(() => {
+    const again = () => fitItems(wrap.current, per);
+    document.fonts?.ready.then(again);
+    window.addEventListener("load", again);
+    window.addEventListener("beforeprint", again);
+    const imgs = [...(wrap.current?.querySelectorAll("img") ?? [])];
+    imgs.forEach((im) => im.addEventListener("load", again));
+    return () => {
+      window.removeEventListener("load", again);
+      window.removeEventListener("beforeprint", again);
+      imgs.forEach((im) => im.removeEventListener("load", again));
+    };
+  }, [key, per]);
+
   return (
     <div className="min-h-full bg-surface-2 print:bg-white">
       <div className="sticky top-0 z-10 border-b border-line bg-surface/90 backdrop-blur-md print:hidden">
@@ -91,7 +130,7 @@ export default function Sheet({ items, defaultTitle, missing }: { items: SheetIt
           </Link>
         </div>
       ) : (
-        <div className="sheet-wrap">
+        <div className="sheet-wrap" ref={wrap}>
           {pages.map((group, pi) => (
             <section key={pi} className="sheet-page">
               <header className="sheet-head">
@@ -114,11 +153,13 @@ export default function Sheet({ items, defaultTitle, missing }: { items: SheetIt
                           <IconX />
                         </button>
                       </div>
-                      <p className="sheet-no">
-                        {no}
-                        {it.tag && <span>{it.tag}</span>}
-                      </p>
-                      <div className="problem-body" dangerouslySetInnerHTML={{ __html: it.question }} />
+                      <div className="sheet-fit">
+                        <p className="sheet-no">
+                          {no}
+                          {it.tag && <span>{it.tag}</span>}
+                        </p>
+                        <div className="problem-body" dangerouslySetInnerHTML={{ __html: it.question }} />
+                      </div>
                       <div className="sheet-work" />
                     </div>
                   );
