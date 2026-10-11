@@ -71,7 +71,7 @@ export function answerTemplateWithValues(answer: string): TNode[] | null {
   const ox = /^\$?\s*(O|X|○|×|\\bigcirc|\\times)\s*\$?$/.exec(src);
   if (ox) return [{ t: "slot", k: "ox", v: /O|○|bigcirc/.test(ox[1]) ? "O" : "X" }];
   try {
-    const nodes = merge(parse(src.replace(/\$/g, "")));
+    const nodes = merge(fixLetters(merge(orient(merge(parse(src.replace(/\$/g, "")))))));
     const n = countSlots(nodes);
     return n === 0 || n > 12 ? null : nodes;
   } catch (e) {
@@ -169,6 +169,79 @@ function parse(s: string): TNode[] {
   const out = seq();
   if (i < s.length) throw new Fail();
   return out;
+}
+
+const REL = "=<>≤≥≠";
+
+/**
+ * 부등식은 항상 작은 쪽이 왼쪽에 오게 (< ≤ 방향으로) 바꾼다: x>2 → 2<x, 3≥x>1 → 1<x≤3.
+ * 쉼표·'또는'으로 나뉜 답은 묶음마다 따로 본다. 괄호가 있으면 건드리지 않는다.
+ */
+function orient(nodes: TNode[]): TNode[] {
+  // 최상위 글자를 한 글자씩 나눈다
+  const toks: TNode[] = nodes.flatMap((x) => (x.t === "text" ? [...x.v].map((v): TNode => ({ t: "text", v })) : [x]));
+  const ch = (x: TNode | undefined) => (x?.t === "text" ? x.v : "");
+  if (toks.some((x) => ch(x) === "(" || ch(x) === ")")) return nodes;
+  const groups: TNode[][] = [[]];
+  const seps: TNode[][] = [];
+  for (let i = 0; i < toks.length; i++) {
+    if (ch(toks[i]) === ",") {
+      seps.push([toks[i]]);
+      groups.push([]);
+    } else if (ch(toks[i]) === "또" && ch(toks[i + 1]) === "는") {
+      seps.push([toks[i], toks[i + 1]]);
+      groups.push([]);
+      i++;
+    } else groups[groups.length - 1].push(toks[i]);
+  }
+  const flip = (g: TNode[]): TNode[] => {
+    const segs: TNode[][] = [[]];
+    const rels: string[] = [];
+    for (const x of g) {
+      if (REL.includes(ch(x)) && ch(x)) {
+        rels.push(ch(x));
+        segs.push([]);
+      } else segs[segs.length - 1].push(x);
+    }
+    if (!rels.length || !rels.every((r) => r === ">" || r === "≥")) return g;
+    // 앞뒤 빈칸은 묶음 바깥에 그대로 둔다
+    const lead: TNode[] = [];
+    while (ch(segs[0][0]) === " ") lead.push(segs[0].shift()!);
+    const trail: TNode[] = [];
+    const last = segs[segs.length - 1];
+    while (ch(last[last.length - 1]) === " ") trail.unshift(last.pop()!);
+    const trim = (seg: TNode[]) => {
+      let a = 0;
+      let b = seg.length;
+      while (a < b && ch(seg[a]) === " ") a++;
+      while (b > a && ch(seg[b - 1]) === " ") b--;
+      return seg.slice(a, b);
+    };
+    const out: TNode[] = [...lead];
+    const rs = rels.reverse().map((r) => (r === ">" ? "<" : "≤"));
+    segs.reverse().forEach((seg, i) => {
+      out.push(...trim(seg));
+      if (i < rs.length) out.push({ t: "text", v: rs[i] });
+    });
+    return [...out, ...trail];
+  };
+  const out: TNode[] = [];
+  groups.forEach((g, i) => {
+    out.push(...flip(g));
+    if (seps[i]) out.push(...seps[i]);
+  });
+  return out;
+}
+
+/** 방정식·부등식에서 등호·부등호 바로 옆의 문자(x=, <x<)는 빈칸이 아니라 미리 보여 준다 */
+function fixLetters(nodes: TNode[]): TNode[] {
+  return nodes.map((x, i) => {
+    if (x.t !== "slot" || x.k !== "a") return x;
+    const prev = nodes[i - 1];
+    const next = nodes[i + 1];
+    const near = (prev?.t === "text" && /[=<>≤≥≠]\s*$/.test(prev.v)) || (next?.t === "text" && /^\s*[=<>≤≥≠]/.test(next.v));
+    return near ? { t: "text", v: x.v ?? "" } : x;
+  });
 }
 
 function textOf(ns: TNode[]): string {
@@ -371,9 +444,15 @@ export function gradeText(given: string, tpl: TNode[]): "Y" | "N" | "?" | null {
   if (norm(given) === norm(toAnswer(tpl, want))) return "Y";
   const mine = answerTemplateWithValues(given.replace(/\s+/g, " "));
   if (!mine) return null;
+  const mineVals = slotKinds(mine).map((x) => x.v);
+  // x>2 처럼 방향만 반대로 쓴 답은 2<x 와 같다
+  if (norm(toAnswer(mine, mineVals)) === norm(toAnswer(tpl, want))) return "Y";
   const a = evaluate(tpl, want);
-  const b = evaluate(mine, slotKinds(mine).map((x) => x.v));
+  const b = evaluate(mine, mineVals);
   if (!a || !b || a.length !== b.length) return null;
+  // 등호·부등호가 다르면 (x<2 와 x≤2) 값이 같아도 틀림
+  const rels = (ns: TNode[]) => textOf(ns.filter((x) => x.t === "text")).replace(/[^=<>≤≥≠]/g, "");
+  if (rels(mine) !== rels(tpl)) return "N";
   return a.every((x, i) => Math.abs(x - b[i]) <= 1e-9 * Math.max(1, Math.abs(x))) ? "?" : "N";
 }
 

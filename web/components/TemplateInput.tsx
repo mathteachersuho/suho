@@ -42,7 +42,20 @@ export default function TemplateInput({
       if (x.t === "text")
         return (
           <span key={j} className="whitespace-pre">
-            {x.v}
+            {/* 문자는 수식처럼 기울여 쓰고, 등호·부등호는 양옆을 띄운다 (단위 cm 같은 두 글자 이상 낱말은 그대로) */}
+            {x.v.split(/(\b[a-zA-Z]\b|[=<>≤≥≠])/).map((part, n) =>
+              /^[a-zA-Z]$/.test(part) ? (
+                <i key={n} className="font-serif">
+                  {part}
+                </i>
+              ) : /^[=<>≤≥≠]$/.test(part) ? (
+                <span key={n} className="mx-1">
+                  {part}
+                </span>
+              ) : (
+                part.replace(/ ?([=<>≤≥≠]) ?/g, "$1")
+              ),
+            )}
           </span>
         );
       if (x.t === "slot") {

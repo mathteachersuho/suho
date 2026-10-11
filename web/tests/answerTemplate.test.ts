@@ -44,6 +44,14 @@ test("문자는 빈칸, 지수도 빈칸, 그리스 문자·단위·한글 앞 �
   assert.deepEqual(answerTemplate("$y$절편 $4$"), [{ t: "text", v: "y절편 " }, { t: "slot" }]);
 });
 
+test("방정식·부등식은 등호·부등호 옆 문자를 미리 보여 주고, 부등식은 < 방향", () => {
+  assert.deepEqual(answerTemplate("$x=3$"), [{ t: "text", v: "x=" }, { t: "slot" }]);
+  assert.deepEqual(answerTemplate("$x>2$"), [{ t: "slot" }, { t: "text", v: "<x" }]);
+  assert.deepEqual(answerTemplate("$3>x \\geq 1$"), [{ t: "slot" }, { t: "text", v: "≤x<" }, { t: "slot" }]);
+  assert.deepEqual(answerTemplate("$x<-1$ 또는 $x>3$"), [{ t: "text", v: "x<-" }, { t: "slot" }, { t: "text", v: " 또는 " }, { t: "slot" }, { t: "text", v: "<x" }]);
+  assert.deepEqual(answerTemplate("$y=2x+3$"), [{ t: "text", v: "y=" }, { t: "slot" }, { t: "slot", k: "a" }, { t: "text", v: "+" }, { t: "slot" }]);
+});
+
 test("O/X 답은 고르기 칸", () => {
   assert.deepEqual(answerTemplate("O"), [{ t: "slot", k: "ox" }]);
   assert.deepEqual(answerTemplate("$\\times$"), [{ t: "slot", k: "ox" }]);
@@ -63,14 +71,16 @@ const cases: [string, string[], "Y" | "N", string][] = [
   ["③", ["4"], "N", "다른 번호"],
   ["$(2,3), (3,2)$", ["3", "2", "2", "3"], "Y", "순서를 바꾼 답 묶음"],
   ["$(2,3), (3,2)$", ["3", "2", "3", "2"], "N", "같은 묶음 두 번"],
-  ["$x=-1$ 또는 $x=4$", ["x", "4", "x", "1"], "N", "부호가 붙은 자리를 바꾸면 틀림"],
-  ["$x=-1$ 또는 $x=4$", ["x", "4", "x", "1"].reverse(), "N", "같은 답을 두 번"],
+  ["$x=-1$ 또는 $x=4$", ["1", "4"], "Y", "방정식 해 두 개"],
+  ["$x=-1$ 또는 $x=4$", ["4", "1"], "N", "부호가 붙은 자리를 바꾸면 틀림"],
+  ["$x>2$", ["2"], "Y", "부등식은 2<x 방향"],
+  ["$2<x<3$", ["2", "3"], "Y", "범위"],
   ["$x^2+3x$", ["x", "2", "3", "x"], "Y", "문자식 정답 그대로"],
   ["$x^2+3x$", ["x", "2", "4", "x"], "N", "모양이 고정된 문자식"],
   ["$x^2+3x$", ["y", "2", "3", "y"], "N", "다른 문자"],
   ["$x^2+3x$", ["X", "2", "3", "X"], "N", "대문자는 다른 문자"],
   ["$\\frac{x}{2}$", ["x", "4"], "N", "문자식 분수, 분모가 다름"],
-  ["$y=\\frac{1}{2}x+3$", ["y", "1", "2", "x", "4"], "N", "식의 오른쪽이 다름"],
+  ["$y=\\frac{1}{2}x+3$", ["1", "2", "x", "4"], "N", "식의 오른쪽이 다름"],
   ["$\\sqrt{x+1}$", ["x", "1"], "Y", "루트 안 문자"],
   ["O", ["O"], "Y", "O 고름"],
   ["O", ["X"], "N", "X 고름"],
@@ -96,6 +106,9 @@ const texts: [string, string, "Y" | "N" | "?" | null, string][] = [
   ["$x^2+3x-4$", "x^2-3x-4", "N", "부호가 다름"],
   ["$\\frac{x+1}{2}$", "2x/4+2/4", "N", "약분하지 않은 분수"],
   ["$3$", "x=3", null, "조각 수가 다르면 원래 채점"],
+  ["$x>2$", "x>2", "Y", "방향만 반대로 쓴 부등식"],
+  ["$x>2$", "x≥2", "N", "부등호가 다름"],
+  ["$x>2$", "x>3", "N", "값이 다름"],
 ];
 for (const [answer, given, want, why] of texts) {
   test(`다른 모양으로 쓴 답: ${why}`, () => assert.equal(gradeText(given, tpl(answer)), want));
