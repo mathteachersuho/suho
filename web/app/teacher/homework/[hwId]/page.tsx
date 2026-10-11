@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import DifficultyBadge from "@/components/DifficultyBadge";
 import { IconArrow, IconPrinter } from "@/components/Icons";
 import { getHomework, homeworkRepeats } from "@/lib/homework";
 import { dueLabel } from "@/lib/hwFormat";
@@ -67,14 +68,15 @@ export default async function HomeworkDetail({ params, searchParams }: PageProps
         <ol className="space-y-3">
           {problems.map((p, i) => (
             <li key={p.id} className="card p-4 sm:p-5">
-              <p className="mb-2 text-sm font-semibold">
-                {i + 1}번 <span className="font-normal text-ink-faint">{[p.type, p.frame, p.difficulty].filter(Boolean).join(" · ")}</span>
+              <p className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold">
+                {i + 1}번 <span className="font-normal text-ink-faint">{[p.type, p.frame].filter(Boolean).join(" · ")}</span>
+                <DifficultyBadge level={p.difficulty} />
                 {(() => {
                   const again = students.flatMap((s) => {
                     const r = repeats[`${s.studentId}\u0000${p.id}`];
                     return r ? [`${s.name || s.studentId} ${r.n}번째`] : [];
                   });
-                  return again.length > 0 && <span className="ml-2 rounded bg-warn-soft px-1.5 py-0.5 text-xs font-medium text-warn">다시 푸는 학생: {again.join(", ")}</span>;
+                  return again.length > 0 && <span className="rounded bg-warn-soft px-1.5 py-0.5 text-xs font-medium text-warn">다시 푸는 학생: {again.join(", ")}</span>;
                 })()}
               </p>
               <div className="problem-body" dangerouslySetInnerHTML={{ __html: renderProblemHtml(p.question) }} />

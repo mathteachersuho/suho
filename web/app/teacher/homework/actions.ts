@@ -19,7 +19,7 @@ const ids = (v: unknown, max: number) =>
 export async function cartPreviewAction(problemIds: string[]) {
   await requireTeacher();
   const ps = await getProblems(ids(problemIds, 60));
-  return ps.map((p) => ({ id: p.id, tag: [p.type, p.frame, p.difficulty].filter(Boolean).join(" · "), html: renderProblemHtml(p.question) }));
+  return ps.map((p) => ({ id: p.id, tag: [p.type, p.frame].filter(Boolean).join(" · "), difficulty: p.difficulty, html: renderProblemHtml(p.question) }));
 }
 
 /** 숙제 내기 화면: 문제 은행에서 찾기 (한 쪽 20문제) */
@@ -33,7 +33,8 @@ export async function bankSearchAction(f: { grade?: string; unit?: string; type?
   return {
     items: items.map((p) => ({
       id: p.id,
-      tag: [p.unit, p.type, p.frame, p.difficulty, p.verified && "검수"].filter(Boolean).join(" · "),
+      tag: [p.unit, p.type, p.frame, p.verified && "검수"].filter(Boolean).join(" · "),
+      difficulty: p.difficulty,
       html: renderProblemHtml(p.question),
     })),
     total,
@@ -121,7 +122,7 @@ export type WeakPreviewType = {
   review: { label: string; due: boolean; done: boolean } | null;
   available: number;
 };
-export type WeakPreviewProblem = { id: string; typeIndex: number; tag: string; html: string };
+export type WeakPreviewProblem = { id: string; typeIndex: number; tag: string; difficulty: string; html: string };
 export type WeakPreview = {
   studentId: string;
   types: WeakPreviewType[]; // 문제를 고른 유형
@@ -163,7 +164,8 @@ export async function weakPlanAction(
             problems.push({
               id: p.id,
               typeIndex: i,
-              tag: [plan.types[i].type, p.frame, p.difficulty && `난이도 ${p.difficulty}`, p.verified && "검수"].filter(Boolean).join(" · "),
+              tag: [plan.types[i].type, p.frame, p.verified && "검수"].filter(Boolean).join(" · "),
+              difficulty: p.difficulty,
               html: renderProblemHtml(p.question),
             });
         }

@@ -4,11 +4,12 @@ import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { IconCheck, IconDown, IconPlus, IconSearch, IconUp, IconX } from "@/components/Icons";
 import { cart } from "@/lib/cart";
+import DifficultyBadge from "@/components/DifficultyBadge";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import { bankSearchAction, cartPreviewAction, priorCountsAction } from "../actions";
 import type { OutlineRow } from "./WeakPlanner";
 
-type Item = { id: string; tag: string; html: string };
+type Item = { id: string; tag: string; difficulty: string; html: string };
 type Filter = { grade: string; unit: string; type: string; frame: string; difficulty: string; q: string; verified: boolean };
 const EMPTY: Filter = { grade: "", unit: "", type: "", frame: "", difficulty: "", q: "", verified: false };
 const uniq = (xs: string[]) => [...new Set(xs)];
@@ -117,7 +118,10 @@ export default function SamePicker({
                       <p className="text-sm text-ink-faint">불러오는 중…</p>
                     ) : (
                       <>
-                        {p.tag && <p className="mb-1 text-xs text-ink-faint">{p.tag}</p>}
+                        <p className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-faint">
+                          <DifficultyBadge level={p.difficulty} />
+                          {p.tag}
+                        </p>
                         <div className="problem-body line-clamp-3 text-sm" dangerouslySetInnerHTML={{ __html: p.html }} />
                       </>
                     )}
@@ -210,7 +214,10 @@ export default function SamePicker({
                 return (
                   <li key={p.id} className={`flex gap-3 rounded-xl border p-3 ${on ? "border-accent bg-accent-soft/40" : "border-line"}`}>
                     <div className="min-w-0 flex-1">
-                      {p.tag && <p className="mb-1 text-xs text-ink-faint">{p.tag}</p>}
+                      <p className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-faint">
+                          <DifficultyBadge level={p.difficulty} />
+                          {p.tag}
+                        </p>
                       <div className="problem-body line-clamp-3 text-sm" dangerouslySetInnerHTML={{ __html: p.html }} />
                     </div>
                     <button
