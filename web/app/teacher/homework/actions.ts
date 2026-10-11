@@ -9,7 +9,7 @@ import { getProblems, PAGE_SIZE, searchProblems } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
 import { reportError } from "@/lib/reportError";
 import { getStudent } from "@/lib/students";
-import { quickPick } from "@/lib/quick";
+import { quickPick, unitCounts } from "@/lib/quick";
 import { weakPlan, type TypeKey } from "@/lib/weak";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
@@ -43,44 +43,58 @@ export async function bankSearchAction(f: { grade?: string; unit?: string; type?
   };
 }
 
-export type QuickPreview = { rows: { available: number; fresh: number; got: number }[]; problems: { id: string; row: number; tag: string; difficulty: string; seen: number; html: string }[] };
+/** 무작위로 뽑기: 한 단원의 유형 › 세부 유형 › 난이도마다 문제 수 (안 받은 문제 수 포함) */
+export async function unitCountsAction(grade: string, unit: string, studentIds: string[], verifiedOnly: boolean) {
+  await requireTeacher();
+  const g = s(grade, 20);
+  const u = s(unit, 60);
+  if (!g || !u) return [];
+  return unitCounts(g, u, ids(studentIds, 60), !!verifiedOnly);
+}
 
-/** 간단히 숙제 내기: 조건마다 받는 학생이 안 받은 문제를 무작위로 고른다 */
-export async function quickPickAction(
-  rows: { grade?: string; unit?: string; type?: string; frame?: string; difficulty?: string; count?: number }[],
+export type RandomPick = { items: { id: string; tag: string; difficulty: string; html: string }[]; short: { label: string; want: number; got: number; fresh: number }[] };
+
+/** 무작위로 뽑기: 조건마다 받는 학생이 안 받은 문제를 무작위로 고른다 (이미 고른 문제는 빼고) */
+export async function randomPickAction(
+  rows: { grade?: string; unit?: string; type?: string; frame?: string | null; difficulty?: string; count?: number }[],
   studentIds: string[],
   verifiedOnly: boolean,
-): Promise<QuickPreview | { error: string }> {
+  exclude: string[],
+): Promise<RandomPick | { error: string }> {
   await requireTeacher();
   const clean = (Array.isArray(rows) ? rows : [])
-    .slice(0, 10)
+    .slice(0, 300)
     .map((r) => ({
       grade: s(r?.grade, 20),
       unit: s(r?.unit, 60),
       type: s(r?.type, 80),
-      frame: s(r?.frame, 120),
+      frame: r?.frame === null || r?.frame === undefined ? null : s(r.frame, 120),
       difficulty: ["하", "중", "상"].includes(s(r?.difficulty, 4)) ? s(r?.difficulty, 4) : "",
-      count: Math.min(30, Math.max(1, Math.round(Number(r?.count) || 1))),
+      count: Math.min(30, Math.max(0, Math.round(Number(r?.count) || 0))),
     }))
-    .filter((r) => r.grade);
-  if (!clean.length) return { error: "학년부터 골라 주세요." };
+    .filter((r) => r.grade && r.count > 0);
+  if (!clean.length) return { error: "뽑을 문제 수를 적어 주세요." };
+  if (clean.reduce((a, r) => a + r.count, 0) > 60) return { error: "한 번에 60문제까지 뽑을 수 있어요." };
   try {
-    const res = await quickPick(clean, ids(studentIds, 60), !!verifiedOnly);
+    const res = await quickPick(clean, ids(studentIds, 60), !!verifiedOnly, ids(exclude, 200));
     return {
-      rows: res.map((r) => ({ available: r.available, fresh: r.fresh, got: r.picked.length })),
-      problems: res.flatMap((r, row) =>
+      items: res.flatMap((r) =>
         r.picked.map((p) => ({
           id: p.id,
-          row,
           tag: [p.type, p.frame, p.verified && "검수"].filter(Boolean).join(" · "),
           difficulty: p.difficulty,
-          seen: p.seen,
           html: renderProblemHtml(p.question),
         })),
       ),
+      short: res.flatMap((r, i) => {
+        const c = clean[i];
+        const got = r.picked.length;
+        const fresh = Math.min(r.fresh, got);
+        return got < c.count || fresh < got ? [{ label: [c.type || "유형 없음", c.frame, c.difficulty].filter(Boolean).join(" · "), want: c.count, got, fresh }] : [];
+      }),
     };
   } catch (e) {
-    await reportError("간단히 숙제 문제 고르기", e);
+    await reportError("무작위로 문제 뽑기", e);
     return { error: "문제를 고르지 못했어요. 잠시 뒤 다시 해 주세요." };
   }
 }
