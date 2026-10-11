@@ -1,29 +1,11 @@
 import "server-only";
 import { db } from "./db";
-import { addDays, todaySeoul } from "./hwFormat";
+import { todaySeoul } from "./hwFormat";
+import { REVIEW_DAYS, replayReview, type ReviewState } from "./reviewCore";
 
-/*
- * 틀린 유형 간격 두고 다시 내기 (간격 반복).
- * 숙제 기록만으로 계산하고 따로 저장하지 않는다. 학생·유형마다 숙제를 낸 날짜 순으로 보면서
- *  - 그 숙제에서 그 유형을 하나라도 틀렸거나 '어려워함'이면 → 복습 1단계, 3일 뒤 복습
- *  - 복습 중에 그 유형을 모두 맞히면 → 다음 단계 (7일 뒤, 14일 뒤), 세 번 맞히면 졸업
- *  - 복습 중에 또 틀리면 → 처음(3일 뒤)부터 다시
- * 같은 날 숙제에서 맞힌 것은 복습으로 치지 않는다 (틀린 날 바로 다시 푼 것이라서).
- */
+/* 틀린 유형 간격 두고 다시 내기 (간격 반복). 단계 계산은 lib/reviewCore.ts, 여기서는 DB에서 읽어 넘긴다. */
 
-export const REVIEW_DAYS = [3, 7, 14];
-
-export type ReviewState = {
-  grade: string;
-  unit: string;
-  type: string;
-  done: boolean; // 졸업 (세 번 연속 복습에서 맞힘)
-  passed: number; // 이번 복습에서 맞힌 횟수 0~3
-  due: string; // 다음 복습 날 YYYY-MM-DD (졸업이면 '')
-  lastDay: string; // 마지막으로 이 유형을 푼 날
-};
-
-export const reviewKey = (k: { grade: string; unit: string; type: string }) => `${k.grade}\u0000${k.unit}\u0000${k.type}`;
+export { REVIEW_DAYS, reviewKey, type ReviewState } from "./reviewCore";
 
 /** 오늘 기준으로 복습이 필요한가 (복습 날이 오늘이거나 지났음) */
 export const isDue = (r: ReviewState, today = todaySeoul()) => !r.done && r.due <= today;
@@ -41,27 +23,17 @@ export async function reviewStates(studentIds?: string[]): Promise<Map<string, R
     where p.type <> '' ${studentIds ? sql`and r.student_id = any(${studentIds})` : sql``}
     group by r.student_id, p.grade, p.unit, p.type, h.hw_id, h.created_at
     order by r.student_id, h.created_at`;
-  const out = new Map<string, Map<string, ReviewState>>();
-  for (const r of rows) {
-    const sid = r.student_id as string;
-    if (!out.has(sid)) out.set(sid, new Map());
-    const m = out.get(sid)!;
-    const k = reviewKey(r as unknown as ReviewState);
-    const day = r.day as string;
-    let st = m.get(k);
-    if (r.fail) {
-      st = { grade: r.grade, unit: r.unit, type: r.type, done: false, passed: 0, due: addDays(day, REVIEW_DAYS[0]), lastDay: day };
-      m.set(k, st);
-    } else if (r.pass && st && !st.done && day > st.lastDay) {
-      st.passed++;
-      st.lastDay = day;
-      if (st.passed >= REVIEW_DAYS.length) {
-        st.done = true;
-        st.due = "";
-      } else st.due = addDays(day, REVIEW_DAYS[st.passed]);
-    }
-  }
-  return new Map([...out].map(([sid, m]) => [sid, [...m.values()]]));
+  return replayReview(
+    rows.map((r) => ({
+      studentId: r.student_id as string,
+      grade: r.grade as string,
+      unit: r.unit as string,
+      type: r.type as string,
+      day: r.day as string,
+      fail: !!r.fail,
+      pass: !!r.pass,
+    })),
+  );
 }
 
 /** 오늘 복습할 유형이 있는 학생들 (학생 id → 복습할 유형 수) */
