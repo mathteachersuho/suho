@@ -252,7 +252,7 @@ function StudentPlan({
                   <li key={q.id} className="flex gap-3 rounded-xl border border-line p-3">
                     <span className="mt-0.5 shrink-0 font-semibold tabular-nums text-ink-soft">{i + 1}</span>
                     <div className="min-w-0 flex-1">
-                      <p className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-faint">
+                      <p className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-ink-soft">
                         <DifficultyBadge level={q.difficulty} />
                         {q.tag}
                       </p>
