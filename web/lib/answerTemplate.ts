@@ -250,29 +250,20 @@ const hasShape = (ns: TNode[]): boolean => ns.some((x) => x.t === "frac" || x.t 
 
 /**
  * 틀 답 채점. 정답 틀(answerTemplateWithValues)과 학생 숫자를 받는다.
- *  - 빈칸마다 정답 숫자와 같으면 Y
- *  - 분수·루트·거듭제곱이 없으면 모양이 정해져 있으므로 숫자가 다르면 N
- *    (단, 답이 여러 개라 순서를 바꿔 쓸 수 있으면 같은 숫자 모음인지 본다)
- *  - 분수·루트가 있으면 값으로 계산해 비교 (2/4 = 1/2, 1√12 = 2√3: 글자로 쓰는 칸의 채점과 같게 맞음).
- *    문자는 정해 둔 값을 넣어 계산한다. 계산할 수 없으면 '?' (선생님 확인)
+ *  - 빈칸마다 정답과 같으면 Y. 틀은 정답 모양 그대로라서 숫자가 다르면 값이 같아도 틀림
+ *    (2/4, 1√12 처럼 약분·간단히 하지 않은 답은 틀림)
+ *  - 답이 여러 개라 순서를 바꿔 쓸 수 있으면 (분수·루트가 없는 답) 같은 숫자 모음인지 본다
  */
-export function gradeSlots(tpl: TNode[], values: string[]): "Y" | "N" | "?" {
+export function gradeSlots(tpl: TNode[], values: string[]): "Y" | "N" {
   const slots = slotKinds(tpl);
   const want = slots.map((x) => x.v);
   const got = slots.map((x, i) => cleanSlot(values[i] ?? "", x.k));
   if (got.some((v) => !v)) return "N";
   const same = (i: number) => (slots[i].k ? want[i] === got[i] : Number(want[i]) === Number(got[i]));
   if (want.every((_, i) => same(i))) return "Y";
-  if (!hasShape(tpl)) {
-    // 쉼표로 나뉜 여러 답 ((2,3), (3,2) / x=-1, x=4 처럼)은 순서를 바꿔도 같은 묶음이면 맞음
-    const text = textOf(tpl);
-    if (/,|또는/.test(text) && sameGroups(tpl, slots, want, got)) return "Y";
-    return "N";
-  }
-  const a = evaluate(tpl, want);
-  const b = evaluate(tpl, got);
-  if (a === null || b === null || a.length !== b.length) return "?";
-  return a.every((x, i) => Math.abs(x - b[i]) <= 1e-9 * Math.max(1, Math.abs(x))) ? "Y" : "N";
+  // 쉼표로 나뉜 여러 답 ((2,3), (3,2) / x=-1, x=4 처럼)은 순서를 바꿔도 같은 묶음이면 맞음
+  if (!hasShape(tpl) && /,|또는/.test(textOf(tpl)) && sameGroups(tpl, slots, want, got)) return "Y";
+  return "N";
 }
 
 /** 쉼표·'또는'으로 나뉜 답 묶음끼리 순서 없이 같은지 */
@@ -368,11 +359,13 @@ export function evaluate(tpl: TNode[], values: string[]): number[] | null {
 /**
  * 학생이 틀 대신 글자로 쓴 답(x/2+1/2, √3/2 …)을 정답 틀과 비교한다.
  *  - 정답을 글자로 쓴 것과 같으면 Y
- *  - 값은 같고 꼴만 다르면 '?' (전개·약분처럼 꼴을 묻는 문제가 있어 선생님이 확인)
+ *  - 약분하지 않은 분수(2/4)가 있으면 N
+ *  - 값은 같고 꼴만 다르면 '?' (전개·인수분해처럼 꼴을 묻는 문제가 있어 선생님이 확인)
  *  - 값이 다르면 N
  * 어느 한쪽이라도 계산할 수 없거나 조각 수가 다르면 null (원래 채점 결과를 쓴다).
  */
 export function gradeText(given: string, tpl: TNode[]): "Y" | "N" | "?" | null {
+  if (hasUnreducedFraction(given)) return "N";
   const want = slotKinds(tpl).map((x) => x.v);
   const norm = (v: string) => v.replace(/\s+/g, "").replace(/[*·]/g, "×").replace(/\^2/g, "²").replace(/\^3/g, "³").replace(/\((√[\w.]+)\)/g, "$1");
   if (norm(given) === norm(toAnswer(tpl, want))) return "Y";
@@ -382,6 +375,17 @@ export function gradeText(given: string, tpl: TNode[]): "Y" | "N" | "?" | null {
   const b = evaluate(mine, slotKinds(mine).map((x) => x.v));
   if (!a || !b || a.length !== b.length) return null;
   return a.every((x, i) => Math.abs(x - b[i]) <= 1e-9 * Math.max(1, Math.abs(x))) ? "?" : "N";
+}
+
+/** 학생 답에 약분하지 않은 분수(2/4, 6/3)가 있는지. 분자·분모가 모두 자연수일 때만 본다 */
+export function hasUnreducedFraction(s: string): boolean {
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  for (const m of (s || "").matchAll(/(?<![\d.])(\d+)\s*\/\s*(\d+)(?![\d.])/g)) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    if (b > 0 && a > 0 && (b === 1 || gcd(a, b) > 1)) return true;
+  }
+  return false;
 }
 
 /** 작은 계산기: + - * / ^ 괄호, s(...) 루트, p 파이, 곱셈 생략 */

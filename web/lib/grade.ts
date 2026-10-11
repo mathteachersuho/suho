@@ -8,6 +8,7 @@
  * - 정렬은 코드포인트 순(Python sorted), 분수는 BigInt 로 Fraction 과 같은 기약분수 문자열
  * - 식 계산은 ast 대신 작은 파서로, Python 이 None 을 돌려주는 곳에서 null
  */
+import { hasUnreducedFraction } from "./answerTemplate.ts";
 
 export type Grade = "Y" | "N" | "?";
 
@@ -584,6 +585,8 @@ function gradeAnswerInner(given: string, correct: string): Grade {
 /** 'Y' 맞음 / 'N' 틀림 / '?' 정답이 없거나 자동으로 단정하기 어려워 선생님 확인 필요. 절대 throw 하지 않는다. */
 export function gradeAnswer(given: string, correct: string): Grade {
   try {
+    // 약분하지 않은 분수(2/4)는 값이 같아도 틀림 (정답에도 같은 꼴이 있으면 그대로 채점)
+    if (hasUnreducedFraction(given) && !hasUnreducedFraction(String(correct || "").replace(/\\[dt]?frac\{(\d+)\}\{(\d+)\}/g, "$1/$2"))) return "N";
     return gradeAnswerInner(given, correct);
   } catch {
     return "?";
