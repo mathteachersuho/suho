@@ -9,6 +9,7 @@ import { requireStudent } from "@/lib/session";
 import { starredIds } from "@/lib/study";
 import StarButton from "../../study/StarButton";
 import SolveForm from "./SolveForm";
+import { answerTemplate } from "@/lib/answerTemplate";
 
 export const metadata: Metadata = { title: "숙제 풀기 · 수학클래스룸" };
 
@@ -45,7 +46,7 @@ export default async function SolveHomework({ params }: PageProps<"/student/home
       {!submitted ? (
         <SolveForm
           hwId={hw.hwId}
-          problems={problems.map((p) => ({ id: p.id, html: renderProblemHtml(p.question) }))}
+          problems={problems.map((p) => ({ id: p.id, html: renderProblemHtml(p.question), template: answerTemplate(p.answer) }))}
         />
       ) : (
         <>
