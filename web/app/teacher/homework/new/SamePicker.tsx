@@ -119,7 +119,7 @@ export default function SamePicker({
                       <p className="text-sm text-ink-faint">불러오는 중…</p>
                     ) : (
                       <>
-                        <p className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-faint">
+                        <p className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-ink-soft">
                           <DifficultyBadge level={p.difficulty} />
                           {p.tag}
                         </p>
@@ -220,14 +220,14 @@ export default function SamePicker({
           <p className="text-sm text-ink-soft">조건에 맞는 문제가 없어요.</p>
         ) : (
           <>
-            <p className="text-xs text-ink-faint">{res.total}문제 중 {res.items.length}개</p>
+            <p className="text-sm text-ink-soft">{res.total}문제 중 {res.items.length}개</p>
             <ul className={`space-y-2 ${searching ? "opacity-60" : ""}`}>
               {res.items.map((p) => {
                 const on = picked.has(p.id);
                 return (
                   <li key={p.id} className={`flex gap-3 rounded-xl border p-3 ${on ? "border-accent bg-accent-soft/40" : "border-line"}`}>
                     <div className="min-w-0 flex-1">
-                      <p className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-faint">
+                      <p className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-ink-soft">
                           <DifficultyBadge level={p.difficulty} />
                           {p.tag}
                         </p>

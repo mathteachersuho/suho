@@ -83,7 +83,7 @@ export default function RandomPicker({
     <div className="space-y-3">
       <div>
         <h3 className="text-sm font-semibold">무작위로 뽑기</h3>
-        <p className="mt-0.5 text-xs text-ink-faint">학년과 단원을 고르면 유형마다 문제 수가 나와요. 낼 문제 수를 적으면 받는 학생이 안 푼 문제를 무작위로 골라 위에 더해요.</p>
+        <p className="mt-0.5 text-sm text-ink-soft">학년과 단원을 고르면 유형마다 문제 수가 나와요. 낼 문제 수를 적으면 받는 학생이 안 푼 문제를 무작위로 골라 위에 더해요.</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <select aria-label="뽑을 학년" value={grade} onChange={(e) => pickPlace(e.target.value, "")} className={sel}>
@@ -108,7 +108,7 @@ export default function RandomPicker({
       {counts && !counts.length && <p className="text-sm text-ink-faint">이 단원에는 문제가 없어요.</p>}
       {counts && counts.length > 0 && (
         <div className={`overflow-hidden rounded-xl border border-line text-sm ${busy ? "opacity-60" : ""}`}>
-          <div className={`${grid} bg-surface-2 px-3 py-2 text-xs font-medium text-ink-soft`} style={cols}>
+          <div className={`${grid} bg-surface-2 px-3 py-2 text-sm font-semibold text-ink`} style={cols}>
             <span>
               유형<span className="hidden sm:inline"> › 세부 유형</span>
             </span>
@@ -126,16 +126,16 @@ export default function RandomPicker({
             return (
               <Fragment key={type}>
                 {!flat && (
-                  <div className="border-t border-line px-3 pt-2.5 pb-1 text-xs font-semibold">
-                    {type || "유형 없음"} <span className="font-normal text-ink-faint">{sum}문제</span>
+                  <div className="border-t border-line px-3 pt-3 pb-1 text-[15px] font-bold text-ink">
+                    {type || "유형 없음"} <span className="ml-1 text-sm font-medium text-ink-soft">{sum}문제</span>
                   </div>
                 )}
                 {frames.map((frame) => (
                   <div key={frame} className={`${grid} px-3 py-1.5 ${flat ? "border-t border-line py-2" : ""}`} style={cols}>
-                    <span className={`min-w-0 break-keep ${flat ? "text-xs font-semibold" : "pl-3 text-xs text-ink-soft"}`}>
+                    <span className={`min-w-0 break-keep ${flat ? "text-[15px] font-bold text-ink" : "pl-3 text-sm font-medium text-ink"}`}>
                       {flat ? (
                         <>
-                          {type || "유형 없음"} <span className="font-normal text-ink-faint">{sum}문제</span>
+                          {type || "유형 없음"} <span className="ml-1 text-sm font-medium text-ink-soft">{sum}문제</span>
                         </>
                       ) : (
                         frame || "세부 유형 없음"
@@ -158,7 +158,7 @@ export default function RandomPicker({
                             aria-label={`${type} ${frame} ${d || "난이도 없음"} 낼 문제 수`}
                             className={`field h-8 w-full px-1 py-0 text-center text-sm tabular-nums ${want[k] ? "border-accent" : ""}`}
                           />
-                          <span className="text-[11px] leading-tight whitespace-nowrap text-ink-faint tabular-nums">
+                          <span className="text-xs leading-tight font-medium whitespace-nowrap text-ink-soft tabular-nums">
                             {c.n}개{c.fresh < c.n && <span className="text-warn">·새{c.fresh}</span>}
                           </span>
                         </label>
@@ -170,7 +170,7 @@ export default function RandomPicker({
             );
           })}
           <div className="flex flex-wrap items-center gap-3 border-t border-line bg-surface-2/60 px-3 py-2.5">
-            <span className="text-xs text-ink-faint">칸 아래 숫자는 은행에 있는 문제 수, “새”는 고른 학생이 아직 안 받은 문제 수예요.</span>
+            <span className="text-sm text-ink-soft">칸 아래 숫자는 은행에 있는 문제 수, “새”는 고른 학생이 아직 안 받은 문제 수예요.</span>
             <button type="button" className="btn-main ml-auto py-2" disabled={!total || busy} onClick={draw}>
               <IconSparkle />
               {busy ? "뽑는 중…" : total ? `${total}문제 뽑아서 더하기` : "뽑을 문제 수를 적어 주세요"}
@@ -180,7 +180,7 @@ export default function RandomPicker({
       )}
       {note.error && <p className="text-sm text-bad">{note.error}</p>}
       {note.added !== undefined && (
-        <div className="space-y-0.5 text-xs">
+        <div className="space-y-0.5 text-sm">
           <p className="text-good">{note.added}문제를 무작위로 뽑아 위 목록에 더했어요.</p>
           {note.short?.map((s) => (
             <p key={s.label} className="text-warn">

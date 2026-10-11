@@ -9,10 +9,10 @@ export default function ProblemCard({ p, no, action }: { p: Problem; no?: number
     <article className="rounded-2xl border border-line bg-surface p-5">
       <header className="mb-3 flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-faint">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-ink-soft">
             {no !== undefined && <span className="font-semibold text-ink-soft tabular-nums">{no}</span>}
             <span className="truncate">{path || "분류 없음"}</span>
-            {p.frame && <span className="rounded bg-surface-2 px-1.5 py-0.5 text-ink-soft">{p.frame}</span>}
+            {p.frame && <span className="rounded bg-surface-2 px-1.5 py-0.5 text-ink">{p.frame}</span>}
             <DifficultyBadge level={p.difficulty} />
             {p.verified && <span className="text-good">검토함</span>}
           </p>

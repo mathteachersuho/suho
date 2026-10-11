@@ -69,7 +69,7 @@ export default async function HomeworkDetail({ params, searchParams }: PageProps
           {problems.map((p, i) => (
             <li key={p.id} className="card p-4 sm:p-5">
               <p className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold">
-                {i + 1}번 <span className="font-normal text-ink-faint">{[p.type, p.frame].filter(Boolean).join(" · ")}</span>
+                {i + 1}번 <span className="font-medium text-ink-soft">{[p.type, p.frame].filter(Boolean).join(" · ")}</span>
                 <DifficultyBadge level={p.difficulty} />
                 {(() => {
                   const again = students.flatMap((s) => {
