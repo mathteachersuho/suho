@@ -7,6 +7,7 @@ import { cart } from "@/lib/cart";
 import DifficultyBadge from "@/components/DifficultyBadge";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import { bankSearchAction, cartPreviewAction, priorCountsAction } from "../actions";
+import RandomPicker from "./RandomPicker";
 import type { OutlineRow } from "./WeakPlanner";
 
 type Item = { id: string; tag: string; difficulty: string; html: string };
@@ -15,7 +16,7 @@ const EMPTY: Filter = { grade: "", unit: "", type: "", frame: "", difficulty: ""
 const uniq = (xs: string[]) => [...new Set(xs)];
 
 /**
- * 숙제 내기 › 모두 같은 문제: 문제 은행에서 찾아 고르고, 고른 문제의 순서를 정한다.
+ * 숙제 내기 › 모두 같은 문제: 무작위로 뽑거나 문제 은행에서 찾아 직접 고르고, 고른 문제의 순서를 정한다.
  * 고른 문제는 문제 은행의 '담기'와 같은 목록이라 은행에서 담아 온 문제도 그대로 들어온다.
  */
 export default function SamePicker({
@@ -105,7 +106,7 @@ export default function SamePicker({
           )}
         </div>
         {!ids.length ? (
-          <p className="rounded-xl border border-dashed border-line px-4 py-5 text-center text-sm text-ink-soft">아래에서 문제를 찾아 더해 주세요.</p>
+          <p className="rounded-xl border border-dashed border-line px-4 py-5 text-center text-sm text-ink-soft">아래에서 무작위로 뽑거나 직접 찾아 더해 주세요.</p>
         ) : (
           <ol className="space-y-2">
             {ids.map((id, i) => {
@@ -147,8 +148,20 @@ export default function SamePicker({
         )}
       </div>
 
+      <div className="border-t border-line pt-4">
+        <RandomPicker
+          outline={outline}
+          studentIds={studentIds}
+          chosen={ids}
+          onAdd={(items) => {
+            remember(items);
+            cart.addMany(items.map((p) => p.id));
+          }}
+        />
+      </div>
+
       <div className="space-y-3 border-t border-line pt-4">
-        <h3 className="text-sm font-semibold">문제 은행에서 찾기</h3>
+        <h3 className="text-sm font-semibold">직접 고르기 · 문제 은행에서 찾기</h3>
         <div className="flex flex-wrap gap-2">
           <select aria-label="학년" value={f.grade} onChange={(e) => setFilter({ grade: e.target.value, unit: "", type: "", frame: "" })} className={sel}>
             <option value="">학년 전체</option>

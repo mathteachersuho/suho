@@ -8,18 +8,16 @@ import StudentPicker, { type PickStudent } from "@/components/StudentPicker";
 import { addDays } from "@/lib/hwFormat";
 import { cart, useCart } from "@/lib/cart";
 import { createHomeworkAction, createWeakHomeworkAction } from "../actions";
-import QuickPicker, { type QuickPicked } from "./QuickPicker";
 import SamePicker from "./SamePicker";
 import WeakPlanner, { type OutlineRow, type WeakOpts, type WeakReady } from "./WeakPlanner";
 
-type Mode = "same" | "quick" | "weak";
+type Mode = "same" | "weak";
 const MODES: { mode: Mode; label: string; hint: string }[] = [
-  { mode: "same", label: "모두 같은 문제", hint: "문제를 직접 골라 같은 숙제" },
-  { mode: "quick", label: "간단히 내기", hint: "유형·난이도·문제 수만 고르기" },
+  { mode: "same", label: "모두 같은 문제", hint: "무작위로 뽑거나 직접 골라 같은 숙제" },
   { mode: "weak", label: "학생마다 약한 유형", hint: "학생마다 따로 숙제" },
 ];
 
-/** 숙제 내기 한 화면: 받는 학생 → 문제 고르기(모두 같은 문제 / 간단히 내기 / 학생마다 약한 유형) → 이름·마감일 → 내기 */
+/** 숙제 내기 한 화면: 받는 학생 → 문제 고르기(모두 같은 문제 / 학생마다 약한 유형) → 이름·마감일 → 내기 */
 export default function NewHomework({
   students,
   today,
@@ -31,7 +29,7 @@ export default function NewHomework({
   students: PickStudent[];
   today: string;
   outline: OutlineRow[];
-  mode: "same" | "weak";
+  mode: Mode;
   initial: string[];
   review: boolean; // 복습 숙제로 들어옴: 복습할 학생을 골라 두고 복습 날이 된 유형만 바로 찾는다
 }) {
@@ -41,7 +39,6 @@ export default function NewHomework({
   const [opts, setOpts] = useState<WeakOpts>({ count: 10, verifiedOnly: false, dueOnly: review });
   const [weakReady, setWeakReady] = useState<WeakReady[]>([]);
   const [autoFind, setAutoFind] = useState(review);
-  const [quick, setQuick] = useState<QuickPicked>({ stuKey: "", ids: [] });
   const [title, setTitle] = useState<string | null>(null); // null 이면 아직 안 고침 → 기본 이름
   const [due, setDue] = useState(addDays(today, 2));
   const [memo, setMemo] = useState("");
@@ -51,7 +48,7 @@ export default function NewHomework({
   const router = useRouter();
 
   const md = `${Number(today.slice(5, 7))}/${Number(today.slice(8, 10))}`;
-  const shownTitle = title ?? `${md} ${mode !== "weak" ? "숙제" : review ? "복습 숙제" : "약한 유형 숙제"}`;
+  const shownTitle = title ?? `${md} ${mode === "same" ? "숙제" : review ? "복습 숙제" : "약한 유형 숙제"}`;
   const order = students.filter((s) => picked.has(s.studentId)).map((s) => s.studentId);
   const nameOf = (id: string) => students.find((s) => s.studentId === id)?.name || id;
 
@@ -62,18 +59,9 @@ export default function NewHomework({
     setError("");
   };
 
-  // 간단히 내기에서 뽑은 문제는 뽑을 때의 학생 그대로일 때만 쓴다
-  const quickIds = quick.stuKey === order.join(",") ? quick.ids : [];
-  const sameIds = mode === "quick" ? quickIds : ids;
-  const canSend = mode !== "weak" ? picked.size > 0 && sameIds.length > 0 : weakReady.length > 0;
+  const canSend = mode === "same" ? picked.size > 0 && ids.length > 0 : weakReady.length > 0;
   const status =
-    mode === "quick"
-      ? !picked.size
-        ? "받는 학생을 골라 주세요"
-        : !quickIds.length
-          ? "조건을 고르고 문제를 뽑아 주세요"
-          : `${picked.size}명에게 같은 ${quickIds.length}문제`
-      : mode === "same"
+    mode === "same"
       ? !picked.size
         ? "받는 학생을 골라 주세요"
         : !ids.length
@@ -88,7 +76,7 @@ export default function NewHomework({
   const submit = () => {
     setError("");
     start(async () => {
-      if (mode !== "weak") {
+      if (mode === "same") {
         const chosen = students.filter((s) => picked.has(s.studentId));
         const cls = [...new Set(chosen.map((s) => s.classId))];
         const r = await createHomeworkAction({
@@ -97,11 +85,11 @@ export default function NewHomework({
           classId: cls.length === 1 ? cls[0] : "",
           memo,
           studentIds: chosen.map((s) => s.studentId),
-          problemIds: sameIds,
+          problemIds: ids,
         });
         if ("error" in r) return setError(r.error);
         setSent(true);
-        if (mode === "same") cart.clear();
+        cart.clear();
         router.push(`/teacher/homework/${r.hwId}?new=1`);
       } else {
         const r = await createWeakHomeworkAction({ title: shownTitle, dueDate: due, memo, plans: weakReady });
@@ -144,14 +132,14 @@ export default function NewHomework({
         <h2 className="font-semibold">
           <span className="mr-2 text-accent">2</span>문제 고르기
         </h2>
-        <div className="grid grid-cols-3 gap-1 rounded-xl bg-surface-2 p-1" role="tablist" aria-label="문제 고르는 방법">
+        <div className="grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1" role="tablist" aria-label="문제 고르는 방법">
           {MODES.map((m) => (
             <button
               key={m.mode}
               type="button"
               role="tab"
               aria-selected={mode === m.mode}
-              onClick={() => (setMode(m.mode), setWeakReady([]), setQuick({ stuKey: "", ids: [] }), setAutoFind(false), setError(""))}
+              onClick={() => (setMode(m.mode), setWeakReady([]), setAutoFind(false), setError(""))}
               className={`rounded-lg px-3 py-2 text-left transition-colors ${mode === m.mode ? "bg-surface shadow-sm" : "text-ink-soft hover:text-ink"}`}
             >
               <span className="block text-sm font-semibold">{m.label}</span>
@@ -161,8 +149,6 @@ export default function NewHomework({
         </div>
         {mode === "same" ? (
           <SamePicker ids={ids} studentIds={order} nameOf={nameOf} outline={outline} />
-        ) : mode === "quick" ? (
-          <QuickPicker studentIds={order} outline={outline} picked={quick} onPicked={setQuick} />
         ) : (
           <WeakPlanner
             key={order.join(",")}
