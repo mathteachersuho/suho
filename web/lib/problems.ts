@@ -17,7 +17,7 @@ export type Problem = {
   createdAt: Date;
 };
 
-export type BankFilter = { grade?: string; unit?: string; type?: string; difficulty?: string; q?: string; verified?: boolean };
+export type BankFilter = { grade?: string; unit?: string; type?: string; frame?: string; difficulty?: string; q?: string; verified?: boolean };
 
 export const PAGE_SIZE = 20;
 export { DIFFICULTIES } from "./difficulty";
@@ -48,6 +48,7 @@ export async function searchProblems(f: BankFilter, page: number) {
   if (f.grade) conds.push(sql`grade = ${f.grade}`);
   if (f.unit) conds.push(sql`unit = ${f.unit}`);
   if (f.type) conds.push(sql`type = ${f.type}`);
+  if (f.frame) conds.push(sql`frame = ${f.frame}`);
   if (f.difficulty) conds.push(sql`difficulty = ${f.difficulty}`);
   if (f.verified) conds.push(sql`verified`);
   if (f.q) {
@@ -70,13 +71,22 @@ export async function searchProblems(f: BankFilter, page: number) {
   return { items: rows.map(toProblem), total };
 }
 
-/** 고르기 칸에 보여 줄 학년 › 단원 › 유형 목록 (문제가 있는 것만, 개수와 함께) */
-export async function bankOutline() {
+export type OutlineRow = { grade: string; unit: string; type: string; n: number; frames: { frame: string; n: number }[] };
+
+/** 고르기 칸에 보여 줄 학년 › 단원 › 유형 목록과 유형마다 문제틀 (문제가 있는 것만, 개수와 함께) */
+export async function bankOutline(): Promise<OutlineRow[]> {
   const rows = await db()`
-    select grade, unit, type, count(*)::int as n
-    from problems where grade <> ''
+    select grade, unit, type, sum(n)::int as n,
+      coalesce(json_agg(json_build_object('frame', frame, 'n', n) order by frame) filter (where frame <> ''), '[]') as frames
+    from (select grade, unit, type, frame, count(*)::int as n from problems where grade <> '' group by grade, unit, type, frame) s
     group by grade, unit, type order by grade, unit, type`;
-  return rows.map((r) => ({ grade: r.grade as string, unit: r.unit as string, type: r.type as string, n: r.n as number }));
+  return rows.map((r) => ({
+    grade: r.grade as string,
+    unit: r.unit as string,
+    type: r.type as string,
+    n: r.n as number,
+    frames: r.frames as { frame: string; n: number }[],
+  }));
 }
 
 /** 학습지용: 고른 순서 그대로 */
