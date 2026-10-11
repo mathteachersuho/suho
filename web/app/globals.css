@@ -191,7 +191,7 @@ body {
   font-size: 10.5pt;
   color-scheme: light;
 }
-/* 문제 쪽은 A4 한 장 높이로 고정: 문제가 길면 늘어나지 않고 칸 안에 줄여 넣는다 (Sheet.tsx fitItems) */
+/* 문제 쪽은 A4 한 장 높이로 고정: 넘치는 문제는 다음 쪽으로 넘긴다 (Sheet.tsx planLayout) */
 .sheet-page:not(.sheet-answers) {
   height: 297mm;
   overflow: hidden;
@@ -215,75 +215,50 @@ body {
   color: #555;
   white-space: nowrap;
 }
-.sheet-grid {
+/* 문제 쪽은 단으로 나눈다. 쪽당 4·5·6문제는 시험지처럼 두 단, 왼쪽 단을 먼저 위에서 아래로 채운다 (Sheet.tsx planLayout) */
+.sheet-cols {
   flex: 1;
   min-height: 0;
-  display: grid;
+  display: flex;
+  gap: 6mm;
 }
-/* 칸 높이는 내용과 상관없이 똑같이 나눈다 (1fr 은 내용이 길면 칸이 늘어나 쪽을 넘긴다) */
-.sheet-grid.per-1 {
-  grid-template-rows: minmax(0, 1fr);
-}
-.sheet-grid.per-2 {
-  grid-template-rows: repeat(2, minmax(0, 1fr));
-}
-.sheet-grid.per-4 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 1fr));
-  column-gap: 6mm;
-}
-/* 5·6문제: 시험지처럼 두 단, 왼쪽 단을 먼저 위에서 아래로 채운다 (5문제는 왼쪽 3, 오른쪽 2) */
-.sheet-grid.per-5,
-.sheet-grid.per-6 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-flow: column;
-  column-gap: 6mm;
-}
-.sheet-grid.per-6 {
-  grid-template-rows: repeat(3, minmax(0, 1fr));
-}
-.sheet-grid.per-5 {
-  grid-template-rows: repeat(6, minmax(0, 1fr));
-}
-.sheet-grid.per-5 .sheet-item {
-  grid-row: span 2;
-}
-.sheet-grid.per-5 .sheet-item:nth-child(n + 4) {
-  grid-row: span 3;
-}
-.sheet-grid.per-5 .sheet-item:nth-child(n + 4),
-.sheet-grid.per-6 .sheet-item:nth-child(n + 4) {
-  grid-column: 2;
-}
-.sheet-grid.per-5 .sheet-item:nth-child(-n + 3),
-.sheet-grid.per-6 .sheet-item:nth-child(-n + 3) {
-  grid-column: 1;
-}
-.sheet-grid.per-5,
-.sheet-grid.per-6 {
+.sheet-cols.cols-2 {
   background: linear-gradient(#ccc, #ccc) center / 1px 100% no-repeat;
 }
-.sheet-grid.per-5 .sheet-item,
-.sheet-grid.per-6 .sheet-item {
-  font-size: 9.5pt;
+.sheet-col {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .sheet-item {
   position: relative;
+  /* 남는 높이는 문제마다 똑같이 나눠 풀이 공간(문제 간격)이 된다 */
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
   padding: 3mm 0;
   border-bottom: 1px dashed #bbb;
 }
-.sheet-grid.per-1 .sheet-item,
-.sheet-grid.per-2 .sheet-item:nth-child(2),
-.sheet-grid.per-4 .sheet-item:nth-child(n + 3),
-.sheet-grid.per-5 .sheet-item:nth-child(3),
-.sheet-grid.per-5 .sheet-item:nth-child(5),
-.sheet-grid.per-6 .sheet-item:nth-child(3),
-.sheet-grid.per-6 .sheet-item:nth-child(6) {
+.sheet-item:last-child {
   border-bottom: none;
+}
+/* 높이를 재는 데만 쓰는 보이지 않는 쪽 */
+.sheet-measure {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.sheet-measure-items {
+  position: absolute;
+  inset: 0 0 auto 0;
+}
+.sheet-measure-items .sheet-item {
+  flex: none;
 }
 .sheet-no {
   font-weight: 700;
@@ -307,15 +282,9 @@ body {
   border: none;
   padding: 0;
 }
-/* 쪽당 문제가 많으면 그림부터 작게 (글자는 그대로 두고 칸에 들어가게) */
-.sheet-grid.per-4 .mt-figure svg {
-  max-height: 55mm;
-  width: auto;
-  max-width: 100%;
-}
-.sheet-grid.per-5 .mt-figure svg,
-.sheet-grid.per-6 .mt-figure svg {
-  max-height: 32mm;
+/* 두 단이면 그림이 단 높이를 다 차지하지 않게 */
+.sheet-cols.cols-2 .mt-figure svg {
+  max-height: 40mm;
   width: auto;
   max-width: 100%;
 }
@@ -377,7 +346,8 @@ body {
   .sheet-answers {
     min-height: 0;
   }
-  .sheet-tools {
+  .sheet-tools,
+  .sheet-measure {
     display: none;
   }
 }
