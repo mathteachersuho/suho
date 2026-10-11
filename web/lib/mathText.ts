@@ -9,20 +9,17 @@ import sanitizeHtml from "sanitize-html";
  * 수식은 서버에서 미리 그려서 보내므로 화면이 깜빡이지 않고, 인쇄할 때도 그대로 나온다.
  */
 
-const CELL_FRAC = /([+-]?)\s*\\frac\{([^{}]+)\}\{([^{}]+)\}/g;
-
-function convertFracToHtml(text: string) {
-  return text.replace(
-    CELL_FRAC,
-    (_m, sign: string, num: string, den: string) =>
-      `${sign || ""}<span style="display:inline-flex; flex-direction:column; vertical-align:middle; text-align:center; font-size:12px; line-height:1.1; margin:0 2px;"><span style="border-bottom:1.5px solid currentColor; padding:0 1px;">${num.trim()}</span><span>${den.trim()}</span></span>`,
-  );
-}
-
+/**
+ * 표 칸 글자. 칸 안 수식($x\text{ L}$, \cdots 등)은 $ 를 남겨 두어 renderProblemHtml 에서 KaTeX로 그린다.
+ * $ 없이 명령어가 있으면 수식으로 감싸고(한글이 섞이면 명령어 부분만), 짝이 안 맞는 $ 는 지운다.
+ */
 function cleanCell(col: string) {
   col = col.trim();
-  if (col.startsWith("$") && col.endsWith("$")) col = col.slice(1, -1).trim();
-  return convertFracToHtml(col).replaceAll("$", "");
+  const dollars = (col.match(/\$/g) ?? []).length;
+  if (dollars % 2) return col.replaceAll("$", "");
+  if (dollars || !/\\[a-zA-Z]/.test(col)) return col;
+  if (!/[가-힣]/.test(col)) return "$" + col + "$";
+  return col.replace(/[\w^]*\\[a-zA-Z]+(?:\{[^{}]*\})*/g, (m) => "$" + m + "$");
 }
 
 function plainTable(rows: string[][]) {
