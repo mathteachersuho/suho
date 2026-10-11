@@ -3,16 +3,18 @@
 import Form from "next/form";
 import { DIFFICULTIES } from "@/lib/difficulty";
 
-type Outline = { grade: string; unit: string; type: string; n: number }[];
-type Current = { grade: string; unit: string; type: string; difficulty: string; q: string; verified: boolean };
+import type { OutlineRow } from "@/lib/problems";
+
+type Current = { grade: string; unit: string; type: string; frame: string; difficulty: string; q: string; verified: boolean };
 
 const uniq = (xs: string[]) => [...new Set(xs)];
 
-/** 학년 › 단원 › 유형 › 난이도 고르기 + 글자 검색. 고르는 즉시 결과가 바뀐다. */
-export default function BankFilters({ outline, current }: { outline: Outline; current: Current }) {
+/** 학년 › 단원 › 유형 › 문제틀(세부 유형) › 난이도 고르기 + 글자 검색. 고르는 즉시 결과가 바뀐다. */
+export default function BankFilters({ outline, current }: { outline: OutlineRow[]; current: Current }) {
   const grades = uniq(outline.map((o) => o.grade));
   const units = uniq(outline.filter((o) => o.grade === current.grade).map((o) => o.unit));
   const types = uniq(outline.filter((o) => o.grade === current.grade && o.unit === current.unit).map((o) => o.type));
+  const frames = outline.find((o) => o.grade === current.grade && o.unit === current.unit && o.type === current.type)?.frames ?? [];
 
   // 위 칸을 바꾸면 아래 칸은 '전체'로 되돌린 뒤 바로 검색
   const change = (reset: string[]) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -29,7 +31,7 @@ export default function BankFilters({ outline, current }: { outline: Outline; cu
   return (
     <Form action="/teacher/bank" replace scroll={false} className="card space-y-3">
       <div className="grid gap-2 sm:flex sm:flex-wrap">
-        <select name="grade" defaultValue={current.grade} onChange={change(["unit", "type"])} className={select} aria-label="학년">
+        <select name="grade" defaultValue={current.grade} onChange={change(["unit", "type", "frame"])} className={select} aria-label="학년">
           <option value="">학년 전체</option>
           {grades.map((g) => (
             <option key={g}>{g}</option>
@@ -38,7 +40,7 @@ export default function BankFilters({ outline, current }: { outline: Outline; cu
         <select
           name="unit"
           defaultValue={current.unit}
-          onChange={change(["type"])}
+          onChange={change(["type", "frame"])}
           disabled={!current.grade}
           className={select}
           aria-label="단원"
@@ -48,10 +50,18 @@ export default function BankFilters({ outline, current }: { outline: Outline; cu
             <option key={u}>{u}</option>
           ))}
         </select>
-        <select name="type" defaultValue={current.type} onChange={change([])} disabled={!current.unit} className={select} aria-label="유형">
+        <select name="type" defaultValue={current.type} onChange={change(["frame"])} disabled={!current.unit} className={select} aria-label="유형">
           <option value="">유형 전체</option>
           {types.map((t) => (
             <option key={t}>{t}</option>
+          ))}
+        </select>
+        <select name="frame" defaultValue={current.frame} onChange={change([])} disabled={!current.type} className={select} aria-label="세부 유형">
+          <option value="">세부 유형 전체</option>
+          {frames.map((t) => (
+            <option key={t.frame} value={t.frame}>
+              {t.frame} ({t.n})
+            </option>
           ))}
         </select>
       </div>

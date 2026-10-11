@@ -7,7 +7,9 @@ import { weakPlanAction, type WeakPreview } from "../actions";
 
 const COUNTS = [5, 8, 10, 15, 20];
 
-export type OutlineRow = { grade: string; unit: string; type: string; n: number };
+import type { OutlineRow } from "@/lib/problems";
+
+export type { OutlineRow };
 export type WeakOpts = { count: number; verifiedOnly: boolean; dueOnly: boolean };
 export type WeakReady = { studentId: string; problemIds: string[] };
 type Key = { grade: string; unit: string; type: string };

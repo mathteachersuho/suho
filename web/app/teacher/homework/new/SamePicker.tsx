@@ -9,8 +9,8 @@ import { bankSearchAction, cartPreviewAction, priorCountsAction } from "../actio
 import type { OutlineRow } from "./WeakPlanner";
 
 type Item = { id: string; tag: string; html: string };
-type Filter = { grade: string; unit: string; type: string; difficulty: string; q: string; verified: boolean };
-const EMPTY: Filter = { grade: "", unit: "", type: "", difficulty: "", q: "", verified: false };
+type Filter = { grade: string; unit: string; type: string; frame: string; difficulty: string; q: string; verified: boolean };
+const EMPTY: Filter = { grade: "", unit: "", type: "", frame: "", difficulty: "", q: "", verified: false };
 const uniq = (xs: string[]) => [...new Set(xs)];
 
 /**
@@ -83,6 +83,7 @@ export default function SamePicker({
   const grades = uniq(outline.map((o) => o.grade));
   const units = uniq(outline.filter((o) => o.grade === f.grade).map((o) => o.unit));
   const types = uniq(outline.filter((o) => o.grade === f.grade && o.unit === f.unit).map((o) => o.type)).filter(Boolean);
+  const frames = outline.find((o) => o.grade === f.grade && o.unit === f.unit && o.type === f.type)?.frames ?? [];
   const picked = new Set(ids);
   const sel = "field w-auto py-1.5 text-sm";
 
@@ -145,22 +146,30 @@ export default function SamePicker({
       <div className="space-y-3 border-t border-line pt-4">
         <h3 className="text-sm font-semibold">문제 은행에서 찾기</h3>
         <div className="flex flex-wrap gap-2">
-          <select aria-label="학년" value={f.grade} onChange={(e) => setFilter({ grade: e.target.value, unit: "", type: "" })} className={sel}>
+          <select aria-label="학년" value={f.grade} onChange={(e) => setFilter({ grade: e.target.value, unit: "", type: "", frame: "" })} className={sel}>
             <option value="">학년 전체</option>
             {grades.map((g) => (
               <option key={g}>{g}</option>
             ))}
           </select>
-          <select aria-label="단원" value={f.unit} disabled={!f.grade} onChange={(e) => setFilter({ unit: e.target.value, type: "" })} className={`${sel} max-w-[12rem]`}>
+          <select aria-label="단원" value={f.unit} disabled={!f.grade} onChange={(e) => setFilter({ unit: e.target.value, type: "", frame: "" })} className={`${sel} max-w-[12rem]`}>
             <option value="">단원 전체</option>
             {units.map((u) => (
               <option key={u}>{u}</option>
             ))}
           </select>
-          <select aria-label="유형" value={f.type} disabled={!f.unit} onChange={(e) => setFilter({ type: e.target.value })} className={`${sel} max-w-[14rem]`}>
+          <select aria-label="유형" value={f.type} disabled={!f.unit} onChange={(e) => setFilter({ type: e.target.value, frame: "" })} className={`${sel} max-w-[14rem]`}>
             <option value="">유형 전체</option>
             {types.map((t) => (
               <option key={t}>{t}</option>
+            ))}
+          </select>
+          <select aria-label="세부 유형" value={f.frame} disabled={!f.type} onChange={(e) => setFilter({ frame: e.target.value })} className={`${sel} max-w-[14rem]`}>
+            <option value="">세부 유형 전체</option>
+            {frames.map((t) => (
+              <option key={t.frame} value={t.frame}>
+                {t.frame} ({t.n})
+              </option>
             ))}
           </select>
           <select aria-label="난이도" value={f.difficulty} onChange={(e) => setFilter({ difficulty: e.target.value })} className={sel}>

@@ -16,7 +16,8 @@ export default async function BankPage({ searchParams }: { searchParams: SP }) {
   const f: Required<BankFilter> = {
     grade: one(sp.grade),
     unit: one(sp.unit),
-    type: one(sp.type),
+    type: one(sp.type, 80),
+    frame: one(sp.frame, 120),
     difficulty: (DIFFICULTIES as readonly string[]).includes(diff) ? diff : "",
     q: one(sp.q, 100),
     verified: one(sp.verified) === "1",
