@@ -21,7 +21,7 @@ export default async function CreatePage() {
           <p className="mt-1 text-ink-soft">
             Vercel 프로젝트 Settings → Environment Variables에{" "}
             {[!cfg.mathpix && "MATHPIX_APP_ID, MATHPIX_APP_KEY", !cfg.gemini && "GEMINI_API_KEY"].filter(Boolean).join(", ")}를 넣고 다시
-            배포해 주세요. 값은 Streamlit Secrets에 있는 것과 같아요.
+            배포해 주세요. 키 값은 채팅에 올리지 말고 Vercel에만 넣어 주세요.
           </p>
         </div>
       ) : null}

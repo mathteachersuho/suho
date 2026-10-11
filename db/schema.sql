@@ -86,7 +86,8 @@ create index if not exists problems_text_idx
   on problems using gin ((question || ' ' || answer || ' ' || solution) extensions.gin_trgm_ops);
 
 -- ---------------------------------------------------------------
--- 학생에게 배정한 문제 (학생 × 문제 한 줄). tags: 중요 / 틀림 / 어려워함 (여러 개 가능)
+-- [예전 표] 학생에게 배정한 문제 (학생 × 문제 한 줄). 예전 Streamlit 앱이 쓰던 표로,
+-- 웹앱은 더 읽거나 쓰지 않는다. 남아 있는 기록을 백업·되살리기에서 잃지 않도록 표는 그대로 둔다.
 -- ---------------------------------------------------------------
 create table if not exists assignments (
   student_id  text not null references students (student_id) on update cascade on delete cascade,

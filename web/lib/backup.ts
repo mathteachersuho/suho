@@ -13,7 +13,7 @@ export const TABLES = [
   ["units", "단원 학기"],
   ["problem_sets", "문제 묶음"],
   ["problems", "문제"],
-  ["assignments", "배정한 문제"],
+  ["assignments", "배정한 문제 (예전 앱)"],
   ["stars", "중요 문제"],
   ["homework", "숙제"],
   ["homework_students", "숙제 받은 학생"],

@@ -13,7 +13,6 @@ const NEED: { table: string; column?: string; label: string }[] = [
   { table: "units", label: "단원" },
   { table: "problem_sets", label: "문제 묶음" },
   { table: "problems", label: "문제 은행" },
-  { table: "assignments", label: "유사문제 배정" },
   { table: "stars", label: "중요 문제" },
   { table: "homework", label: "숙제" },
   { table: "homework_students", label: "숙제 받는 학생" },

@@ -87,18 +87,17 @@ export async function getProblems(ids: string[]): Promise<Problem[]> {
   return ids.map((id) => byId.get(id)).filter((p): p is Problem => !!p);
 }
 
-export type ProblemUsage = { homework: number; answers: number; assigned: number };
+export type ProblemUsage = { homework: number; answers: number };
 
-/** 지우기 전에 보여 줄 것: 이 문제가 들어간 숙제 수, 학생이 낸 답 수, 학생에게 배정한 수 */
+/** 지우기 전에 보여 줄 것: 이 문제가 들어간 숙제 수, 학생이 낸 답 수 */
 export async function problemUsage(id: string): Promise<ProblemUsage | null> {
   const [r] = await db()`
     select
       exists(select 1 from problems where id = ${id}) as found,
       (select count(*) from homework_problems where problem_id = ${id}) as homework,
-      (select count(*) from hw_results where problem_id = ${id}) as answers,
-      (select count(*) from assignments where problem_id = ${id}) as assigned`;
+      (select count(*) from hw_results where problem_id = ${id}) as answers`;
   if (!r.found) return null;
-  return { homework: Number(r.homework), answers: Number(r.answers), assigned: Number(r.assigned) };
+  return { homework: Number(r.homework), answers: Number(r.answers) };
 }
 
 /** 문제 하나를 지운다. 들어 있던 숙제에서도 빠지고 그 문제의 학생 답·배정·별표도 함께 지워진다 (표 설계상 cascade). */
