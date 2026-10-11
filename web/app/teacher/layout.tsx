@@ -1,11 +1,13 @@
 import TopBar from "@/components/TopBar";
 import { IconBook, IconChart, IconClipboard, IconDownload, IconSparkle, IconUsers } from "@/components/Icons";
+import DbUpdateNotice from "@/components/DbUpdateNotice";
 import { backupDue } from "@/lib/backup";
+import { missingSchema } from "@/lib/schemaCheck";
 import { requireTeacher } from "@/lib/session";
 
 export default async function TeacherLayout({ children }: LayoutProps<"/teacher">) {
   await requireTeacher();
-  const due = await backupDue().catch(() => false);
+  const [due, missing] = await Promise.all([backupDue().catch(() => false), missingSchema().catch(() => [] as string[])]);
   return (
     <>
       <TopBar
@@ -19,7 +21,10 @@ export default async function TeacherLayout({ children }: LayoutProps<"/teacher"
           { label: "백업", icon: <IconDownload />, href: "/teacher/backup", dot: due },
         ]}
       />
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</main>
+      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
+        {missing.length > 0 && <DbUpdateNotice missing={missing} />}
+        {children}
+      </main>
     </>
   );
 }
