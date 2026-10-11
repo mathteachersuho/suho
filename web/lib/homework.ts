@@ -1,5 +1,6 @@
 import "server-only";
 import { db } from "./db";
+import { answerTemplateWithValues, countSlots, gradeSlots, toAnswer } from "./answerTemplate";
 import { gradeAnswer } from "./grade";
 import { isReason, type Reason } from "./hwFormat";
 
@@ -270,6 +271,7 @@ export async function submitHomework(
   studentId: string,
   hwId: string,
   answers: Record<string, string>,
+  slots: Record<string, string[]> = {},
 ): Promise<{ ok: true; correct: number; total: number } | { ok: false; error: string }> {
   const sql = db();
   return sql.begin(async (tx) => {
@@ -282,8 +284,17 @@ export async function submitHomework(
     const probs = await tx`
       select p.id, p.answer from homework_problems hp join problems p on p.id = hp.problem_id where hp.hw_id = ${hwId}`;
     const rows = probs.map((p) => {
+      const base = { hw_id: hwId, student_id: studentId, problem_id: p.id as string, graded_by: "auto" };
+      // 숫자만 넣는 답 틀로 낸 답은 빈칸 숫자를 정답 숫자와 비교한다 (꼴만 다르거나 판단이 어려우면 '?')
+      const tpl = Array.isArray(slots[p.id as string]) ? answerTemplateWithValues(p.answer as string) : null;
+      // 학생이 푸는 사이 선생님이 정답을 고쳐 빈칸 수가 달라졌으면 글자 답으로 채점한다
+      if (tpl && countSlots(tpl) === slots[p.id as string].length) {
+        const vals = slots[p.id as string];
+        const given = toAnswer(tpl, vals);
+        return { ...base, answer: given, correct: given ? gradeSlots(tpl, vals) : "N" };
+      }
       const given = String(answers[p.id as string] ?? "").trim().slice(0, 500);
-      return { hw_id: hwId, student_id: studentId, problem_id: p.id as string, answer: given, correct: gradeAnswer(given, p.answer as string), graded_by: "auto" };
+      return { ...base, answer: given, correct: gradeAnswer(given, p.answer as string) };
     });
     if (!rows.length) return { ok: false as const, error: "숙제에 문제가 없어요." };
     await tx`insert into hw_results ${tx(rows, "hw_id", "student_id", "problem_id", "answer", "correct", "graded_by")}`;
