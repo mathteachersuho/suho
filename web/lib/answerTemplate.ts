@@ -1,6 +1,9 @@
 /*
- * 숫자만 넣는 답 틀: 정답(LaTeX)을 보고 루트·분수·거듭제곱·문자·기호는 그대로 두고 숫자 자리만 빈칸으로 만든다.
+ * 답 틀: 정답(LaTeX)을 보고 루트·분수·거듭제곱·기호는 그대로 두고 숫자와 문자 자리만 빈칸으로 만든다.
  *   $\sqrt{3}+\frac{3}{4}$  →  √[ ] + [ ]/[ ]   (분수는 가운데 분수선, 위아래 빈칸)
+ *   $x^2+3x$                 →  [ ]^[ ] + [ ][ ]   (문자도 빈칸, 지수는 오른쪽 위 작은 빈칸)
+ *   O / X                    →  O, X 중 하나 고르기
+ * 그리스 문자(π, α, θ …)와 단위(\text{cm}), 한글 앞의 문자(y절편)는 빈칸으로 만들지 않고 그대로 보여 준다.
  * 학생 화면에는 빈칸만 보내고(정답 숫자는 서버에만), 낸 숫자는 서버에서 정답 숫자와 비교해 채점한다 (gradeSlots).
  * 틀을 만들 수 없는 정답(숫자가 없거나 모르는 기호)은 null → 예전처럼 자유롭게 쓰는 칸을 쓴다.
  * 이 파일은 서버와 학생 화면이 함께 쓴다 (DB를 쓰지 않음).
@@ -8,13 +11,25 @@
 
 export type TNode =
   | { t: "text"; v: string }
-  | { t: "slot"; v?: string } // v: 정답 숫자 (서버에서만 들고 있고 학생에게는 지워서 보낸다)
+  | { t: "slot"; v?: string; k?: SlotKind } // v: 정답 (서버에서만 들고 있고 학생에게는 지워서 보낸다)
   | { t: "sqrt"; c: TNode[] }
   | { t: "frac"; n: TNode[]; d: TNode[] }
   | { t: "sup"; c: TNode[] };
 
+/** 빈칸 종류: 없으면 숫자, a 문자, ox O/X 고르기 */
+export type SlotKind = "a" | "ox";
+
 const SYMBOL: Record<string, string> = {
   pi: "π",
+  alpha: "α",
+  beta: "β",
+  gamma: "γ",
+  delta: "δ",
+  theta: "θ",
+  omega: "ω",
+  lambda: "λ",
+  mu: "μ",
+  sigma: "σ",
   times: "×",
   cdot: "×",
   div: "÷",
@@ -52,6 +67,9 @@ class Fail extends Error {}
 export function answerTemplateWithValues(answer: string): TNode[] | null {
   const src = (answer || "").trim();
   if (!src || src.length > 200) return null;
+  // O/X 문제: 둘 중 하나 고르기
+  const ox = /^\$?\s*(O|X|○|×|\\bigcirc|\\times)\s*\$?$/.exec(src);
+  if (ox) return [{ t: "slot", k: "ox", v: /O|○|bigcirc/.test(ox[1]) ? "O" : "X" }];
   try {
     const nodes = merge(parse(src.replace(/\$/g, "")));
     const n = countSlots(nodes);
@@ -70,7 +88,7 @@ export function answerTemplate(answer: string): TNode[] | null {
 
 function strip(ns: TNode[]): TNode[] {
   return ns.map((x) =>
-    x.t === "slot" ? { t: "slot" } : x.t === "sqrt" || x.t === "sup" ? { ...x, c: strip(x.c) } : x.t === "frac" ? { t: "frac", n: strip(x.n), d: strip(x.d) } : x,
+    x.t === "slot" ? (x.k ? { t: "slot", k: x.k } : { t: "slot" }) : x.t === "sqrt" || x.t === "sup" ? { ...x, c: strip(x.c) } : x.t === "frac" ? { t: "frac", n: strip(x.n), d: strip(x.d) } : x,
   );
 }
 
@@ -132,7 +150,13 @@ function parse(s: string): TNode[] {
       else out.push({ t: "sup", c: g });
     } else if (ch === "{") out.push(...braced());
     else if (ch === "_" || ch === "&" || ch === "}") throw new Fail();
-    else {
+    else if (/[a-zA-Z]/.test(ch)) {
+      // 문자 하나는 빈칸. 두 글자 이상 붙은 낱말(km)과 한글 앞의 문자(y절편)는 그대로 보여 준다
+      const m = /^[a-zA-Z]+/.exec(s.slice(i))![0];
+      i += m.length;
+      if (m.length === 1 && !/[가-힣]/.test(s[i] ?? "")) out.push({ t: "slot", k: "a", v: m });
+      else out.push({ t: "text", v: m });
+    } else {
       out.push({ t: "text", v: ch === "*" ? "×" : ch });
       i++;
     }
@@ -174,8 +198,13 @@ function merge(nodes: TNode[]): TNode[] {
   return out;
 }
 
-/** 빈칸에 넣을 수 있는 글자: 숫자와 소수점만 */
-export const cleanSlot = (v: string) => (v || "").replace(/[^\d.]/g, "").slice(0, 12);
+/** 빈칸에 넣을 수 있는 글자: 숫자 빈칸은 숫자와 소수점, 문자 빈칸은 영문자, O/X 는 O 또는 X */
+export function cleanSlot(v: string, k?: SlotKind): string {
+  const s = v || "";
+  if (k === "ox") return /^[OoＯ○]/.test(s) ? "O" : /^[XxＸ×]/.test(s) ? "X" : "";
+  if (k === "a") return s.replace(/[^a-zA-Z]/g, "").slice(0, 3);
+  return s.replace(/[^\d.]/g, "").slice(0, 12);
+}
 
 /** 학생이 채운 숫자(빈칸 순서대로)로 보여 줄 답 글자를 만든다 (√3+3/4). 빈칸이 하나라도 비면 '' */
 export function toAnswer(nodes: TNode[], values: string[]): string {
@@ -188,7 +217,7 @@ export function toAnswer(nodes: TNode[], values: string[]): string {
       .map((x) => {
         if (x.t === "text") return x.v;
         if (x.t === "slot") {
-          const v = cleanSlot(values[k++] ?? "");
+          const v = cleanSlot(values[k++] ?? "", x.k);
           if (!v) empty = true;
           return v;
         }
@@ -201,11 +230,11 @@ export function toAnswer(nodes: TNode[], values: string[]): string {
   return empty ? "" : s;
 }
 
-function slotValues(ns: TNode[]): string[] {
-  const out: string[] = [];
+function slotKinds(ns: TNode[]): { v: string; k?: SlotKind }[] {
+  const out: { v: string; k?: SlotKind }[] = [];
   const go = (xs: TNode[]) => {
     for (const x of xs) {
-      if (x.t === "slot") out.push(x.v ?? "");
+      if (x.t === "slot") out.push({ v: x.v ?? "", k: x.k });
       else if (x.t === "sqrt" || x.t === "sup") go(x.c);
       else if (x.t === "frac") {
         go(x.n);
@@ -228,15 +257,16 @@ const hasShape = (ns: TNode[]): boolean => ns.some((x) => x.t === "frac" || x.t 
  *    문자는 정해 둔 값을 넣어 계산한다. 계산할 수 없으면 '?' (선생님 확인)
  */
 export function gradeSlots(tpl: TNode[], values: string[]): "Y" | "N" | "?" {
-  const want = slotValues(tpl);
-  const got = want.map((_, i) => cleanSlot(values[i] ?? ""));
+  const slots = slotKinds(tpl);
+  const want = slots.map((x) => x.v);
+  const got = slots.map((x, i) => cleanSlot(values[i] ?? "", x.k));
   if (got.some((v) => !v)) return "N";
-  const same = (a: string, b: string) => Number(a) === Number(b);
-  if (want.every((w, i) => same(w, got[i]))) return "Y";
+  const same = (i: number) => (slots[i].k ? want[i] === got[i] : Number(want[i]) === Number(got[i]));
+  if (want.every((_, i) => same(i))) return "Y";
   if (!hasShape(tpl)) {
     // 쉼표로 나뉜 여러 답 ((2,3), (3,2) / x=-1, x=4 처럼)은 순서를 바꿔도 같은 묶음이면 맞음
     const text = textOf(tpl);
-    if (/,|또는/.test(text) && sameGroups(tpl, want, got)) return "Y";
+    if (/,|또는/.test(text) && sameGroups(tpl, slots, want, got)) return "Y";
     return "N";
   }
   const a = evaluate(tpl, want);
@@ -246,7 +276,7 @@ export function gradeSlots(tpl: TNode[], values: string[]): "Y" | "N" | "?" {
 }
 
 /** 쉼표·'또는'으로 나뉜 답 묶음끼리 순서 없이 같은지 */
-function sameGroups(tpl: TNode[], want: string[], got: string[]): boolean {
+function sameGroups(tpl: TNode[], slots: { k?: SlotKind }[], want: string[], got: string[]): boolean {
   // 최상위 글자에서 묶음 경계를 찾아 빈칸 번호를 묶음별로 나눈다 (괄호 안의 쉼표는 경계가 아니다)
   // 빈칸 앞의 빼기 기호는 틀에 고정되어 있으므로 값에 붙여서 비교한다 (x=-1 또는 x=4 를 x=-4 또는 x=1 로 바꾸면 틀림)
   const groups: { i: number; neg: boolean }[][] = [[]];
@@ -266,7 +296,8 @@ function sameGroups(tpl: TNode[], want: string[], got: string[]): boolean {
       }
     }
   }
-  const key = (vals: string[]) => groups.map((g) => g.map((s) => (s.neg ? -1 : 1) * Number(vals[s.i])).join("|")).sort().join("/");
+  const one = (vals: string[], s: { i: number; neg: boolean }) => (slots[s.i].k ? (s.neg ? "-" : "") + vals[s.i] : (s.neg ? -1 : 1) * Number(vals[s.i]));
+  const key = (vals: string[]) => groups.map((g) => g.map((s) => one(vals, s)).join("|")).sort().join("/");
   return groups.length > 1 && key(want) === key(got);
 }
 
@@ -283,7 +314,12 @@ export function evaluate(tpl: TNode[], values: string[]): number[] | null {
   const add = (t: string) => (parts[parts.length - 1] += t);
   const emit = (ns: TNode[]) => {
     for (const x of ns) {
-      if (x.t === "slot") add(`(${Number(values[k++])})`);
+      if (x.t === "slot" && x.k) {
+        // 문자 빈칸: 글자마다 정해 둔 값을 곱한다 (O/X 는 계산하지 않음)
+        const v = values[k++] ?? "";
+        if (x.k === "ox" || !/^[a-zA-Z]+$/.test(v)) parts.push("?");
+        else add(`(${[...v].map(LETTER_VALUE).join("*")})`);
+      } else if (x.t === "slot") add(`(${Number(values[k++])})`);
       else if (x.t === "sqrt") {
         add("s(");
         emit(x.c);

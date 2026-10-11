@@ -84,8 +84,8 @@ export default function SolveForm({ hwId, problems }: { hwId: string; problems: 
       }}
     >
       <p className="text-sm text-ink-soft">
-        답 틀이 있는 문제는 루트·분수 모양이 그려져 있으니 <b>빈칸에 숫자만</b> 넣으세요. 엔터를 누르면 다음 빈칸으로 가요. 자유롭게 쓰는 칸은
-        기호를 칸 아래 버튼으로 넣고, 분수는 <b>3/4</b>, 답이 여러 개면 쉼표로 나눠 쓰세요.
+        답 틀이 있는 문제는 루트·분수 모양이 그려져 있으니 <b>빈칸에 숫자나 문자만</b> 넣으세요. 점선 빈칸은 문자(x, y …) 자리, 오른쪽 위 작은 빈칸은
+        지수예요. 엔터를 누르면 다음 빈칸으로 가요. O/X 문제는 버튼을 누르고, 자유롭게 쓰는 칸은 기호를 칸 아래 버튼으로 넣으세요.
       </p>
       <ol className="space-y-3">
         {problems.map((p, i) => (
