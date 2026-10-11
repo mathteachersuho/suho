@@ -9,6 +9,7 @@ import { getProblems, PAGE_SIZE, searchProblems } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
 import { reportError } from "@/lib/reportError";
 import { getStudent } from "@/lib/students";
+import { quickPick } from "@/lib/quick";
 import { weakPlan, type TypeKey } from "@/lib/weak";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
@@ -40,6 +41,48 @@ export async function bankSearchAction(f: { grade?: string; unit?: string; type?
     total,
     more: pg * PAGE_SIZE < total,
   };
+}
+
+export type QuickPreview = { rows: { available: number; fresh: number; got: number }[]; problems: { id: string; row: number; tag: string; difficulty: string; seen: number; html: string }[] };
+
+/** 간단히 숙제 내기: 조건마다 받는 학생이 안 받은 문제를 무작위로 고른다 */
+export async function quickPickAction(
+  rows: { grade?: string; unit?: string; type?: string; frame?: string; difficulty?: string; count?: number }[],
+  studentIds: string[],
+  verifiedOnly: boolean,
+): Promise<QuickPreview | { error: string }> {
+  await requireTeacher();
+  const clean = (Array.isArray(rows) ? rows : [])
+    .slice(0, 10)
+    .map((r) => ({
+      grade: s(r?.grade, 20),
+      unit: s(r?.unit, 60),
+      type: s(r?.type, 80),
+      frame: s(r?.frame, 120),
+      difficulty: ["하", "중", "상"].includes(s(r?.difficulty, 4)) ? s(r?.difficulty, 4) : "",
+      count: Math.min(30, Math.max(1, Math.round(Number(r?.count) || 1))),
+    }))
+    .filter((r) => r.grade);
+  if (!clean.length) return { error: "학년부터 골라 주세요." };
+  try {
+    const res = await quickPick(clean, ids(studentIds, 60), !!verifiedOnly);
+    return {
+      rows: res.map((r) => ({ available: r.available, fresh: r.fresh, got: r.picked.length })),
+      problems: res.flatMap((r, row) =>
+        r.picked.map((p) => ({
+          id: p.id,
+          row,
+          tag: [p.type, p.frame, p.verified && "검수"].filter(Boolean).join(" · "),
+          difficulty: p.difficulty,
+          seen: p.seen,
+          html: renderProblemHtml(p.question),
+        })),
+      ),
+    };
+  } catch (e) {
+    await reportError("간단히 숙제 문제 고르기", e);
+    return { error: "문제를 고르지 못했어요. 잠시 뒤 다시 해 주세요." };
+  }
 }
 
 /** 숙제 내기 화면: 고른 학생이 담은 문제를 전에 받은 적 있는지 (선생님에게만 보임) */
