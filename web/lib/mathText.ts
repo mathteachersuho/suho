@@ -66,6 +66,9 @@ export function formatMath(input: string): string {
   // 0. 코드블록에 싸인 SVG 풀기
   text = text.replace(/```(?:html|xml|svg)?\s*(<svg[\s\S]*?<\/svg>)\s*```/g, (_m, s: string) => s);
 
+  // 0-0. \( 수식 \) → $ 수식 $ (표 칸 안에서도 수식으로 그리도록 표를 만들기 전에 바꾼다)
+  text = text.replace(/\\\(([\s\S]+?)\\\)/g, (_m, a: string) => "$" + a + "$");
+
   // 0-1. OCR 기호 오인식
   text = text.replaceAll("\\neg", "ㄱ").replaceAll("\\llcorner", "ㄴ");
   text = text.replace(/\{\s*\(\s*ㄱ\s*\)\s*\(\s*ㄴ\s*\)\s*\}*/g, "㉠ ㉡");
@@ -82,7 +85,8 @@ export function formatMath(input: string): string {
 
   // 2. LaTeX tabular → 표
   text = text.replace(
-    /\\begin\{tabular\}(?:\[[^\]]*\])?(?:\{[^}]*\})([\s\S]*?)\\end\{tabular\}/g,
+    // 표 전체를 $$ 로 감싼 경우도 함께 벗긴다
+    /(?:\$\$\s*)?\\begin\{tabular\}(?:\[[^\]]*\])?(?:\{[^}]*\})([\s\S]*?)\\end\{tabular\}(?:\s*\$\$)?/g,
     (_m, content: string) => {
       const rows = content
         .replaceAll("\\hline", "")
