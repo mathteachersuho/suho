@@ -151,6 +151,18 @@ body {
   max-width: 100%;
   height: auto;
 }
+/* <보기> 상자 */
+.problem-body .mt-bogi {
+  margin: 12px 0;
+  padding: 10px 16px 12px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+}
+.problem-body .mt-bogi-title {
+  text-align: center;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
 .problem-body .mt-cards {
   display: inline-flex;
   gap: 8px;

@@ -175,6 +175,12 @@ export function formatMath(input: string): string {
 
   // 10. SVG 그림을 흰 카드로 감싸기 (다크 모드에서도 그림이 보이도록)
   text = text.replace(/(<svg[\s\S]*?<\/svg>)/g, (svg: string) => `<div class="mt-figure"><div>${svg}</div></div>`);
+
+  // 11. <보기> 상자: AI가 쓴 <fieldset><legend>보기</legend>...</fieldset> 를 앱의 보기 상자로 (인라인 색은 버리고, 앞뒤 빈 줄은 상자 여백으로)
+  text = text.replace(/\s*<fieldset\b[^>]*>\s*(?:<legend\b[^>]*>([\s\S]*?)<\/legend>)?\s*([\s\S]*?)\s*<\/fieldset>\s*/gi, (_m, title: string | undefined, body: string) => {
+    const head = (title ?? "").replace(/[<>〈〉]/g, "").replace(/\s+/g, "").trim();
+    return `<div class="mt-bogi">${head ? `<div class="mt-bogi-title">〈${head}〉</div>` : ""}${body.replace(/\n\s*\n/g, "\n")}</div>`;
+  });
   return text;
 }
 
