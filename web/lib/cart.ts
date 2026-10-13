@@ -70,6 +70,12 @@ export const cart = {
     [ids[i], ids[j]] = [ids[j], ids[i]];
     write(ids);
   },
+  /** 같은 자리의 문제를 다른 문제로 바꾼다 */
+  replace(oldId: string, newId: string) {
+    const ids = read();
+    if (!ids.includes(oldId) || ids.includes(newId)) return;
+    write(ids.map((x) => (x === oldId ? newId : x)));
+  },
   clear() {
     write([]);
   },

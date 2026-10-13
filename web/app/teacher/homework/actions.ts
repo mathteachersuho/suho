@@ -53,6 +53,42 @@ export async function unitCountsAction(grade: string, unit: string, studentIds: 
   return unitCounts(g, u, ids(studentIds, 60), !!verifiedOnly);
 }
 
+/**
+ * 고른 문제 바꾸기: 같은 학년·단원·유형·세부 유형·난이도에서 다른 문제 하나를 고른다.
+ * 받는 학생이 안 받은 문제를 먼저 고르고, 지금 고른 문제와 앞서 바꿔 뺀 문제는 되도록 다시 고르지 않는다.
+ */
+export async function swapProblemAction(
+  problemId: string,
+  studentIds: string[],
+  chosen: string[],
+  skipped: string[],
+): Promise<{ item: { id: string; tag: string; difficulty: string; html: string } } | { error: string }> {
+  await requireTeacher();
+  const [p] = await getProblems([s(problemId, 80)]);
+  if (!p) return { error: "문제를 찾지 못했어요." };
+  const row = { grade: p.grade, unit: p.unit, type: p.type, frame: p.frame, difficulty: p.difficulty, count: 1 };
+  const stu = ids(studentIds, 60);
+  const keep = [p.id, ...ids(chosen, 200)];
+  try {
+    // 바꿔 뺀 문제까지 빼고 찾아보고, 없으면 바꿔 뺀 문제도 다시 후보로
+    let [r] = await quickPick([row], stu, false, [...keep, ...ids(skipped, 200)]);
+    if (!r.picked.length) [r] = await quickPick([row], stu, false, keep);
+    const q = r.picked[0];
+    if (!q) return { error: "같은 유형·난이도에 다른 문제가 없어요." };
+    return {
+      item: {
+        id: q.id,
+        tag: [q.type, q.frame, q.verified && "검수"].filter(Boolean).join(" · "),
+        difficulty: q.difficulty,
+        html: renderProblemHtml(q.question),
+      },
+    };
+  } catch (e) {
+    await reportError("고른 문제 바꾸기", e);
+    return { error: "문제를 바꾸지 못했어요. 잠시 뒤 다시 해 주세요." };
+  }
+}
+
 export type RandomPick = { items: { id: string; tag: string; difficulty: string; html: string }[]; short: { label: string; want: number; got: number; fresh: number }[] };
 
 /** 무작위로 뽑기: 조건마다 받는 학생이 안 받은 문제를 무작위로 고른다 (이미 고른 문제는 빼고) */

@@ -30,6 +30,8 @@ export const IconPrinter = ({ className }: P) =>
   base(<><path d="M7 9V3h10v6M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2" /><rect x="7" y="14" width="10" height="7" rx="1" /></>, className);
 export const IconSearch = ({ className }: P) => base(<><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>, className);
 export const IconX = ({ className }: P) => base(<path d="M6 6l12 12M18 6 6 18" />, className);
+export const IconRefresh = ({ className }: P) =>
+  base(<><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4" /></>, className);
 export const IconUp = ({ className }: P) => base(<path d="m6 15 6-6 6 6" />, className);
 export const IconDown = ({ className }: P) => base(<path d="m6 9 6 6 6-6" />, className);
 export const IconSparkle = ({ className }: P) =>
