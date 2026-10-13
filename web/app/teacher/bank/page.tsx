@@ -12,24 +12,27 @@ const one = (v: string | string[] | undefined, max = 60) => (Array.isArray(v) ? 
 
 export default async function BankPage({ searchParams }: { searchParams: SP }) {
   const sp = await searchParams;
-  const diff = one(sp.difficulty);
+  const diffs = ([] as string[]).concat(sp.difficulty ?? []);
   const f: Required<BankFilter> = {
     grade: one(sp.grade),
     unit: one(sp.unit),
     type: one(sp.type, 80),
     frame: one(sp.frame, 120),
-    difficulty: (DIFFICULTIES as readonly string[]).includes(diff) ? diff : "",
+    difficulty: DIFFICULTIES.filter((d) => diffs.includes(d)),
     q: one(sp.q, 100),
     verified: one(sp.verified) === "1",
   };
   const page = Math.max(1, Math.min(10000, Number.parseInt(one(sp.page), 10) || 1));
   const [{ items, total }, outline] = await Promise.all([searchProblems(f, page), bankOutline()]);
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const filtered = Object.values(f).some(Boolean);
+  const filtered = Object.values(f).some((v) => (Array.isArray(v) ? v.length > 0 : Boolean(v)));
 
   const pageHref = (n: number) => {
     const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(f)) if (v) q.set(k, v === true ? "1" : String(v));
+    for (const [k, v] of Object.entries(f)) {
+      if (Array.isArray(v)) for (const x of v) q.append(k, x);
+      else if (v) q.set(k, v === true ? "1" : String(v));
+    }
     if (n > 1) q.set("page", String(n));
     const s = q.toString();
     return "/teacher/bank" + (s ? "?" + s : "");

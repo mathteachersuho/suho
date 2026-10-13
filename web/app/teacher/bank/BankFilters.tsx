@@ -5,7 +5,7 @@ import { DIFFICULTIES } from "@/lib/difficulty";
 
 import type { OutlineRow } from "@/lib/problems";
 
-type Current = { grade: string; unit: string; type: string; frame: string; difficulty: string; q: string; verified: boolean };
+type Current = { grade: string; unit: string; type: string; frame: string; difficulty: string[]; q: string; verified: boolean };
 
 const uniq = (xs: string[]) => [...new Set(xs)];
 
@@ -28,6 +28,8 @@ export default function BankFilters({ outline, current }: { outline: OutlineRow[
   };
 
   const select = "field py-2 sm:w-auto sm:min-w-40";
+  const chip = "block rounded-lg px-3 py-1.5 text-sm font-medium text-ink-soft focus-visible:ring-2 focus-visible:ring-accent";
+  const chipOn = "bg-surface text-ink shadow-sm";
   return (
     <Form action="/teacher/bank" replace scroll={false} className="card space-y-3">
       <div className="grid gap-2 sm:flex sm:flex-wrap">
@@ -66,13 +68,25 @@ export default function BankFilters({ outline, current }: { outline: OutlineRow[
         </select>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex rounded-xl bg-surface-2 p-1" role="radiogroup" aria-label="난이도">
-          {["", ...DIFFICULTIES].map((d) => (
-            <label key={d || "all"} className="cursor-pointer">
-              <input type="radio" name="difficulty" value={d} defaultChecked={current.difficulty === d} onChange={change([])} className="peer sr-only" />
-              <span className="block rounded-lg px-3 py-1.5 text-sm font-medium text-ink-soft peer-checked:bg-surface peer-checked:text-ink peer-checked:shadow-sm peer-focus-visible:ring-2 peer-focus-visible:ring-accent">
-                {d || "전체"}
-              </span>
+        {/* 난이도는 여러 개 고를 수 있다. 아무것도 안 고르면 전체 */}
+        <div className="flex rounded-xl bg-surface-2 p-1" role="group" aria-label="난이도 (여러 개 고르기)">
+          <button
+            type="button"
+            aria-pressed={current.difficulty.length === 0}
+            onClick={(e) => {
+              const f = e.currentTarget.form;
+              if (!f) return;
+              f.querySelectorAll<HTMLInputElement>('input[name="difficulty"]').forEach((el) => (el.checked = false));
+              f.requestSubmit();
+            }}
+            className={`${chip} ${current.difficulty.length === 0 ? chipOn : ""}`}
+          >
+            전체
+          </button>
+          {DIFFICULTIES.map((d) => (
+            <label key={d} className="cursor-pointer">
+              <input type="checkbox" name="difficulty" value={d} defaultChecked={current.difficulty.includes(d)} onChange={change([])} className="peer sr-only" />
+              <span className={`${chip} peer-checked:bg-surface peer-checked:text-ink peer-checked:shadow-sm peer-focus-visible:ring-2 peer-focus-visible:ring-accent`}>{d}</span>
             </label>
           ))}
         </div>
