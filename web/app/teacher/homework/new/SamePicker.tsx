@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { IconCheck, IconDown, IconPlus, IconSearch, IconUp, IconX } from "@/components/Icons";
+import { IconCheck, IconDown, IconPlus, IconRefresh, IconSearch, IconUp, IconX } from "@/components/Icons";
 import { cart } from "@/lib/cart";
 import DifficultyBadge from "@/components/DifficultyBadge";
 import { DIFFICULTIES } from "@/lib/difficulty";
-import { bankSearchAction, cartPreviewAction, priorCountsAction } from "../actions";
+import { bankSearchAction, cartPreviewAction, priorCountsAction, swapProblemAction } from "../actions";
 import RandomPicker from "./RandomPicker";
 import type { OutlineRow } from "./WeakPlanner";
 
@@ -82,6 +82,28 @@ export default function SamePicker({
     };
   }, [key, stuKey]);
 
+  // 고른 문제 바꾸기: 같은 유형·난이도의 다른 문제로. 바꿔 뺀 문제는 기억해 두고 되도록 다시 안 고른다.
+  const [swapping, setSwapping] = useState<string | null>(null);
+  const [swapNote, setSwapNote] = useState<{ id: string; text: string } | null>(null);
+  const skipped = useRef<string[]>([]);
+  const swap = async (id: string) => {
+    setSwapping(id);
+    setSwapNote(null);
+    try {
+      const r = await swapProblemAction(id, studentIds, ids, skipped.current);
+      if ("error" in r) setSwapNote({ id, text: r.error });
+      else {
+        skipped.current = [...skipped.current.filter((x) => x !== r.item.id), id].slice(-200);
+        remember([r.item]);
+        cart.replace(id, r.item.id);
+      }
+    } catch {
+      setSwapNote({ id, text: "문제를 바꾸지 못했어요. 잠시 뒤 다시 해 주세요." });
+    } finally {
+      setSwapping(null);
+    }
+  };
+
   const grades = uniq(outline.map((o) => o.grade));
   const units = uniq(outline.filter((o) => o.grade === f.grade).map((o) => o.unit));
   const types = uniq(outline.filter((o) => o.grade === f.grade && o.unit === f.unit).map((o) => o.type)).filter(Boolean);
@@ -126,6 +148,7 @@ export default function SamePicker({
                         <div className="problem-body line-clamp-3 text-sm" dangerouslySetInnerHTML={{ __html: p.html }} />
                       </>
                     )}
+                    {swapNote?.id === id && <p className="mt-1.5 text-xs text-warn">{swapNote.text}</p>}
                     {prior[id]?.length > 0 && (
                       <p className="mt-1.5 text-xs text-warn">다시 푸는 학생: {prior[id].map((x) => `${nameOf(x.studentId)} (이번이 ${x.n + 1}번째)`).join(", ")}</p>
                     )}
@@ -136,6 +159,16 @@ export default function SamePicker({
                     </button>
                     <button type="button" aria-label="아래로" className="btn-soft h-7 w-7 p-0" disabled={i === ids.length - 1} onClick={() => cart.move(id, 1)}>
                       <IconDown className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="같은 유형·난이도의 다른 문제로 바꾸기"
+                      title="같은 유형·난이도의 다른 문제로 바꾸기"
+                      className="btn-soft h-7 w-7 p-0"
+                      disabled={!p || swapping !== null}
+                      onClick={() => swap(id)}
+                    >
+                      <IconRefresh className={`h-4 w-4 ${swapping === id ? "animate-spin" : ""}`} />
                     </button>
                     <button type="button" aria-label="이 문제 빼기" className="btn-soft h-7 w-7 p-0" onClick={() => cart.remove(id)}>
                       <IconX className="h-4 w-4" />
