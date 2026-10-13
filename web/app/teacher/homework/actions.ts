@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createHomework, deleteHomework, hwTags, markResults, MARKS, priorCounts, setReasons, tagResults, type Mark } from "@/lib/homework";
 import { isReason } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
+import { DIFFICULTIES } from "@/lib/difficulty";
 import { getProblems, PAGE_SIZE, searchProblems } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
 import { reportError } from "@/lib/reportError";
@@ -24,11 +25,11 @@ export async function cartPreviewAction(problemIds: string[]) {
 }
 
 /** 숙제 내기 화면: 문제 은행에서 찾기 (한 쪽 20문제) */
-export async function bankSearchAction(f: { grade?: string; unit?: string; type?: string; frame?: string; difficulty?: string; q?: string; verified?: boolean }, page: number) {
+export async function bankSearchAction(f: { grade?: string; unit?: string; type?: string; frame?: string; difficulty?: string[]; q?: string; verified?: boolean }, page: number) {
   await requireTeacher();
   const pg = Math.min(500, Math.max(1, Math.round(Number(page) || 1)));
   const { items, total } = await searchProblems(
-    { grade: s(f?.grade, 20), unit: s(f?.unit, 60), type: s(f?.type, 80), frame: s(f?.frame, 120), difficulty: s(f?.difficulty, 4), q: s(f?.q, 60), verified: !!f?.verified },
+    { grade: s(f?.grade, 20), unit: s(f?.unit, 60), type: s(f?.type, 80), frame: s(f?.frame, 120), difficulty: Array.isArray(f?.difficulty) ? DIFFICULTIES.filter((d) => f.difficulty!.includes(d)) : [], q: s(f?.q, 60), verified: !!f?.verified },
     pg,
   );
   return {

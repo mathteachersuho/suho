@@ -11,8 +11,8 @@ import RandomPicker from "./RandomPicker";
 import type { OutlineRow } from "./WeakPlanner";
 
 type Item = { id: string; tag: string; difficulty: string; html: string };
-type Filter = { grade: string; unit: string; type: string; frame: string; difficulty: string; q: string; verified: boolean };
-const EMPTY: Filter = { grade: "", unit: "", type: "", frame: "", difficulty: "", q: "", verified: false };
+type Filter = { grade: string; unit: string; type: string; frame: string; difficulty: string[]; q: string; verified: boolean };
+const EMPTY: Filter = { grade: "", unit: "", type: "", frame: "", difficulty: [], q: "", verified: false };
 const uniq = (xs: string[]) => [...new Set(xs)];
 
 /**
@@ -189,12 +189,25 @@ export default function SamePicker({
               </option>
             ))}
           </select>
-          <select aria-label="난이도" value={f.difficulty} onChange={(e) => setFilter({ difficulty: e.target.value })} className={sel}>
-            <option value="">난이도 전체</option>
-            {DIFFICULTIES.map((d) => (
-              <option key={d}>{d}</option>
-            ))}
-          </select>
+          {/* 난이도는 여러 개 고를 수 있다. 아무것도 안 고르면 전체 */}
+          <div className="flex rounded-xl bg-surface-2 p-1" role="group" aria-label="난이도 (여러 개 고르기)">
+            {["", ...DIFFICULTIES].map((d) => {
+              const on = d ? f.difficulty.includes(d) : f.difficulty.length === 0;
+              return (
+                <button
+                  key={d || "all"}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() =>
+                    setFilter({ difficulty: !d ? [] : DIFFICULTIES.filter((x) => (x === d ? !on : f.difficulty.includes(x))) })
+                  }
+                  className={`block rounded-lg px-3 py-1.5 text-sm font-medium focus-visible:ring-2 focus-visible:ring-accent ${on ? "bg-surface text-ink shadow-sm" : "text-ink-soft"}`}
+                >
+                  {d || "전체"}
+                </button>
+              );
+            })}
+          </div>
           <label className="flex items-center gap-2 px-1 text-sm text-ink-soft">
             <input type="checkbox" checked={f.verified} onChange={(e) => setFilter({ verified: e.target.checked })} className="h-4 w-4 accent-accent" />
             검수한 문제만

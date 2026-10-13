@@ -17,7 +17,7 @@ export type Problem = {
   createdAt: Date;
 };
 
-export type BankFilter = { grade?: string; unit?: string; type?: string; frame?: string; difficulty?: string; q?: string; verified?: boolean };
+export type BankFilter = { grade?: string; unit?: string; type?: string; frame?: string; difficulty?: string[]; q?: string; verified?: boolean };
 
 export const PAGE_SIZE = 20;
 export { DIFFICULTIES } from "./difficulty";
@@ -49,7 +49,8 @@ export async function searchProblems(f: BankFilter, page: number) {
   if (f.unit) conds.push(sql`unit = ${f.unit}`);
   if (f.type) conds.push(sql`type = ${f.type}`);
   if (f.frame) conds.push(sql`frame = ${f.frame}`);
-  if (f.difficulty) conds.push(sql`difficulty = ${f.difficulty}`);
+  // 난이도는 여러 개 고를 수 있다 (고른 것 중 하나면 됨, 안 고르면 전체)
+  if (f.difficulty?.length) conds.push(sql`difficulty in ${sql(f.difficulty)}`);
   if (f.verified) conds.push(sql`verified`);
   if (f.q) {
     const like = "%" + f.q.replace(/[\\%_]/g, (c) => "\\" + c) + "%";
