@@ -7,6 +7,7 @@ import { DIFFICULTIES } from "@/lib/difficulty";
 import type { CardResult, Suggestion } from "@/lib/create";
 import { aiEditAction, generateAction, ocrAction, regenerateAction, saveAction } from "./actions";
 import AskBox from "./AskBox";
+import BankMatches from "./BankMatches";
 import ClassPicker from "./ClassPicker";
 import RichEditor from "./RichEditor";
 import AnswerFramePreview from "@/components/AnswerFramePreview";
@@ -379,6 +380,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
                 )}
               </div>
               <ClassPicker id="cls" value={cls} onChange={setCls} taxonomy={taxonomy} />
+              <BankMatches cls={cls} />
               <div className="mt-3 flex items-center gap-2 text-sm">
                 <span className="text-ink-soft">이 단원을 배우는 학기</span>
                 <select value={semester} onChange={(e) => setSemester(e.target.value)} className="field w-auto py-1.5">
