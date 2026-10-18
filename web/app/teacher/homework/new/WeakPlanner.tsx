@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import DifficultyBadge from "@/components/DifficultyBadge";
-import { IconPlus, IconSearch, IconX } from "@/components/Icons";
+import { IconPlus, IconRefresh, IconSearch, IconX } from "@/components/Icons";
 import { weakPlanAction, type WeakPreview } from "../actions";
+import { useWeakSwap } from "./useWeakSwap";
 import WeakScopePicker, { scopeReady, toWeakScope, type ScopeChoice } from "./WeakScopePicker";
 
 const COUNTS = [5, 8, 10, 15, 20];
@@ -51,6 +52,30 @@ export default function WeakPlanner({
     setPlans(ps);
     setRemoved(rm);
     onReady((ps ?? []).map((p) => ({ studentId: p.studentId, problemIds: keep(p, rm).map((q) => q.id) })).filter((r) => r.problemIds.length));
+  };
+
+  // 문제 새로고침: 기다리는 사이 다시 골랐을 수 있으니 바꿀 때의 미리보기에 넣는다
+  const latest = useRef({ plans, removed });
+  useEffect(() => {
+    latest.current = { plans, removed };
+  });
+  const sw = useWeakSwap(opts.verifiedOnly);
+  const swap = (studentId: string, qid: string) => {
+    const cur = plans?.find((p) => p.studentId === studentId);
+    if (!cur) return;
+    sw.swap(
+      studentId,
+      qid,
+      cur.problems.map((q) => q.id),
+      (item) => {
+        const now = latest.current;
+        if (!now.plans?.some((p) => p.studentId === studentId && p.problems.some((q) => q.id === qid))) return;
+        commit(
+          now.plans.map((p) => (p.studentId === studentId ? { ...p, problems: p.problems.map((q) => (q.id === qid ? { ...item, typeIndex: q.typeIndex } : q)) } : p)),
+          now.removed,
+        );
+      },
+    );
   };
 
   const setOpt = (o: Partial<WeakOpts>) => {
@@ -140,6 +165,8 @@ export default function WeakPlanner({
               busy={refining === p.studentId}
               onTypes={(keys) => refine(p.studentId, keys)}
               onRemove={(qid) => commit(plans, new Set(removed).add(`${p.studentId}/${qid}`))}
+              sw={sw}
+              onSwap={(qid) => swap(p.studentId, qid)}
             />
           ))}
         </div>
@@ -157,6 +184,8 @@ function StudentPlan({
   busy,
   onTypes,
   onRemove,
+  sw,
+  onSwap,
 }: {
   p: WeakPreview;
   name: string;
@@ -166,6 +195,8 @@ function StudentPlan({
   busy: boolean;
   onTypes: (keys: Key[] | null) => void;
   onRemove: (id: string) => void;
+  sw: ReturnType<typeof useWeakSwap>;
+  onSwap: (id: string) => void;
 }) {
   const on = p.types.map((t) => ({ grade: t.grade, unit: t.unit, type: t.type }));
   const onSet = new Set(on.map(keyOf));
@@ -259,10 +290,14 @@ function StudentPlan({
                         {q.tag}
                       </p>
                       <div className="problem-body line-clamp-4 text-sm" dangerouslySetInnerHTML={{ __html: q.html }} />
+                      {sw.noteOf(p.studentId, q.id) && <p className="mt-1.5 text-xs text-warn">{sw.noteOf(p.studentId, q.id)}</p>}
                     </div>
-                    <button type="button" aria-label="이 문제 빼기" title="빼기" className="btn-soft h-8 w-8 shrink-0 p-0" onClick={() => onRemove(q.id)}>
-                      <IconX className="h-4 w-4" />
-                    </button>
+                    <div className="flex shrink-0 flex-col gap-1">
+                      <SwapButton spinning={sw.spinning(p.studentId, q.id)} disabled={sw.busy} onClick={() => onSwap(q.id)} />
+                      <button type="button" aria-label="이 문제 빼기" title="빼기" className="btn-soft h-8 w-8 p-0" onClick={() => onRemove(q.id)}>
+                        <IconX className="h-4 w-4" />
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ol>
@@ -271,6 +306,15 @@ function StudentPlan({
         )}
       </div>
     </details>
+  );
+}
+
+/** 같은 유형의 다른 문제로 새로고침 */
+export function SwapButton({ spinning, disabled, onClick }: { spinning: boolean; disabled: boolean; onClick: () => void }) {
+  return (
+    <button type="button" aria-label="같은 유형의 다른 문제로 새로고침" title="같은 유형의 다른 문제로 새로고침" className="btn-soft h-8 w-8 p-0" disabled={disabled} onClick={onClick}>
+      <IconRefresh className={`h-4 w-4 ${spinning ? "animate-spin" : ""}`} />
+    </button>
   );
 }
 

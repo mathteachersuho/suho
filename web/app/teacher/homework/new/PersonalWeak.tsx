@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DifficultyBadge from "@/components/DifficultyBadge";
 import { weakExtrasAction, type WeakExtra } from "../actions";
+import { useWeakSwap } from "./useWeakSwap";
+import { SwapButton } from "./WeakPlanner";
 import WeakScopePicker, { scopeReady, toWeakScope, type ScopeChoice } from "./WeakScopePicker";
 
 /**
@@ -57,6 +59,25 @@ export default function PersonalWeak({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- key 가 학생과 문제를 모두 담는다
   }, [on, key]);
+
+  // 문제 새로고침: 같이 내는 문제와 그 학생의 다른 문제는 빼고 고른다
+  const sw = useWeakSwap();
+  const latest = useRef(extras);
+  useEffect(() => {
+    latest.current = extras;
+  });
+  const swap = (studentId: string, qid: string) => {
+    const x = ready?.find((e) => e.studentId === studentId);
+    if (!x || !extras) return;
+    const k = extras.key;
+    sw.swap(studentId, qid, [...common, ...x.items.map((q) => q.id)], (item) => {
+      const old = latest.current; // 기다리는 사이 학생이나 문제가 바뀌었으면 넣지 않는다
+      if (!old || old.key !== k) return;
+      const list = old.list.map((e) => (e.studentId === studentId ? { ...e, items: e.items.map((q) => (q.id === qid ? item : q)) } : e));
+      setExtras({ key: k, list });
+      onExtras(list);
+    });
+  };
 
   const total = ready?.reduce((a, x) => a + x.items.length, 0) ?? 0;
   return (
@@ -120,7 +141,9 @@ export default function PersonalWeak({
                                   {q.tag}
                                 </p>
                                 <div className="problem-body line-clamp-3 text-sm" dangerouslySetInnerHTML={{ __html: q.html }} />
+                                {sw.noteOf(x.studentId, q.id) && <p className="mt-1 text-xs text-warn">{sw.noteOf(x.studentId, q.id)}</p>}
                               </div>
+                              <SwapButton spinning={sw.spinning(x.studentId, q.id)} disabled={sw.busy} onClick={() => swap(x.studentId, q.id)} />
                             </li>
                           ))}
                         </ol>

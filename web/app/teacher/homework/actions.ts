@@ -10,7 +10,7 @@ import { getProblems, PAGE_SIZE, searchProblems } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
 import { reportError } from "@/lib/reportError";
 import { getStudent } from "@/lib/students";
-import { quickPick, unitCounts } from "@/lib/quick";
+import { quickPick, unitCounts, type QuickRow } from "@/lib/quick";
 import { weakExtras, weakPlan, type TypeKey, type WeakScope } from "@/lib/weak";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
@@ -377,6 +377,52 @@ export async function weakPlanAction(
   } catch (e) {
     await reportError("약한 유형 찾기", e);
     return { error: "문제를 고르지 못했어요. 잠시 뒤 다시 해 주세요." };
+  }
+}
+
+/**
+ * 약한 유형 문제 새로고침: 한 학생의 문제 하나를 같은 유형의 다른 문제로 바꾼다.
+ * 같은 세부 유형·난이도 → 같은 세부 유형 → 같은 유형 순으로 찾고, 학생이 이미 받은 문제는 고르지 않는다.
+ * chosen(지금 고른 문제)은 빼고, skipped(앞서 바꿔 뺀 문제)는 다른 문제가 없을 때만 다시 고른다.
+ */
+export async function weakSwapAction(
+  studentId: string,
+  problemId: string,
+  chosen: string[],
+  skipped: string[],
+  verifiedOnly = false,
+): Promise<{ item: { id: string; tag: string; difficulty: string; html: string }; note?: string } | { error: string }> {
+  await requireTeacher();
+  const [p] = await getProblems([s(problemId, 80)]);
+  if (!p) return { error: "문제를 찾지 못했어요." };
+  const base = { grade: p.grade, unit: p.unit, type: p.type, count: 1 };
+  const rows: QuickRow[] = [
+    { ...base, frame: p.frame, difficulty: p.difficulty },
+    { ...base, frame: p.frame, difficulty: "" },
+    { ...base, frame: null, difficulty: "" },
+  ];
+  const keep = [p.id, ...ids(chosen, 200)];
+  try {
+    for (const ex of [[...keep, ...ids(skipped, 200)], keep])
+      for (const row of rows) {
+        const [r] = await quickPick([row], [s(studentId, 40)], !!verifiedOnly, ex);
+        const q = r.picked[0];
+        if (!q || q.seen > 0) continue;
+        const note =
+          q.frame !== p.frame
+            ? "같은 세부 유형에 남은 문제가 없어 같은 유형의 다른 세부 유형에서 골랐어요."
+            : q.difficulty !== p.difficulty
+              ? "같은 난이도에 남은 문제가 없어 난이도가 다른 문제로 골랐어요."
+              : undefined;
+        return {
+          item: { id: q.id, tag: [p.type, q.frame, q.verified && "검수"].filter(Boolean).join(" · "), difficulty: q.difficulty, html: renderProblemHtml(q.question) },
+          note,
+        };
+      }
+    return { error: "이 유형에 아직 안 받은 다른 문제가 없어요." };
+  } catch (e) {
+    await reportError("약한 유형 문제 새로고침", e);
+    return { error: "문제를 바꾸지 못했어요. 잠시 뒤 다시 해 주세요." };
   }
 }
 
