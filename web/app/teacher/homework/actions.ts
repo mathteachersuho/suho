@@ -10,7 +10,7 @@ import { getProblems, PAGE_SIZE, searchProblems } from "@/lib/problems";
 import { requireTeacher } from "@/lib/session";
 import { reportError } from "@/lib/reportError";
 import { getStudent } from "@/lib/students";
-import { quickPick, unitCounts, type QuickProblem, type QuickRow } from "@/lib/quick";
+import { quickPick, unitCounts } from "@/lib/quick";
 import { weakPlan, type TypeKey } from "@/lib/weak";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
@@ -283,89 +283,6 @@ export async function weakPlanAction(
   } catch (e) {
     await reportError("약한 유형 찾기", e);
     return { error: "문제를 고르지 못했어요. 잠시 뒤 다시 해 주세요." };
-  }
-}
-
-const weakItem = (q: QuickProblem, typeIndex: number, type: string): WeakPreviewProblem => ({
-  id: q.id,
-  typeIndex,
-  tag: [type, q.frame, q.verified && "검수"].filter(Boolean).join(" · "),
-  difficulty: q.difficulty,
-  html: renderProblemHtml(q.question),
-});
-
-/** 조건마다 차례로 찾아 이 학생이 아직 안 받은 문제 하나를 고른다 (이미 고른 문제·바꿔 뺀 문제는 빼고) */
-async function freshOne(rows: QuickRow[], studentId: string, verifiedOnly: boolean, exclude: string[], skipped: string[]) {
-  for (const ex of [[...exclude, ...skipped], exclude])
-    for (const row of rows) {
-      const [r] = await quickPick([row], [studentId], verifiedOnly, ex);
-      const q = r.picked[0];
-      if (q && q.seen === 0) return q;
-    }
-  return null;
-}
-
-/**
- * 약한 유형 숙제: 한 학생의 문제 하나를 같은 유형의 다른 문제로 바꾼다.
- * 같은 세부 유형·난이도 → 같은 세부 유형 → 같은 유형 순으로 찾고, 학생이 이미 받은 문제는 고르지 않는다.
- */
-export async function weakSwapAction(
-  studentId: string,
-  problemId: string,
-  typeIndex: number,
-  chosen: string[],
-  skipped: string[],
-  verifiedOnly: boolean,
-): Promise<{ item: WeakPreviewProblem; note?: string } | { error: string }> {
-  await requireTeacher();
-  const [p] = await getProblems([s(problemId, 80)]);
-  if (!p) return { error: "문제를 찾지 못했어요." };
-  const base = { grade: p.grade, unit: p.unit, type: p.type, count: 1 };
-  const rows: QuickRow[] = [
-    { ...base, frame: p.frame, difficulty: p.difficulty },
-    { ...base, frame: p.frame, difficulty: "" },
-    { ...base, frame: null, difficulty: "" },
-  ];
-  try {
-    const q = await freshOne(rows, s(studentId, 40), !!verifiedOnly, [p.id, ...ids(chosen, 200)], ids(skipped, 200));
-    if (!q) return { error: "이 유형에 아직 안 받은 다른 문제가 없어요." };
-    const note =
-      q.frame !== p.frame
-        ? "같은 세부 유형에 남은 문제가 없어 같은 유형의 다른 세부 유형에서 골랐어요."
-        : q.difficulty !== p.difficulty
-          ? "같은 난이도에 남은 문제가 없어 난이도가 다른 문제로 골랐어요."
-          : undefined;
-    return { item: weakItem(q, Math.max(0, Math.round(Number(typeIndex) || 0)), p.type), note };
-  } catch (e) {
-    await reportError("약한 유형 문제 바꾸기", e);
-    return { error: "문제를 바꾸지 못했어요. 잠시 뒤 다시 해 주세요." };
-  }
-}
-
-/** 약한 유형 숙제: 한 학생에게 문제를 하나 더한다. types 는 [유형 번호, 유형] 을 먼저 찾을 순서대로. */
-export async function weakMoreAction(
-  studentId: string,
-  types: { index: number; key: TypeKey }[],
-  chosen: string[],
-  verifiedOnly: boolean,
-): Promise<{ item: WeakPreviewProblem } | { error: string }> {
-  await requireTeacher();
-  const order = (Array.isArray(types) ? types : []).slice(0, 20).flatMap((t) => {
-    const [k] = typeKeys([t?.key]) ?? [];
-    return k && k.type ? [{ index: Math.max(0, Math.round(Number(t.index) || 0)), k }] : [];
-  });
-  const have = ids(chosen, 200);
-  if (!order.length) return { error: "먼저 유형을 골라 주세요." };
-  if (have.length >= 60) return { error: "한 학생에게 60문제까지 낼 수 있어요." };
-  try {
-    for (const { index, k } of order) {
-      const q = await freshOne([{ ...k, frame: null, difficulty: "", count: 1 }], s(studentId, 40), !!verifiedOnly, have, []);
-      if (q) return { item: weakItem(q, index, k.type) };
-    }
-    return { error: "고른 유형에 아직 안 받은 문제가 더 없어요." };
-  } catch (e) {
-    await reportError("약한 유형 문제 더하기", e);
-    return { error: "문제를 더하지 못했어요. 잠시 뒤 다시 해 주세요." };
   }
 }
 

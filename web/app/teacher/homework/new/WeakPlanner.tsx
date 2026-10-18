@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
 import DifficultyBadge from "@/components/DifficultyBadge";
-import { IconPlus, IconRefresh, IconSearch, IconX } from "@/components/Icons";
-import { weakMoreAction, weakPlanAction, weakSwapAction, type WeakPreview, type WeakPreviewProblem } from "../actions";
+import { IconPlus, IconSearch, IconX } from "@/components/Icons";
+import { weakPlanAction, type WeakPreview } from "../actions";
 
 const COUNTS = [5, 8, 10, 15, 20];
 
@@ -92,61 +92,6 @@ export default function WeakPlanner({
     );
   };
 
-  // 문제 하나 바꾸기·더하기. 바꿔 뺀 문제는 학생마다 기억해 두고 되도록 다시 안 고른다.
-  const [working, setWorking] = useState<string | null>(null); // "학생/문제" 또는 "학생/+"
-  const [note, setNote] = useState<{ key: string; text: string } | null>(null);
-  const skipped = useRef<Record<string, string[]>>({});
-  const latest = useRef({ plans, removed });
-  useEffect(() => {
-    latest.current = { plans, removed };
-  });
-  const edit = async (studentId: string, key: string, run: (p: WeakPreview) => Promise<{ item: WeakPreviewProblem; note?: string } | { error: string }>, apply: (p: WeakPreview, item: WeakPreviewProblem) => WeakPreview) => {
-    const cur = plans?.find((p) => p.studentId === studentId);
-    if (!cur) return;
-    setWorking(key);
-    setNote(null);
-    try {
-      const r = await run(cur);
-      if ("error" in r) return setNote({ key, text: r.error });
-      // 기다리는 사이 다시 골랐을 수 있으니 지금 미리보기에 넣는다
-      const now = latest.current.plans;
-      if (r.note) setNote({ key: `${studentId}/${r.item.id}`, text: r.note });
-      const qid = key.slice(studentId.length + 1); // 바꾸기면 바꿀 문제, 더하기면 "+"
-      if (now?.some((p) => p.studentId === studentId && (qid === "+" || p.problems.some((x) => x.id === qid))))
-        commit(now.map((p) => (p.studentId === studentId ? apply(p, r.item) : p)), latest.current.removed);
-    } catch {
-      setNote({ key, text: "잠시 뒤 다시 해 주세요." });
-    } finally {
-      setWorking(null);
-    }
-  };
-  const swap = (studentId: string, q: WeakPreviewProblem) =>
-    edit(
-      studentId,
-      `${studentId}/${q.id}`,
-      (p) => weakSwapAction(studentId, q.id, q.typeIndex, p.problems.map((x) => x.id), skipped.current[studentId] ?? [], opts.verifiedOnly),
-      (p, item) => {
-        skipped.current[studentId] = [...(skipped.current[studentId] ?? []).filter((x) => x !== item.id), q.id].slice(-200);
-        return { ...p, problems: p.problems.map((x) => (x.id === q.id ? item : x)) };
-      },
-    );
-  // typeIndex 가 없으면 지금 문제가 가장 적은 유형부터 찾아 골고루 더한다
-  const more = (studentId: string, typeIndex: number | null) =>
-    edit(
-      studentId,
-      `${studentId}/+`,
-      (p) => {
-        const kept = keep(p, removed);
-        const n = (i: number) => kept.filter((q) => q.typeIndex === i).length;
-        const order = p.types
-          .map((t, i) => ({ index: i, key: { grade: t.grade, unit: t.unit, type: t.type } }))
-          .filter((t) => typeIndex === null || t.index === typeIndex)
-          .sort((a, b) => n(a.index) - n(b.index) || a.index - b.index);
-        return weakMoreAction(studentId, order, p.problems.map((x) => x.id), opts.verifiedOnly);
-      },
-      (p, item) => ({ ...p, problems: [...p.problems, item] }),
-    );
-
   return (
     <div className="space-y-4">
       <p className="text-sm text-ink-soft">
@@ -193,10 +138,6 @@ export default function WeakPlanner({
               busy={refining === p.studentId}
               onTypes={(keys) => refine(p.studentId, keys)}
               onRemove={(qid) => commit(plans, new Set(removed).add(`${p.studentId}/${qid}`))}
-              working={working}
-              note={note}
-              onSwap={(q) => swap(p.studentId, q)}
-              onMore={(i) => more(p.studentId, i)}
             />
           ))}
         </div>
@@ -214,10 +155,6 @@ function StudentPlan({
   busy,
   onTypes,
   onRemove,
-  working,
-  note,
-  onSwap,
-  onMore,
 }: {
   p: WeakPreview;
   name: string;
@@ -227,14 +164,7 @@ function StudentPlan({
   busy: boolean;
   onTypes: (keys: Key[] | null) => void;
   onRemove: (id: string) => void;
-  working: string | null;
-  note: { key: string; text: string } | null;
-  onSwap: (q: WeakPreviewProblem) => void;
-  onMore: (typeIndex: number | null) => void;
 }) {
-  const [moreType, setMoreType] = useState(""); // "" 이면 골고루
-  const noteOf = (key: string) => (note?.key === key ? note.text : "");
-  const addKey = `${p.studentId}/+`;
   const on = p.types.map((t) => ({ grade: t.grade, unit: t.unit, type: t.type }));
   const onSet = new Set(on.map(keyOf));
   // 칩: 지금 쓰는 유형 + 찾았지만 끈 유형
@@ -327,44 +257,14 @@ function StudentPlan({
                         {q.tag}
                       </p>
                       <div className="problem-body line-clamp-4 text-sm" dangerouslySetInnerHTML={{ __html: q.html }} />
-                      {noteOf(`${p.studentId}/${q.id}`) && <p className="mt-1.5 text-xs text-warn">{noteOf(`${p.studentId}/${q.id}`)}</p>}
                     </div>
-                    <div className="flex shrink-0 flex-col gap-1">
-                      <button
-                        type="button"
-                        aria-label="같은 유형의 다른 문제로 바꾸기"
-                        title="같은 세부 유형의 다른 문제로 바꾸기"
-                        className="btn-soft h-8 w-8 p-0"
-                        disabled={working !== null}
-                        onClick={() => onSwap(q)}
-                      >
-                        <IconRefresh className={`h-4 w-4 ${working === `${p.studentId}/${q.id}` ? "animate-spin" : ""}`} />
-                      </button>
-                      <button type="button" aria-label="이 문제 빼기" title="빼기" className="btn-soft h-8 w-8 p-0" onClick={() => onRemove(q.id)}>
-                        <IconX className="h-4 w-4" />
-                      </button>
-                    </div>
+                    <button type="button" aria-label="이 문제 빼기" title="빼기" className="btn-soft h-8 w-8 shrink-0 p-0" onClick={() => onRemove(q.id)}>
+                      <IconX className="h-4 w-4" />
+                    </button>
                   </li>
                 ))}
               </ol>
             )}
-            <div className="flex flex-wrap items-center gap-2">
-              {p.types.length > 1 && (
-                <select aria-label="더할 유형" value={moreType} onChange={(e) => setMoreType(e.target.value)} className="field w-auto max-w-[16rem] py-1.5 text-sm">
-                  <option value="">유형 골고루</option>
-                  {p.types.map((t, i) => (
-                    <option key={keyOf(t)} value={i}>
-                      {t.type}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <button type="button" className="btn-soft py-1.5 text-sm" disabled={working !== null} onClick={() => onMore(moreType === "" ? null : Number(moreType))}>
-                <IconPlus className="h-4 w-4" />
-                {working === addKey ? "더하는 중…" : "문제 추가"}
-              </button>
-              {noteOf(addKey) && <span className="text-xs text-warn">{noteOf(addKey)}</span>}
-            </div>
           </>
         )}
       </div>
