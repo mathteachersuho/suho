@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { IconSparkle } from "@/components/Icons";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import type { UnitCount } from "@/lib/quick";
@@ -9,6 +9,7 @@ import type { OutlineRow } from "./WeakPlanner";
 
 const uniq = (xs: string[]) => [...new Set(xs)];
 const keyOf = (type: string, frame: string, diff: string) => `${type}\u0000${frame}\u0000${diff}`;
+const WHOLE = "\u0001"; // 유형 전체 줄 (세부 유형 가리지 않음)
 
 /**
  * 숙제 내기 › 모두 같은 문제 › 무작위로 뽑기.
@@ -63,8 +64,10 @@ export default function RandomPicker({
       .filter(([, n]) => n > 0)
       .map(([k, n]) => {
         const [type, frame, difficulty] = k.split("\u0000");
-        return { grade, unit, type, frame, difficulty, count: n };
-      });
+        return { grade, unit, type, frame: frame === WHOLE ? null : frame, difficulty, count: n };
+      })
+      // 세부 유형 줄을 먼저 뽑고, 유형 전체 줄은 남은 문제에서 고른다
+      .sort((a, b) => Number(a.frame === null) - Number(b.frame === null));
     start(async () => {
       const r = await randomPickAction(rows, studentIds, verifiedOnly, chosen);
       if ("error" in r) return setNote({ error: r.error });
@@ -108,7 +111,7 @@ export default function RandomPicker({
       {counts && !counts.length && <p className="text-sm text-ink-faint">이 단원에는 문제가 없어요.</p>}
       {counts && counts.length > 0 && (
         <div className={`overflow-hidden rounded-xl border border-line text-sm ${busy ? "opacity-60" : ""}`}>
-          <div className={`${grid} bg-surface-2 px-3 py-2 text-sm font-semibold text-ink`} style={cols}>
+          <div className={`${grid} border-b border-line bg-surface-2 px-[21px] py-2 text-sm font-semibold text-ink`} style={cols}>
             <span>
               유형<span className="hidden sm:inline"> › 세부 유형</span>
             </span>
@@ -118,57 +121,77 @@ export default function RandomPicker({
               </span>
             ))}
           </div>
-          {types.map((type) => {
-            const rows = counts.filter((c) => c.type === type);
-            const frames = uniq(rows.map((c) => c.frame));
-            const flat = frames.length === 1 && frames[0] === ""; // 세부 유형이 없으면 유형 한 줄로
-            const sum = rows.reduce((a, c) => a + c.n, 0);
-            return (
-              <Fragment key={type}>
-                {!flat && (
-                  <div className="border-t border-line px-3 pt-3 pb-1 text-[15px] font-bold text-ink">
-                    {type || "유형 없음"} <span className="ml-1 text-sm font-medium text-ink-soft">{sum}문제</span>
-                  </div>
-                )}
-                {frames.map((frame) => (
-                  <div key={frame} className={`${grid} px-3 py-1.5 ${flat ? "border-t border-line py-2" : ""}`} style={cols}>
-                    <span className={`min-w-0 break-keep ${flat ? "text-[15px] font-bold text-ink" : "pl-3 text-sm font-medium text-ink"}`}>
-                      {flat ? (
-                        <>
-                          {type || "유형 없음"} <span className="ml-1 text-sm font-medium text-ink-soft">{sum}문제</span>
-                        </>
-                      ) : (
-                        frame || "세부 유형 없음"
-                      )}
+          <div className="space-y-2 px-2 pt-2 pb-2">
+            {types.map((type) => {
+              const rows = counts.filter((c) => c.type === type);
+              const frames = uniq(rows.map((c) => c.frame));
+              const flat = frames.length === 1 && frames[0] === ""; // 세부 유형이 없으면 유형 한 줄로
+              const sum = rows.reduce((a, c) => a + c.n, 0);
+              const name = type || "유형 없음";
+              // 유형 전체 칸: 세부 유형을 가리지 않고 그 난이도에서 고른다 (유형 없음은 단원 전체가 되어 버려 뺀다)
+              const whole = (d: string) => {
+                const n = rows.filter((x) => x.difficulty === d).reduce((a, x) => a + x.n, 0);
+                const fresh = rows.filter((x) => x.difficulty === d).reduce((a, x) => a + x.fresh, 0);
+                return n ? { n, fresh } : null;
+              };
+              const cell = (k: string, c: { n: number; fresh: number } | null, d: string, label: string) => {
+                if (!c) return <span key={d || "none"} className="text-center text-ink-faint">–</span>;
+                return (
+                  <label key={d || "none"} className="flex flex-col items-center gap-0.5">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={c.n}
+                      value={want[k] || ""}
+                      placeholder="0"
+                      onChange={(e) => setWant({ ...want, [k]: Math.min(c.n, Math.max(0, Math.round(Number(e.target.value) || 0))) })}
+                      aria-label={`${label} ${d || "난이도 없음"} 낼 문제 수`}
+                      className={`field h-8 w-full px-1 py-0 text-center text-sm tabular-nums ${want[k] ? "border-accent" : ""}`}
+                    />
+                    <span className="text-xs leading-tight font-medium whitespace-nowrap text-ink-soft tabular-nums">
+                      {c.n}개{c.fresh < c.n && <span className="text-warn">·새{c.fresh}</span>}
                     </span>
-                    {diffs.map((d) => {
-                      const c = rows.find((x) => x.frame === frame && x.difficulty === d);
-                      const k = keyOf(type, frame, d);
-                      if (!c) return <span key={d || "none"} className="text-center text-ink-faint">–</span>;
-                      return (
-                        <label key={d || "none"} className="flex flex-col items-center gap-0.5">
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            min={0}
-                            max={c.n}
-                            value={want[k] || ""}
-                            placeholder="0"
-                            onChange={(e) => setWant({ ...want, [k]: Math.min(c.n, Math.max(0, Math.round(Number(e.target.value) || 0))) })}
-                            aria-label={`${type} ${frame} ${d || "난이도 없음"} 낼 문제 수`}
-                            className={`field h-8 w-full px-1 py-0 text-center text-sm tabular-nums ${want[k] ? "border-accent" : ""}`}
-                          />
-                          <span className="text-xs leading-tight font-medium whitespace-nowrap text-ink-soft tabular-nums">
-                            {c.n}개{c.fresh < c.n && <span className="text-warn">·새{c.fresh}</span>}
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                ))}
-              </Fragment>
-            );
-          })}
+                  </label>
+                );
+              };
+              const head = (
+                <span className="min-w-0 break-keep">
+                  <span className="text-lg leading-snug font-bold text-ink">{name}</span>
+                  <span className="ml-2 text-sm font-medium whitespace-nowrap text-ink-soft">{sum}문제</span>
+                  {!flat && type && <span className="block text-xs font-semibold text-accent">유형 전체에서 고르기</span>}
+                </span>
+              );
+              return (
+                <section key={type} className="overflow-hidden rounded-xl border border-line bg-surface">
+                  {flat ? (
+                    <div className={`${grid} bg-surface-2 px-3 py-2.5`} style={cols}>
+                      {head}
+                      {diffs.map((d) => {
+                        const c = rows.find((x) => x.difficulty === d);
+                        return cell(keyOf(type, "", d), c ?? null, d, name);
+                      })}
+                    </div>
+                  ) : (
+                    <>
+                      <div className={`${grid} bg-surface-2 px-3 py-2.5`} style={cols}>
+                        {head}
+                        {type ? diffs.map((d) => cell(keyOf(type, WHOLE, d), whole(d), d, `${name} 전체`)) : diffs.map((d) => <span key={d || "none"} />)}
+                      </div>
+                      <div className="divide-y divide-line/60 border-t border-line">
+                        {frames.map((frame) => (
+                          <div key={frame} className={`${grid} px-3 py-1.5`} style={cols}>
+                            <span className="min-w-0 pl-2 text-sm font-medium break-keep text-ink">{frame || "세부 유형 없음"}</span>
+                            {diffs.map((d) => cell(keyOf(type, frame, d), rows.find((x) => x.frame === frame && x.difficulty === d) ?? null, d, `${name} ${frame}`))}
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </section>
+              );
+            })}
+          </div>
           <div className="flex flex-wrap items-center gap-3 border-t border-line bg-surface-2/60 px-3 py-2.5">
             <span className="text-sm text-ink-soft">칸 아래 숫자는 은행에 있는 문제 수, “새”는 고른 학생이 아직 안 받은 문제 수예요.</span>
             <button type="button" className="btn-main ml-auto py-2" disabled={!total || busy} onClick={draw}>
