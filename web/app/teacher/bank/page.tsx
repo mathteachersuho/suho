@@ -46,10 +46,16 @@ export default async function BankPage({ searchParams }: { searchParams: SP }) {
           <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">문제 은행</h1>
           <p className="mt-1 text-sm text-ink-soft">문제를 골라 담은 뒤 아래 막대에서 학습지를 만들어 인쇄하세요.</p>
         </div>
-        <Link href="/teacher/create" className="btn-soft py-2">
-          <IconSparkle />
-          문제 만들기
-        </Link>
+        <div className="flex gap-2">
+          <Link href={f.grade && f.unit ? `/teacher/bank/types?${new URLSearchParams({ grade: f.grade, unit: f.unit })}` : "/teacher/bank/types"} className="btn-soft py-2">
+            <IconNote />
+            유형 정리
+          </Link>
+          <Link href="/teacher/create" className="btn-soft py-2">
+            <IconSparkle />
+            문제 만들기
+          </Link>
+        </div>
       </div>
 
       <BankFilters key={pageHref(1)} outline={outline} current={f} />
