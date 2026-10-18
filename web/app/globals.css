@@ -227,6 +227,10 @@ body {
   color: #555;
   white-space: nowrap;
 }
+.sheet-head .sheet-name {
+  font-size: 12pt;
+  color: #111;
+}
 /* 문제 쪽은 단으로 나눈다. 쪽당 4·5·6문제는 시험지처럼 두 단, 왼쪽 단을 먼저 위에서 아래로 채운다 (Sheet.tsx planLayout) */
 .sheet-cols {
   flex: 1;
@@ -352,7 +356,7 @@ body {
     box-shadow: none;
     break-after: page;
   }
-  .sheet-page:last-child {
+  .sheet-page:last-of-type {
     break-after: auto;
   }
   .sheet-answers {

@@ -11,7 +11,7 @@ import { requireTeacher } from "@/lib/session";
 import { reportError } from "@/lib/reportError";
 import { getStudent } from "@/lib/students";
 import { quickPick, unitCounts } from "@/lib/quick";
-import { weakPlan, type TypeKey } from "@/lib/weak";
+import { weakExtras, weakPlan, type TypeKey } from "@/lib/weak";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const ids = (v: unknown, max: number) =>
@@ -142,6 +142,38 @@ export async function priorCountsAction(studentIds: string[], problemIds: string
   return priorCounts(ids(studentIds, 300), ids(problemIds, 60));
 }
 
+export type WeakExtra = { studentId: string; items: { id: string; tag: string; difficulty: string; html: string }[]; types: number; untyped: number };
+
+/** 모두 같은 숙제 + 학생마다 약한 유형: 학생마다 전에 틀린 유형에서 한 문제씩 (같이 내는 문제는 빼고) */
+export async function weakExtrasAction(studentIds: string[], common: string[]): Promise<WeakExtra[] | { error: string }> {
+  await requireTeacher();
+  const ex = ids(common, 60);
+  try {
+    return await Promise.all(
+      ids(studentIds, 60).map(async (studentId) => {
+        const r = await weakExtras(studentId, ex, Math.min(WEAK_EXTRA_MAX, 60 - ex.length));
+        return {
+          studentId,
+          items: r.extras.map(({ type, problem: q }) => ({
+            id: q.id,
+            tag: [type.type, q.frame, q.verified && "검수"].filter(Boolean).join(" · "),
+            difficulty: q.difficulty,
+            html: renderProblemHtml(q.question),
+          })),
+          types: r.types,
+          untyped: r.untyped,
+        };
+      }),
+    );
+  } catch (e) {
+    await reportError("학생마다 약한 유형 더하기", e);
+    return { error: "약한 유형 문제를 고르지 못했어요. 잠시 뒤 다시 해 주세요." };
+  }
+}
+
+/** 학생마다 더할 약한 유형 문제는 많아야 이만큼 (유형 하나에 한 문제) */
+const WEAK_EXTRA_MAX = 10;
+
 export async function createHomeworkAction(input: {
   title: string;
   dueDate: string;
@@ -149,8 +181,10 @@ export async function createHomeworkAction(input: {
   memo: string;
   studentIds: string[];
   problemIds: string[];
-}): Promise<{ error: string } | { hwId: string }> {
+  extras?: { studentId: string; problemIds: string[] }[]; // 있으면 학생마다 같은 문제 + 이 문제로 따로 숙제를 낸다
+}): Promise<{ error: string } | { hwId: string } | { hwIds: string[] }> {
   await requireTeacher();
+  if (Array.isArray(input.extras)) return createPersonalHomework({ ...input, extras: input.extras });
   const due = s(input.dueDate, 10);
   const r = await createHomework({
     title: s(input.title, 60) || "숙제",
@@ -166,6 +200,47 @@ export async function createHomeworkAction(input: {
   if (!r.ok) return { error: r.error };
   revalidatePath("/teacher/homework");
   return { hwId: r.hwId };
+}
+
+/** 학생마다 숙제를 하나씩: 같이 내는 문제 뒤에 그 학생의 약한 유형 문제를 붙인다. 숙제 이름 뒤에 학생 이름이 붙는다. */
+async function createPersonalHomework(input: {
+  title: string;
+  dueDate: string;
+  memo: string;
+  studentIds: string[];
+  problemIds: string[];
+  extras: { studentId: string; problemIds: string[] }[];
+}): Promise<{ error: string } | { hwIds: string[] }> {
+  const due = s(input.dueDate, 10);
+  const title = s(input.title, 40) || "숙제";
+  const common = ids(input.problemIds, 60);
+  const extra = new Map((Array.isArray(input.extras) ? input.extras : []).map((e) => [s(e?.studentId, 40), ids(e?.problemIds, 60)]));
+  const hwIds: string[] = [];
+  for (const sid of ids(input.studentIds, 300)) {
+    const st = await getStudent(s(sid, 40));
+    if (!st) continue;
+    const problemIds = [...new Set([...common, ...(extra.get(st.studentId) ?? [])])].slice(0, 60);
+    if (!problemIds.length) continue;
+    const r = await createHomework({
+      title: `${title} · ${st.name || st.studentId}`,
+      dueDate: /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : "",
+      classId: st.classId,
+      memo: s(input.memo, 300),
+      studentIds: [st.studentId],
+      problemIds,
+    }).catch(async (e) => {
+      await reportError("학생마다 숙제 내기", e);
+      return { ok: false as const, error: "저장하지 못했어요." };
+    });
+    if (!r.ok) {
+      revalidatePath("/teacher/homework");
+      return { error: `${st.name || st.studentId} 숙제를 내지 못했어요. ${hwIds.length}명은 냈어요. 잠시 뒤 다시 해 주세요.` };
+    }
+    hwIds.push(r.hwId);
+  }
+  if (!hwIds.length) return { error: "숙제에 넣을 문제가 없어요." };
+  revalidatePath("/teacher/homework");
+  return { hwIds };
 }
 
 export async function markAction(

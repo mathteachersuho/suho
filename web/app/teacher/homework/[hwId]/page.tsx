@@ -35,7 +35,11 @@ export default async function HomeworkDetail({ params, searchParams }: PageProps
             {hw.memo && <p className="mt-1 text-sm">메모: {hw.memo}</p>}
           </div>
           <div className="ml-auto flex gap-2">
-            <Link href={`/print?ids=${encodeURIComponent(problems.map((p) => p.id).join(","))}&title=${encodeURIComponent(hw.title)}`} className="btn-soft py-2">
+            <Link
+              // 한 학생에게만 낸 숙제는 학습지 이름 칸에 그 학생 이름을 넣는다
+              href={students.length === 1 ? `/print?hw=${hw.hwId}` : `/print?ids=${encodeURIComponent(problems.map((p) => p.id).join(","))}&title=${encodeURIComponent(hw.title)}`}
+              className="btn-soft py-2"
+            >
               <IconPrinter />
               학습지 인쇄
             </Link>

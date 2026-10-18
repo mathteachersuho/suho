@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { IconClipboard, IconPlus } from "@/components/Icons";
+import { IconClipboard, IconPlus, IconPrinter } from "@/components/Icons";
 import { listHomeworkByClass, type ClassHomework } from "@/lib/homework";
 import { dayLabel, dueLabel, todaySeoul } from "@/lib/hwFormat";
 import { dueStudents } from "@/lib/review";
@@ -31,6 +31,8 @@ export default async function HomeworkList({ searchParams }: { searchParams: Pro
   const pick = want !== undefined && byClass.has(want) ? want : null; // null = 모든 반
   const shown = pick === null ? classes : [pick];
   const today = todaySeoul();
+  // 학생마다 따로 낸 숙제: 학생별 학습지를 한꺼번에 인쇄할 수 있게
+  const made = typeof sp.made === "string" ? sp.made.split(",").filter((id) => rows.some((h) => h.hwId === id)) : [];
 
   return (
     <div className="space-y-6">
@@ -47,6 +49,19 @@ export default async function HomeworkList({ searchParams }: { searchParams: Pro
           </Link>
         </div>
       </div>
+
+      {made.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-accent/30 bg-accent-soft px-4 py-3">
+          <p className="text-sm">
+            <span className="font-semibold">학생마다 숙제 {made.length}개를 냈어요</span>
+            <span className="text-ink-soft"> · 학생 이름이 들어간 학습지를 한꺼번에 인쇄할 수 있어요</span>
+          </p>
+          <Link href={`/print?hw=${made.join(",")}`} className="btn-main ml-auto px-3 py-1.5 text-sm">
+            <IconPrinter />
+            학생별 학습지 인쇄
+          </Link>
+        </div>
+      )}
 
       {due.size > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-accent/30 bg-accent-soft px-4 py-3">
