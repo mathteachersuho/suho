@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import DifficultyBadge from "@/components/DifficultyBadge";
 import { weakExtrasAction, type WeakExtra } from "../actions";
+import WeakScopePicker, { scopeReady, toWeakScope, type ScopeChoice } from "./WeakScopePicker";
 
 /**
  * 숙제 내기 › 모두 같은 문제 + '학생마다 약한 유형 한 문제씩 더하기'.
@@ -16,6 +17,8 @@ export default function PersonalWeak({
   common,
   nameOf,
   onExtras,
+  scope,
+  onScope,
 }: {
   on: boolean;
   onToggle: (on: boolean) => void;
@@ -23,18 +26,22 @@ export default function PersonalWeak({
   common: string[];
   nameOf: (id: string) => string;
   onExtras: (x: WeakExtra[] | null) => void;
+  scope: ScopeChoice;
+  onScope: (c: ScopeChoice) => void;
 }) {
   const [extras, setExtras] = useState<{ key: string; list: WeakExtra[] } | null>(null);
   const [error, setError] = useState("");
-  const key = `${studentIds.join(",")}|${common.join(",")}`;
+  const key = `${studentIds.join(",")}|${common.join(",")}|${JSON.stringify(scope)}`;
   const ready = on && extras?.key === key ? extras.list : null;
 
   useEffect(() => {
     let alive = true;
     if (!on || !studentIds.length) return;
     onExtras(null); // 다시 고르는 동안은 낼 수 없게
-    const [stu, com] = key.split("|");
-    weakExtrasAction(stu.split(","), com ? com.split(",") : []).then((r) => {
+    const [stu, com, sc] = key.split("|");
+    const choice = JSON.parse(sc) as ScopeChoice;
+    if (!scopeReady(choice)) return;
+    weakExtrasAction(stu.split(","), com ? com.split(",") : [], toWeakScope(choice)).then((r) => {
       if (!alive) return;
       if ("error" in r) {
         setError(r.error);
@@ -74,13 +81,15 @@ export default function PersonalWeak({
 
       {on && (
         <div className="mt-3 space-y-2 border-t border-line pt-3">
+          <WeakScopePicker value={scope} onChange={onScope} studentIds={studentIds} />
           {!studentIds.length ? (
             <p className="text-sm text-ink-faint">위에서 받는 학생을 먼저 골라 주세요.</p>
-          ) : error ? (
+          ) : !scopeReady(scope) ? null : error ? (
             <p className="text-sm text-bad">{error}</p>
           ) : !ready ? (
             <p className="text-sm text-ink-soft">학생마다 약한 유형을 찾는 중…</p>
-          ) : (
+          ) : null}
+          {studentIds.length > 0 && scopeReady(scope) && !error && ready && (
             <>
               <p className="text-sm text-ink-soft">
                 학생마다 더할 문제 {total}개{ready.some((x) => x.types > x.items.length) && " · 은행에 안 받은 문제가 없는 유형은 빠졌어요"}
@@ -97,7 +106,7 @@ export default function PersonalWeak({
                             <span className="min-w-0 truncate text-ink-soft">{x.items.map((q) => q.tag.split(" · ")[0]).join(", ")}</span>
                           </>
                         ) : (
-                          <span className="text-ink-faint">{x.untyped ? "틀린 문제에 유형이 없어 더할 문제가 없어요" : "약한 유형이 없어 같은 문제만 받아요"}</span>
+                          <span className="text-ink-faint">{x.untyped ? "틀린 문제에 유형이 없어 더할 문제가 없어요" : scope.kind === "all" ? "약한 유형이 없어 같은 문제만 받아요" : "이 범위에서 틀린 유형이 없어 같은 문제만 받아요"}</span>
                         )}
                       </summary>
                       {x.items.length > 0 && (

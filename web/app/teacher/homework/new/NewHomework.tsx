@@ -10,6 +10,7 @@ import { cart, useCart } from "@/lib/cart";
 import { createHomeworkAction, createWeakHomeworkAction, type WeakExtra } from "../actions";
 import PersonalWeak from "./PersonalWeak";
 import SamePicker from "./SamePicker";
+import { ALL_SCOPE, scopeReady } from "./WeakScopePicker";
 import WeakPlanner, { type OutlineRow, type WeakOpts, type WeakReady } from "./WeakPlanner";
 
 type Mode = "same" | "weak";
@@ -37,7 +38,7 @@ export default function NewHomework({
   const ids = useCart();
   const [mode, setMode] = useState<Mode>(startMode);
   const [picked, setPicked] = useState<Set<string>>(new Set(initial));
-  const [opts, setOpts] = useState<WeakOpts>({ count: 10, verifiedOnly: false, dueOnly: review });
+  const [opts, setOpts] = useState<WeakOpts>({ count: 10, verifiedOnly: false, dueOnly: review, scope: ALL_SCOPE });
   const [weakReady, setWeakReady] = useState<WeakReady[]>([]);
   const [autoFind, setAutoFind] = useState(review);
   const [personal, setPersonal] = useState(false); // 모두 같은 문제 + 학생마다 약한 유형 한 문제씩
@@ -70,7 +71,9 @@ export default function NewHomework({
       ? !picked.size
         ? "받는 학생을 골라 주세요"
         : personal
-          ? !extras
+          ? !scopeReady(opts.scope)
+            ? "약한 유형을 찾을 숙제를 골라 주세요"
+            : !extras
             ? "학생마다 약한 유형을 찾는 중…"
             : !personalOk
               ? "숙제로 낼 문제를 골라 주세요"
@@ -178,7 +181,7 @@ export default function NewHomework({
         </div>
         {mode === "same" ? (
           <>
-            <PersonalWeak on={personal} onToggle={setPersonal} studentIds={order} common={ids} nameOf={nameOf} onExtras={setExtras} />
+            <PersonalWeak on={personal} onToggle={setPersonal} studentIds={order} common={ids} nameOf={nameOf} onExtras={setExtras} scope={opts.scope} onScope={(scope) => setOpts((o) => ({ ...o, scope }))} />
             <SamePicker ids={ids} studentIds={order} nameOf={nameOf} outline={outline} />
           </>
         ) : (

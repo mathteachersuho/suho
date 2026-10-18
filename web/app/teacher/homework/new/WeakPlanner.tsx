@@ -5,13 +5,14 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import DifficultyBadge from "@/components/DifficultyBadge";
 import { IconPlus, IconSearch, IconX } from "@/components/Icons";
 import { weakPlanAction, type WeakPreview } from "../actions";
+import WeakScopePicker, { scopeReady, toWeakScope, type ScopeChoice } from "./WeakScopePicker";
 
 const COUNTS = [5, 8, 10, 15, 20];
 
 import type { OutlineRow } from "@/lib/problems";
 
 export type { OutlineRow };
-export type WeakOpts = { count: number; verifiedOnly: boolean; dueOnly: boolean };
+export type WeakOpts = { count: number; verifiedOnly: boolean; dueOnly: boolean; scope: ScopeChoice };
 export type WeakReady = { studentId: string; problemIds: string[] };
 type Key = { grade: string; unit: string; type: string };
 const keyOf = (k: Key) => `${k.grade}\u0000${k.unit}\u0000${k.type}`;
@@ -61,7 +62,7 @@ export default function WeakPlanner({
   const find = () => {
     setError("");
     startFind(async () => {
-      const r = await weakPlanAction(studentIds, opts.count, opts.verifiedOnly, chosen, opts.dueOnly);
+      const r = await weakPlanAction(studentIds, opts.count, opts.verifiedOnly, chosen, opts.dueOnly, toWeakScope(opts.scope));
       if ("error" in r) return setError(r.error);
       commit(r, new Set());
     });
@@ -83,7 +84,7 @@ export default function WeakPlanner({
     setChosen(next);
     setRefining(studentId);
     setError("");
-    const r = await weakPlanAction([studentId], opts.count, opts.verifiedOnly, next, opts.dueOnly);
+    const r = await weakPlanAction([studentId], opts.count, opts.verifiedOnly, next, opts.dueOnly, toWeakScope(opts.scope));
     setRefining("");
     if ("error" in r) return setError(r.error);
     commit(
@@ -98,6 +99,7 @@ export default function WeakPlanner({
         학생이 숙제에서 틀렸거나 어려움으로 표시한 유형을 찾아, 은행에서 아직 안 받은 같은 유형 문제로 학생마다 따로 숙제를 내요. 틀린 유형은 3일, 7일, 14일
         뒤에 복습할 날이 오고, 복습에서 세 번 맞히면 졸업해요.
       </p>
+      <WeakScopePicker value={opts.scope} onChange={(scope) => setOpt({ scope })} studentIds={studentIds} />
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
         <label className="flex items-center gap-2 text-sm">
           <span className="text-ink-soft">학생마다</span>
@@ -117,7 +119,7 @@ export default function WeakPlanner({
           <input type="checkbox" checked={opts.dueOnly} onChange={(e) => setOpt({ dueOnly: e.target.checked })} className="h-4 w-4 accent-accent" />
           복습 날이 된 유형만
         </label>
-        <button type="button" className="btn-main ml-auto" disabled={!studentIds.length || finding} onClick={find}>
+        <button type="button" className="btn-main ml-auto" disabled={!studentIds.length || finding || !scopeReady(opts.scope)} onClick={find}>
           <IconSearch />
           {finding ? "찾는 중…" : plans ? "다시 고르기" : "약한 유형 찾기"}
         </button>
