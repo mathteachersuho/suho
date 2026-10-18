@@ -9,6 +9,8 @@ import { isDue, reviewKey, reviewLabel, reviewStates } from "./review";
  */
 
 export type TypeKey = { grade: string; unit: string; type: string };
+/** 약한 유형을 찾을 범위: 숙제를 낸 날(서울, YYYY-MM-DD) from~to, 또는 고른 숙제들. 없으면 모든 숙제. */
+export type WeakScope = { from?: string; to?: string; hwIds?: string[] };
 export type WeakProblem = { id: string; question: string; frame: string; difficulty: string; verified: boolean };
 export type WeakType = {
   grade: string;
@@ -39,13 +41,19 @@ export async function weakPlan(
   verifiedOnly: boolean,
   chosen?: TypeKey[] | null,
   dueOnly = false,
+  scope?: WeakScope | null,
 ): Promise<WeakPlan> {
   const sql = db();
+  const day = sql`(h.created_at at time zone 'Asia/Seoul')::date`;
+  const inScope = scope?.hwIds?.length
+    ? sql`and r.hw_id = any(${scope.hwIds})`
+    : sql`${scope?.from ? sql`and ${day} >= ${scope.from}::date` : sql``} ${scope?.to ? sql`and ${day} <= ${scope.to}::date` : sql``}`;
+  const scoped = !!(scope?.hwIds?.length || scope?.from || scope?.to);
   const weak = await sql`
     with mine as (
       select distinct on (r.problem_id) r.problem_id, r.correct = 'N' as wrong, '어려워함' = any(r.tags) as hard, h.created_at
       from hw_results r join homework h on h.hw_id = r.hw_id
-      where r.student_id = ${studentId} and (r.correct = 'N' or '어려워함' = any(r.tags))
+      where r.student_id = ${studentId} and (r.correct = 'N' or '어려워함' = any(r.tags)) ${inScope}
       order by r.problem_id, h.created_at desc
     )
     select p.grade, p.unit, p.type,
@@ -69,7 +77,8 @@ export async function weakPlan(
     });
   const untyped = weak.filter((w) => !w.type).reduce((a, w) => a + (w.ids as string[]).length, 0);
   const auto = detected
-    .filter((d) => !d.review?.done && (!dueOnly || d.review?.due))
+    // 범위를 골랐으면 그 안에서 틀린 유형은 졸업했어도 다시 낸다
+    .filter((d) => (scoped || !d.review?.done) && (!dueOnly || d.review?.due))
     .map((d, i) => ({ d, i }))
     // 복습 날이 된 유형 먼저 (오래 밀린 것부터), 나머지는 많이 틀린 순 그대로
     .sort((a, b) => Number(!!b.d.review?.due) - Number(!!a.d.review?.due) || (a.d.review?.due ? a.d.review.dueDay.localeCompare(b.d.review!.dueDay) : 0) || a.i - b.i)
@@ -143,8 +152,8 @@ export async function weakPlan(
  * 모두 같은 숙제에 학생마다 더할 문제: 찾은 약한 유형(졸업 안 한 것, 복습 날이 된 유형 먼저)마다 한 문제씩.
  * exclude(같이 내는 문제)는 고르지 않고, 많아야 max 유형까지.
  */
-export async function weakExtras(studentId: string, exclude: string[], max: number, verifiedOnly = false) {
-  const plan = await weakPlan(studentId, PER_TYPE, verifiedOnly);
+export async function weakExtras(studentId: string, exclude: string[], max: number, verifiedOnly = false, scope?: WeakScope | null) {
+  const plan = await weakPlan(studentId, PER_TYPE, verifiedOnly, null, false, scope);
   const skip = new Set(exclude);
   const out: { type: TypeKey; problem: WeakProblem }[] = [];
   for (const t of plan.types) {

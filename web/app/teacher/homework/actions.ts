@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createHomework, deleteHomework, hwTags, markResults, MARKS, priorCounts, setReasons, tagResults, type Mark } from "@/lib/homework";
+import { createHomework, deleteHomework, recentHomeworkFor, hwTags, markResults, MARKS, priorCounts, setReasons, tagResults, type Mark } from "@/lib/homework";
 import { isReason } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import { DIFFICULTIES } from "@/lib/difficulty";
@@ -11,7 +11,7 @@ import { requireTeacher } from "@/lib/session";
 import { reportError } from "@/lib/reportError";
 import { getStudent } from "@/lib/students";
 import { quickPick, unitCounts } from "@/lib/quick";
-import { weakExtras, weakPlan, type TypeKey } from "@/lib/weak";
+import { weakExtras, weakPlan, type TypeKey, type WeakScope } from "@/lib/weak";
 
 const s = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const ids = (v: unknown, max: number) =>
@@ -142,16 +142,33 @@ export async function priorCountsAction(studentIds: string[], problemIds: string
   return priorCounts(ids(studentIds, 300), ids(problemIds, 60));
 }
 
+const ymd = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
+const weakScope = (v: unknown): WeakScope | null => {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const hwIds = ids(o.hwIds, 100);
+  return hwIds.length ? { hwIds } : { from: ymd(o.from), to: ymd(o.to) };
+};
+
+/** 약한 유형을 찾을 숙제 고르기: 고른 학생 중 누구라도 받은 최근 숙제 (낸 날 최신 순) */
+export async function recentHomeworkAction(studentIds: string[]) {
+  await requireTeacher();
+  const stu = ids(studentIds, 300);
+  if (!stu.length) return [];
+  return recentHomeworkFor(stu);
+}
+
 export type WeakExtra = { studentId: string; items: { id: string; tag: string; difficulty: string; html: string }[]; types: number; untyped: number };
 
 /** 모두 같은 숙제 + 학생마다 약한 유형: 학생마다 전에 틀린 유형에서 한 문제씩 (같이 내는 문제는 빼고) */
-export async function weakExtrasAction(studentIds: string[], common: string[]): Promise<WeakExtra[] | { error: string }> {
+export async function weakExtrasAction(studentIds: string[], common: string[], scope?: WeakScope | null): Promise<WeakExtra[] | { error: string }> {
   await requireTeacher();
   const ex = ids(common, 60);
+  const sc = weakScope(scope);
   try {
     return await Promise.all(
       ids(studentIds, 60).map(async (studentId) => {
-        const r = await weakExtras(studentId, ex, Math.min(WEAK_EXTRA_MAX, 60 - ex.length));
+        const r = await weakExtras(studentId, ex, Math.min(WEAK_EXTRA_MAX, 60 - ex.length), false, sc);
         return {
           studentId,
           items: r.extras.map(({ type, problem: q }) => ({
@@ -316,14 +333,16 @@ export async function weakPlanAction(
   verifiedOnly: boolean,
   chosen: Record<string, TypeKey[]> = {}, // 학생마다 선생님이 고른 유형 (없으면 찾은 약한 유형)
   dueOnly = false, // 복습 날이 된 유형만
+  scope: WeakScope | null = null, // 이 기간·숙제에서 틀린 유형만
 ): Promise<WeakPreview[] | { error: string }> {
   await requireTeacher();
+  const sc = weakScope(scope);
   const n = Math.min(30, Math.max(1, Math.round(Number(count) || 10)));
   try {
     return await Promise.all(
       ids(studentIds, 60).map(async (studentId) => {
         const keys = typeKeys(chosen && typeof chosen === "object" ? chosen[studentId] : null);
-        const plan = await weakPlan(studentId, n, !!verifiedOnly, keys, !!dueOnly);
+        const plan = await weakPlan(studentId, n, !!verifiedOnly, keys, !!dueOnly, sc);
         // 화면에서는 유형 순서가 아니라 돌아가며 고른 순서(유형이 섞이게)로 보여 준다
         const problems: WeakPreviewProblem[] = [];
         for (let round = 0; ; round++) {

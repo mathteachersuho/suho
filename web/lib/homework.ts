@@ -343,3 +343,14 @@ export async function priorCounts(studentIds: string[], problemIds: string[]): P
   for (const r of rows) (out[r.problem_id as string] ??= []).push({ studentId: r.student_id as string, n: r.n as number });
   return out;
 }
+
+/** 고른 학생 중 누구라도 받은 최근 숙제 (낸 날 최신 순). 약한 유형을 찾을 숙제를 고를 때 쓴다. */
+export async function recentHomeworkFor(studentIds: string[], limit = 100) {
+  const rows = await db()`
+    select h.hw_id, h.title, (h.created_at at time zone 'Asia/Seoul')::date::text as day
+    from homework h
+    where exists (select 1 from homework_students hs where hs.hw_id = h.hw_id and hs.student_id = any(${studentIds}))
+    order by h.created_at desc
+    limit ${limit}`;
+  return rows.map((r) => ({ hwId: r.hw_id as string, title: r.title as string, day: r.day as string }));
+}
