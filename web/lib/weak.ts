@@ -138,3 +138,21 @@ export async function weakPlan(
     untyped,
   };
 }
+
+/**
+ * 모두 같은 숙제에 학생마다 더할 문제: 찾은 약한 유형(졸업 안 한 것, 복습 날이 된 유형 먼저)마다 한 문제씩.
+ * exclude(같이 내는 문제)는 고르지 않고, 많아야 max 유형까지.
+ */
+export async function weakExtras(studentId: string, exclude: string[], max: number, verifiedOnly = false) {
+  const plan = await weakPlan(studentId, PER_TYPE, verifiedOnly);
+  const skip = new Set(exclude);
+  const out: { type: TypeKey; problem: WeakProblem }[] = [];
+  for (const t of plan.types) {
+    const p = t.picked.find((q) => !skip.has(q.id));
+    if (!p) continue;
+    skip.add(p.id);
+    out.push({ type: { grade: t.grade, unit: t.unit, type: t.type }, problem: p });
+    if (out.length >= max) break;
+  }
+  return { extras: out, types: plan.types.length, untyped: plan.untyped };
+}

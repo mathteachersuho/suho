@@ -7,7 +7,8 @@ import { IconArrow, IconClipboard } from "@/components/Icons";
 import StudentPicker, { type PickStudent } from "@/components/StudentPicker";
 import { addDays } from "@/lib/hwFormat";
 import { cart, useCart } from "@/lib/cart";
-import { createHomeworkAction, createWeakHomeworkAction } from "../actions";
+import { createHomeworkAction, createWeakHomeworkAction, type WeakExtra } from "../actions";
+import PersonalWeak from "./PersonalWeak";
 import SamePicker from "./SamePicker";
 import WeakPlanner, { type OutlineRow, type WeakOpts, type WeakReady } from "./WeakPlanner";
 
@@ -39,6 +40,8 @@ export default function NewHomework({
   const [opts, setOpts] = useState<WeakOpts>({ count: 10, verifiedOnly: false, dueOnly: review });
   const [weakReady, setWeakReady] = useState<WeakReady[]>([]);
   const [autoFind, setAutoFind] = useState(review);
+  const [personal, setPersonal] = useState(false); // 모두 같은 문제 + 학생마다 약한 유형 한 문제씩
+  const [extras, setExtras] = useState<WeakExtra[] | null>(null);
   const [title, setTitle] = useState<string | null>(null); // null 이면 아직 안 고침 → 기본 이름
   const [due, setDue] = useState(addDays(today, 2));
   const [memo, setMemo] = useState("");
@@ -59,14 +62,22 @@ export default function NewHomework({
     setError("");
   };
 
-  const canSend = mode === "same" ? picked.size > 0 && ids.length > 0 : weakReady.length > 0;
+  const extraCount = extras?.reduce((a, x) => a + x.items.length, 0) ?? 0;
+  const personalOk = !!extras && (ids.length > 0 || extraCount > 0);
+  const canSend = mode === "same" ? picked.size > 0 && (personal ? personalOk : ids.length > 0) : weakReady.length > 0;
   const status =
     mode === "same"
       ? !picked.size
         ? "받는 학생을 골라 주세요"
-        : !ids.length
-          ? "숙제로 낼 문제를 골라 주세요"
-          : `${picked.size}명에게 같은 ${ids.length}문제`
+        : personal
+          ? !extras
+            ? "학생마다 약한 유형을 찾는 중…"
+            : !personalOk
+              ? "숙제로 낼 문제를 골라 주세요"
+              : `${picked.size}명에게 같은 ${ids.length}문제 + 학생마다 약한 유형 ${extraCount}문제`
+          : !ids.length
+            ? "숙제로 낼 문제를 골라 주세요"
+            : `${picked.size}명에게 같은 ${ids.length}문제`
       : !picked.size
         ? "받는 학생을 골라 주세요"
         : weakReady.length
@@ -78,6 +89,23 @@ export default function NewHomework({
     start(async () => {
       if (mode === "same") {
         const chosen = students.filter((s) => picked.has(s.studentId));
+        if (personal && extras) {
+          const r = await createHomeworkAction({
+            title: shownTitle,
+            dueDate: due,
+            classId: "",
+            memo,
+            studentIds: chosen.map((s) => s.studentId),
+            problemIds: ids,
+            extras: extras.map((x) => ({ studentId: x.studentId, problemIds: x.items.map((q) => q.id) })),
+          });
+          if ("error" in r) return setError(r.error);
+          if (!("hwIds" in r)) return;
+          setSent(true);
+          cart.clear();
+          router.push(`/teacher/homework?made=${r.hwIds.join(",")}`);
+          return;
+        }
         const cls = [...new Set(chosen.map((s) => s.classId))];
         const r = await createHomeworkAction({
           title: shownTitle,
@@ -88,6 +116,7 @@ export default function NewHomework({
           problemIds: ids,
         });
         if ("error" in r) return setError(r.error);
+        if (!("hwId" in r)) return;
         setSent(true);
         cart.clear();
         router.push(`/teacher/homework/${r.hwId}?new=1`);
@@ -148,7 +177,10 @@ export default function NewHomework({
           ))}
         </div>
         {mode === "same" ? (
-          <SamePicker ids={ids} studentIds={order} nameOf={nameOf} outline={outline} />
+          <>
+            <PersonalWeak on={personal} onToggle={setPersonal} studentIds={order} common={ids} nameOf={nameOf} onExtras={setExtras} />
+            <SamePicker ids={ids} studentIds={order} nameOf={nameOf} outline={outline} />
+          </>
         ) : (
           <WeakPlanner
             key={order.join(",")}
@@ -169,8 +201,8 @@ export default function NewHomework({
         </h2>
         <div className="grid gap-3 sm:grid-cols-[2fr_1fr]">
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-ink-soft">숙제 이름{mode === "weak" && " (뒤에 학생 이름이 붙어요)"}</span>
-            <input value={shownTitle} onChange={(e) => setTitle(e.target.value)} maxLength={mode === "weak" ? 40 : 60} className="field" />
+            <span className="mb-1 block text-xs font-medium text-ink-soft">숙제 이름{(mode === "weak" || personal) && " (뒤에 학생 이름이 붙어요)"}</span>
+            <input value={shownTitle} onChange={(e) => setTitle(e.target.value)} maxLength={mode === "weak" || personal ? 40 : 60} className="field" />
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-ink-soft">마감일</span>
