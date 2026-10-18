@@ -127,7 +127,7 @@ export async function randomPickAction(
         const c = clean[i];
         const got = r.picked.length;
         const fresh = Math.min(r.fresh, got);
-        return got < c.count || fresh < got ? [{ label: [c.type || "유형 없음", c.frame, c.difficulty].filter(Boolean).join(" · "), want: c.count, got, fresh }] : [];
+        return got < c.count || fresh < got ? [{ label: [c.type || "유형 없음", c.frame ?? "전체", c.difficulty].filter(Boolean).join(" · "), want: c.count, got, fresh }] : [];
       }),
     };
   } catch (e) {
