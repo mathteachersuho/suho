@@ -6,6 +6,7 @@ import type { GenKind } from "@/lib/ai/prompts";
 import { editOne, generateAll, generateOne, MAX_PER_KIND, SEMESTERS, type CardResult } from "@/lib/create";
 import { db } from "@/lib/db";
 import { DIFFICULTIES } from "@/lib/difficulty";
+import { bankMatches } from "@/lib/problems";
 import { renderProblemHtml } from "@/lib/mathText";
 import { requireTeacher } from "@/lib/session";
 import { listTaxonomy, taxonomyId } from "@/lib/taxonomy";
@@ -96,6 +97,45 @@ export async function aiEditAction(input: {
 export async function previewAction(texts: string[]): Promise<string[]> {
   await requireTeacher();
   return texts.slice(0, 3 * (1 + 2 * MAX_PER_KIND)).map((t) => renderProblemHtml(cleanText(t)));
+}
+
+/** 고른 분류와 비슷한 은행 문제: 눌러서 펼쳐 볼 수 있게 문제·정답을 그려서 돌려준다 */
+export async function bankMatchesAction(c: { grade: string; unit: string; type: string; frame: string }) {
+  await requireTeacher();
+  const r = await bankMatches({ grade: s(c?.grade), unit: s(c?.unit), type: s(c?.type), frame: s(c?.frame, 120) });
+  return {
+    sameFrame: r.sameFrame,
+    sameType: r.sameType,
+    items: r.items.map((p) => ({
+      id: p.id,
+      frame: p.frame,
+      difficulty: p.difficulty,
+      verified: p.verified,
+      snippet: plainSnippet(p.question),
+      html: renderProblemHtml(p.question),
+      answerHtml: p.answer ? renderProblemHtml(p.answer) : "",
+    })),
+  };
+}
+
+const SYMBOL: Record<string, string> = { neq: "≠", ne: "≠", leq: "≤", le: "≤", geq: "≥", ge: "≥", times: "×", div: "÷", pi: "π", cdots: "⋯", ldots: "…", circ: "°", pm: "±" };
+
+/** 목록 한 줄에 보일 문제 앞부분 (그림·표·태그·수식 기호를 걷어 낸 글자) */
+function plainSnippet(q: string) {
+  const t = q
+    .replace(/<svg[\s\S]*?<\/svg>|<table[\s\S]*?<\/table>/gi, " [그림] ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\\(?:d?frac)\{([^{}]*)\}\{([^{}]*)\}/g, "$1/$2")
+    .replace(/\\text\{([^{}]*)\}/g, "$1")
+    .replace(/\^\s*\{?\s*\\circ\s*\}?/g, "°")
+    .replace(/\\sqrt\{([^{}]*)\}/g, "√$1")
+    .replace(/\\(neq|ne|leq|le|geq|ge|times|div|pi|cdots|ldots|circ|pm)(?![a-zA-Z])/g, (_, k: string) => SYMBOL[k])
+    .replace(/\\[a-zA-Z]+/g, " ")
+    .replace(/[$\\{}]/g, "")
+    .replace(/^\s*\d+\s*[.)]\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return t.length > 90 ? t.slice(0, 90) + "…" : t;
 }
 
 const POSITION: Record<Source, number> = { 원본: 0, "AI 기본": 1, "AI 실력": 2 };

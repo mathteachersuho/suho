@@ -161,3 +161,29 @@ export async function sameTypeProblems(t: { grade: string; unit: string; type: s
     limit ${limit}`;
   return rows.map((r) => ({ question: r.question as string, answer: r.answer as string }));
 }
+
+export type BankMatch = { id: string; frame: string; difficulty: string; verified: boolean; question: string; answer: string };
+
+/** 문제 만들기 화면용: 고른 분류와 비슷한 은행 문제 (같은 세부 유형 먼저, 그다음 같은 유형의 다른 세부 유형). 전체 개수와 함께. */
+export async function bankMatches(t: { grade: string; unit: string; type: string; frame: string }, limit = 30) {
+  if (!t.grade || !t.unit || !t.type) return { sameFrame: 0, sameType: 0, items: [] as BankMatch[] };
+  const rows = await db()`
+    select id, frame, difficulty, verified, question, answer,
+      count(*) filter (where frame = ${t.frame}) over () as same_frame, count(*) over () as same_type
+    from problems
+    where grade = ${t.grade} and unit = ${t.unit} and type = ${t.type}
+    order by (frame = ${t.frame}) desc, frame, created_at desc
+    limit ${limit}`;
+  return {
+    sameFrame: rows.length ? Number(rows[0].same_frame) : 0,
+    sameType: rows.length ? Number(rows[0].same_type) : 0,
+    items: rows.map((r) => ({
+      id: r.id as string,
+      frame: r.frame as string,
+      difficulty: r.difficulty as string,
+      verified: r.verified as boolean,
+      question: r.question as string,
+      answer: r.answer as string,
+    })),
+  };
+}
