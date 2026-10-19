@@ -4,6 +4,7 @@ import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, 
 import type { Level } from "./ai/curriculum";
 import { DIFFICULTIES } from "./difficulty";
 import { outOfLevel, rewriteInstruction } from "./levelCheck";
+import { issuesInstruction, problemIssues, stripExamNumber, tidyProblem } from "./problemCheck";
 import { figuresToBlocks, renderFigureBlocks, shadeBehind } from "./figure";
 import { brief, fingerprint, sameProblem, type Fingerprint } from "./similar";
 import { sameTypeProblems } from "./problems";
@@ -25,28 +26,36 @@ export type Suggestion = {
 
 export type CardResult = { ok: true; data: Generated } | { ok: false; error: string };
 
-/** AI가 쓴 <좌표그림> 블록을 정확한 SVG로 바꾸고, 직접 그린 SVG의 색칠은 맨 뒤로 */
-const drawFigures = (g: Generated): Generated => ({
-  question: shadeBehind(renderFigureBlocks(g.question)),
-  answer: g.answer,
-  solution: shadeBehind(renderFigureBlocks(g.solution)),
-});
+/** AI가 쓴 <좌표그림> 블록을 정확한 SVG로 바꾸고, 직접 그린 SVG의 색칠은 맨 뒤로. 시험지 번호·작은 그림 글자는 코드로 고친다. */
+const drawFigures = (g: Generated): Generated =>
+  tidyProblem({
+    question: shadeBehind(renderFigureBlocks(g.question)),
+    answer: g.answer,
+    solution: shadeBehind(renderFigureBlocks(g.solution)),
+  });
 
 /** level = 문제의 학년·단원·유형 (풀이를 그 학년 교육과정 안에서 쓰게) */
 export async function generateOne(kind: GenKind, text: string, detailed: boolean, imageB64?: string, v: Variation = {}, level: Level = {}): Promise<Generated> {
   const out = drawFigures(parseProblem(await gemini(problemPrompt(kind, text, detailed, v, level), kind === 0 ? imageB64 : undefined)));
   if (!out.question.trim()) throw new AiError("빈 문제가 만들어졌어요. 다시 만들어 주세요.");
-  return fitLevel(out, level);
+  return fitCheck(out, level);
 }
 
-/** 풀이에 그 학년에서 배우지 않은 표현이 보이면 한 번만 그 학년 방식으로 다시 쓰게 한다. 실패하면 처음 것을 둔다. */
-async function fitLevel(g: Generated, level: Level): Promise<Generated> {
-  const found = outOfLevel(level.grade, g.solution);
-  if (!found.length || !level.grade) return g;
+/** 만든 문제를 검사해서 한 번만 고쳐 쓰게 한다. 실패하면 처음 것을 둔다.
+ *  - 풀이에 그 학년에서 배우지 않은 표현 (levelCheck)
+ *  - 매일 문제 점검에서 자주 나온 실수 (problemCheck: 잘린 그림 글자, 객관식 발문, 빠진 보기 판단)
+ *  둘 다 있으면 한 번에 고친다 (기다리는 시간이 늘지 않게). */
+async function fitCheck(g: Generated, level: Level): Promise<Generated> {
+  const found = level.grade ? outOfLevel(level.grade, g.solution) : [];
+  const issues = problemIssues(g);
+  if (!found.length && !issues.length) return g;
+  const asks = [...(issues.length ? [issuesInstruction(issues)] : []), ...(found.length ? [rewriteInstruction(level.grade!, found)] : [])];
   try {
-    return await editOne(g, rewriteInstruction(level.grade, found), undefined, "solution", level);
+    // 문제(그림·발문)를 고쳐야 하면 문제째, 아니면 풀이만
+    const needsProblem = issues.some((s) => !s.startsWith("풀이에"));
+    return await editOne(g, asks.join("\n"), undefined, needsProblem ? "problem" : "solution", level);
   } catch (e) {
-    console.error("학년에 맞게 풀이 다시 쓰기 실패", e);
+    console.error("점검 기준에 맞게 다시 쓰기 실패", e);
     return g;
   }
 }
@@ -127,7 +136,7 @@ export async function generateAll(text: string, detailed: boolean, imageB64: str
   const card = (r: PromiseSettledResult<Generated>): CardResult =>
     r.status === "fulfilled" ? { ok: true, data: r.value } : { ok: false, error: msg(r.reason) };
   if (p0.status === "rejected") console.error("원본 다시 쓰기 실패", p0.reason);
-  const original = p0.status === "fulfilled" ? p0.value : { question: text, answer: "", solution: "" };
+  const original = p0.status === "fulfilled" ? p0.value : { question: stripExamNumber(text), answer: "", solution: "" };
   const cards = { 1: basic.map(card), 2: advanced.map(card) };
   await removeDuplicates(cards, [original, { question: text, answer: original.answer }, ...bank], bankBrief, text, detailed, counts, started, level);
   return {
