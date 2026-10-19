@@ -3,8 +3,8 @@
  * 개념·기호·공식을 쓰지 않도록 프롬프트에 넣는다. 예: 중1 문제에 가우스 기호 [x] 나 지수법칙 공식을 쓰지 않게.
  */
 
-/** 문제의 분류 (문제 은행의 학년·단원·유형, 세부 유형과 그 설명). 모르면 비워 둔다. */
-export type Level = { grade?: string; unit?: string; type?: string; frame?: string; description?: string };
+/** 문제의 분류 (문제 은행의 학년·단원·유형). 모르면 비워 둔다. */
+export type Level = { grade?: string; unit?: string; type?: string };
 
 type Guide = {
   name: string;
@@ -127,6 +127,6 @@ ${common.join("\n")}
 /** 서버 액션에 들어온 분류 값을 정리한다 */
 export function cleanLevel(v: unknown): Level {
   const o = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
-  const s = (x: unknown, max = 80) => (typeof x === "string" ? x.slice(0, max) : "");
-  return { grade: s(o.grade), unit: s(o.unit), type: s(o.type), frame: s(o.frame), description: s(o.description, 300) };
+  const s = (x: unknown) => (typeof x === "string" ? x.slice(0, 80) : "");
+  return { grade: s(o.grade), unit: s(o.unit), type: s(o.type) };
 }

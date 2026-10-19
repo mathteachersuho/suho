@@ -121,7 +121,7 @@ const BANK_IN_PROMPT = 8;
 export async function generateAll(text: string, detailed: boolean, imageB64: string | undefined, taxonomy: TaxRow[], counts: Counts = { basic: 7, advanced: 3 }) {
   const started = Date.now();
   const cls = await classify(text, taxonomy).catch(() => null);
-  const level: Level = cls ? { grade: cls.grade, unit: cls.unit, type: cls.type, frame: cls.frame, description: cls.description } : {};
+  const level: Level = cls ? { grade: cls.grade, unit: cls.unit, type: cls.type } : {};
   const p0p = Promise.allSettled([generateOne(0, text, detailed, imageB64, {}, level)]).then(([r]) => r);
   const bank = cls
     ? await sameTypeProblems(cls).catch(async (e) => {
