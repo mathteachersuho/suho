@@ -35,3 +35,19 @@ test("중1 안내에는 가우스 기호와 지수법칙 공식을 쓰지 말라
 test("학년을 모르면 문제를 보고 학년을 판단하라고 한다", () => {
   assert.match(levelRules({}), /몇 학년 문제인지 먼저 판단/);
 });
+
+import { outOfLevel } from "../lib/levelCheck.ts";
+
+const levelCases: [string, string, string[]][] = [
+  ["중1", "소인수 3의 개수는 $\\lfloor 18/3 \\rfloor + \\lfloor 18/9 \\rfloor = 8$", ["가우스 기호 [x]"]],
+  ["중1", "개수는 $[18/3]+[18/9]=6+2=8$이다", ["가우스 기호 [x]"]],
+  ["중1", "$12^8=(2^2 \\times 3)^8=2^{16} \\times 3^8$", ["지수법칙 공식 ((a^m)^n 꼴)"]],
+  ["중1", "$(-2)^3=-8$ 이고 $2^3 \\times 3^2$ 를 소인수분해하면", []],
+  ["중1", "$n-4 \\in \\{1, 3, 5\\}$", ["집합 기호 (∈, ⊂)"]],
+  ["중1", "합이 18이 되는 소수의 조합은 5+13뿐이다", []],
+  ["중2", "$\\sqrt{2}$ 를 곱하면", ["제곱근·√"]],
+  ["중3", "$\\sqrt{2}$ 를 곱하면", []],
+  ["", "\\lfloor x \\rfloor", []],
+];
+for (const [grade, text, want] of levelCases)
+  test(`학년 밖 표현 찾기: ${grade || "(학년 없음)"} ${text.slice(0, 20)}`, () => assert.deepEqual(outOfLevel(grade, text), want));

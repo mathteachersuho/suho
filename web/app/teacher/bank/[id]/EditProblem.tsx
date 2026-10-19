@@ -7,6 +7,7 @@ import { IconArrow, IconCheck } from "@/components/Icons";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import type { ProblemEdit } from "@/lib/problems";
 import type { TaxRow } from "@/lib/taxonomy";
+import LevelWarning from "@/components/LevelWarning";
 import { aiEditAction } from "../../create/actions";
 import AskBox from "../../create/AskBox";
 import ClassPicker from "../../create/ClassPicker";
@@ -118,6 +119,7 @@ export default function EditProblem({
           </div>
           {v.solution && <div className="problem-body text-ink-soft" dangerouslySetInnerHTML={{ __html: html[2] ?? "" }} />}
         </div>
+        <LevelWarning grade={v.cls.grade} solution={v.solution} onFix={(t) => aiEdit(t, "solution")} />
       </section>
 
       <section className="card grid gap-4">
