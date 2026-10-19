@@ -51,3 +51,10 @@ const levelCases: [string, string, string[]][] = [
 ];
 for (const [grade, text, want] of levelCases)
   test(`학년 밖 표현 찾기: ${grade || "(학년 없음)"} ${text.slice(0, 20)}`, () => assert.deepEqual(outOfLevel(grade, text), want));
+
+test("중1 풀이의 ⟹, gcd, 볼록, ± 도 찾는다", () => {
+  assert.deepEqual(outOfLevel("중1", "$2a-6=0 \\implies a=3$"), ["논리 기호 ⟹"]);
+  assert.deepEqual(outOfLevel("중1", "$\\gcd(72, 108) = 36$"), ["gcd·lcm 기호"]);
+  assert.deepEqual(outOfLevel("중1", "위로 볼록한 곡선"), ["볼록 (이차함수 용어)"]);
+  assert.deepEqual(outOfLevel("중1", "$\\pm 1, \\pm 2$"), ["± 기호"]);
+});
