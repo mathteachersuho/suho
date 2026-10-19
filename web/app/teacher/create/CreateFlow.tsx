@@ -5,6 +5,7 @@ import { useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { IconArrow, IconCheck, IconPlus } from "@/components/Icons";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import type { CardResult, Suggestion } from "@/lib/create";
+import LevelWarning from "@/components/LevelWarning";
 import { aiEditAction, generateAction, ocrAction, regenerateAction, saveAction } from "./actions";
 import AskBox from "./AskBox";
 import BankMatches from "./BankMatches";
@@ -454,6 +455,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
                         {c.solution && <div className="problem-body text-ink-soft" dangerouslySetInnerHTML={{ __html: cardHtml[i * 3 + 2] ?? "" }} />}
                       </div>
                     )}
+                    <LevelWarning grade={cls.grade} solution={c.solution} onFix={(t) => aiEdit(i, t, "solution")} />
                     <div className="mt-4 grid gap-3 border-t border-line pt-4">
                       <AskBox
                         id={`ask-q-${i}`}

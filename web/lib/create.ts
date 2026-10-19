@@ -3,6 +3,7 @@ import { AiError, gemini, geminiJson } from "./ai/clients";
 import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, type EditTarget, type GenKind, type Generated, type Variation } from "./ai/prompts";
 import type { Level } from "./ai/curriculum";
 import { DIFFICULTIES } from "./difficulty";
+import { outOfLevel, rewriteInstruction } from "./levelCheck";
 import { figuresToBlocks, renderFigureBlocks, shadeBehind } from "./figure";
 import { brief, fingerprint, sameProblem, type Fingerprint } from "./similar";
 import { sameTypeProblems } from "./problems";
@@ -35,7 +36,19 @@ const drawFigures = (g: Generated): Generated => ({
 export async function generateOne(kind: GenKind, text: string, detailed: boolean, imageB64?: string, v: Variation = {}, level: Level = {}): Promise<Generated> {
   const out = drawFigures(parseProblem(await gemini(problemPrompt(kind, text, detailed, v, level), kind === 0 ? imageB64 : undefined)));
   if (!out.question.trim()) throw new AiError("빈 문제가 만들어졌어요. 다시 만들어 주세요.");
-  return out;
+  return fitLevel(out, level);
+}
+
+/** 풀이에 그 학년에서 배우지 않은 표현이 보이면 한 번만 그 학년 방식으로 다시 쓰게 한다. 실패하면 처음 것을 둔다. */
+async function fitLevel(g: Generated, level: Level): Promise<Generated> {
+  const found = outOfLevel(level.grade, g.solution);
+  if (!found.length || !level.grade) return g;
+  try {
+    return await editOne(g, rewriteInstruction(level.grade, found), undefined, "solution", level);
+  } catch (e) {
+    console.error("학년에 맞게 풀이 다시 쓰기 실패", e);
+    return g;
+  }
 }
 
 /** 말로 적은 요청대로 문제 고치기 */
