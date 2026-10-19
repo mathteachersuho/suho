@@ -1,4 +1,5 @@
 import "server-only";
+import { levelRules, type Level } from "./curriculum";
 
 /*
  * Streamlit app.py 의 Gemini 지시문을 그대로 옮긴 것.
@@ -106,7 +107,7 @@ function variationText(kind: GenKind, v: Variation) {
   return lines.length ? `\n[여러 문제 만들기]\n${lines.join("\n")}\n` : "";
 }
 
-export function problemPrompt(kind: GenKind, ocrText: string, detailed: boolean, v: Variation = {}) {
+export function problemPrompt(kind: GenKind, ocrText: string, detailed: boolean, v: Variation = {}, level: Level = {}) {
   const solution = detailed ? "단계별 상세 풀이와 해설 작성" : "핵심 수식 전개 및 정답 도출 과정만 1~2줄로 매우 간결하게 작성";
   const head =
     kind === 0 ? "원본 문제를 실제 시험지처럼 깔끔하게 다시 써라." : `원본 문제를 바탕으로 [${KIND_NAME[kind]}]를 1개만 제작하라.`;
@@ -116,7 +117,7 @@ export function problemPrompt(kind: GenKind, ocrText: string, detailed: boolean,
 ${ocrText}
 
 ${TYPE_INSTRUCTION[kind]}${variationText(kind, v)}
-${RULES}
+${levelRules(level, kind !== 0)}${RULES}
 [출력 양식]
 [문제]
 (문제 지문 및 SVG)
@@ -132,15 +133,16 @@ export type Generated = { question: string; answer: string; solution: string };
 export type EditTarget = "problem" | "solution";
 
 /** 선생님이 말로 적은 요청대로 이미 만든 문제를 고친다. problem = 문제·그림, solution = 정답·풀이만. */
-export function editPrompt(current: Generated, instruction: string, withImage: boolean, target: EditTarget = "problem") {
+export function editPrompt(current: Generated, instruction: string, withImage: boolean, target: EditTarget = "problem", level: Level = {}) {
   const rules =
     target === "solution"
       ? `- 이번 요청은 정답과 풀이에 대한 것이다. [문제]는 한 글자도 바꾸지 말고 그대로 다시 적어라.
 - 요청대로 풀이를 고치되 수학적으로 맞는지 다시 계산해서 확인하라. 정답이 틀렸으면 정답도 바로잡아라.
+- 지금 풀이에 이 학년에서 배우지 않은 개념이 있으면 아래 [학년 범위]에 맞게 함께 바꿔 써라.
 - 풀이에 그림이 필요하면 아래 규칙대로 SVG로 넣어도 된다.`
       : `- 요청한 부분만 고치고, 요청하지 않은 지문·숫자·보기·그림은 그대로 둬라.
 - 그림을 고치라는 요청이면 SVG 코드를 직접 고쳐서 다시 출력하라. <좌표그림> 블록이면 블록의 좌표·식을 고쳐라. 좌표, 점 이름, 길이·각도 표시가 문제 지문과 맞는지 확인하라.
-- 숫자나 조건이 바뀌면 정답과 풀이도 바뀐 문제에 맞게 다시 계산해서 써라. 바뀌지 않으면 정답과 풀이는 그대로 둬라.${
+- 숫자나 조건이 바뀌면 정답과 풀이도 바뀐 문제에 맞게 다시 계산해서 써라 (아래 [학년 범위]에 맞게). 바뀌지 않으면 정답과 풀이는 그대로 둬라.${
           withImage ? "\n- 함께 보낸 사진은 원본 문제다. 그림을 원본과 같게 맞추라는 요청이면 사진을 기준으로 삼아라." : ""
         }`;
   return `너는 대한민국 중학교/고등학교 수학 출제 위원이야. 아래 문제를 선생님의 요청대로 고쳐라.
@@ -159,7 +161,7 @@ ${instruction}
 
 [고치기 원칙]
 ${rules}
-${RULES}
+${levelRules(level)}${RULES}
 [출력 양식] (설명이나 인사말 없이 아래 양식만)
 [문제]
 (고친 문제 지문 및 SVG)

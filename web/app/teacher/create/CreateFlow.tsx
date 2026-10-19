@@ -208,7 +208,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
     update(i, { busy: true });
     // 같은 종류로 이미 만든 다른 문제와 겹치지 않게 함께 보낸다
     const avoid = cards[i].source === "원본" ? [] : cards.filter((c, j) => j !== i && c.source === cards[i].source && !c.error).map((c) => c.question);
-    const r = await regenerateAction({ kind: KIND[cards[i].source], text, imageB64: image?.b64, detailed, avoid });
+    const r = await regenerateAction({ kind: KIND[cards[i].source], text, imageB64: image?.b64, detailed, avoid, level: cls });
     if (r.ok) update(i, { ...r.data, error: undefined, busy: false, include: true, undo: undefined });
     else update(i, { busy: false, error: r.error });
     setGroupId(newGroupId());
@@ -224,6 +224,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
       ...before,
       instruction,
       target,
+      level: cls,
       imageB64: c.source === "원본" && target === "problem" ? image?.b64 : undefined,
     });
     if (!r.ok) return r.error;
