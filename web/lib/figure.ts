@@ -18,6 +18,17 @@ export type FigureSpec = {
   squares?: string[];
   /** false 면 축 없이 도형만 (가로세로 같은 비율) */
   axes?: boolean;
+  /** 축에 눈금 숫자: true 면 알맞은 간격으로, xticks·yticks 는 보여 줄 값 (같은 비율 자리에 놓는다) */
+  ticks?: boolean;
+  xticks?: number[];
+  yticks?: number[];
+  /** 축 이름 (없으면 x, y). 예: "x(분)", "거리(km)" */
+  xName?: string;
+  yName?: string;
+  /** 꺾은선 (실생활 그래프): 좌표를 차례로 */
+  lines?: [number, number][][];
+  /** 꺾은선 꼭짓점·점에서 눈금까지 점선 보조선 */
+  guides?: boolean;
 };
 
 /* ---------------- 식 계산 (eval 없이) ---------------- */
@@ -292,6 +303,20 @@ function resolvePoints(spec: FigureSpec): Pt[] {
   return out;
 }
 
+/** 눈금 값들: 적은 값이 있으면 그 값만, ticks 면 10개 안팎이 되는 1·2·5 간격 */
+function tickValues(list: unknown, auto: boolean, lo: number, hi: number): number[] {
+  if (Array.isArray(list))
+    return [...new Set(list.map(num).filter((v) => Number.isFinite(v) && v >= lo && v <= hi))].slice(0, 20);
+  if (!auto) return [];
+  const raw = (hi - lo) / 10;
+  const mag = 10 ** Math.floor(Math.log10(raw || 1));
+  const step = [1, 2, 5, 10].map((k) => k * mag).find((k) => k >= raw) ?? mag * 10;
+  const out: number[] = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9 && out.length < 25; v += step) out.push(Math.round(v / step) * step);
+  return out;
+}
+const tickText = (v: number) => String(Math.round(v * 1000) / 1000).replace("-", "−");
+
 /** 축 없는 도형 그림: 범위를 안 적었으면 점들이 다 들어가게 */
 function autoRange(v: unknown, vals: number[], fallback: [number, number]): [number, number] {
   if (Array.isArray(v) && v.length === 2) return range(v, fallback);
@@ -319,10 +344,20 @@ export function renderFigure(raw: unknown): string {
     kx = W / rx;
     ky = W / ry;
   }
-  const w = rx * kx + PAD * 2;
-  const h = ry * ky + PAD * 2;
-  const X = (x: number) => PAD + (x - x0) * kx;
-  const Y = (y: number) => PAD + (y1 - y) * ky;
+  const originShown = axes && x0 <= 0 && x1 >= 0 && y0 <= 0 && y1 >= 0 && !resolved.some((q) => q.name === "O");
+  // 눈금 숫자 (원점의 0 은 O 와 겹치므로 빼고), 축 이름이 그림 밖으로 잘리지 않게 여백을 넉넉히
+  const xt = axes ? tickValues(spec.xticks, !!spec.ticks, x0, x1).filter((v) => !(originShown && v === 0)) : [];
+  const yt = axes ? tickValues(spec.yticks, !!spec.ticks, y0, y1).filter((v) => !(originShown && v === 0)) : [];
+  const xName = axes && typeof spec.xName === "string" && spec.xName.trim() ? spec.xName.trim() : "x";
+  const yName = axes && typeof spec.yName === "string" && spec.yName.trim() ? spec.yName.trim() : "y";
+  const padL = Math.max(PAD, ...yt.map((v) => textW(tickText(v)) + 12));
+  const padR = Math.max(PAD, textW(xName) + 16);
+  const padT = Math.max(PAD, yName.length > 1 ? FONT + 16 : 0);
+  const padB = Math.max(PAD, xt.length ? FONT + 12 : 0);
+  const w = rx * kx + padL + padR;
+  const h = ry * ky + padT + padB;
+  const X = (x: number) => padL + (x - x0) * kx;
+  const Y = (y: number) => padT + (y1 - y) * ky;
 
   const parts: string[] = [];
   const obstacles: (Box & { own?: string })[] = []; // 글자를 놓을 때 피할 곳 (선, 점, 다른 글자). own = 어느 선인지
@@ -367,6 +402,56 @@ export function renderFigure(raw: unknown): string {
   if (axes) {
     lineBoxes([[ax1, ay], [ax2, ay]]);
     lineBoxes([[bx, by1], [bx, by2]]);
+  }
+
+  // 눈금과 숫자 (숫자 자리는 글자를 놓을 때 피한다)
+  const tickMarks: string[] = [];
+  const tickLabels: string[] = [];
+  let lastX = -Infinity;
+  for (const v of [...xt].sort((p, q) => p - q)) {
+    const tx = X(v);
+    const tw = textW(tickText(v));
+    if (tx - tw / 2 < lastX + 3) continue; // 붙어 있는 눈금 숫자는 겹치지 않게 건너뛴다
+    lastX = tx + tw / 2;
+    tickMarks.push(`<line x1="${fmt(tx)}" y1="${fmt(ay - 3)}" x2="${fmt(tx)}" y2="${fmt(ay + 3)}"/>`);
+    tickLabels.push(`<text x="${fmt(tx)}" y="${fmt(ay + 5 + FONT * 0.8)}" font-size="${FONT}" fill="#000000" text-anchor="middle">${tickText(v)}</text>`);
+    obstacles.push({ x1: tx - tw / 2, y1: ay + 5, x2: tx + tw / 2, y2: ay + 5 + FONT });
+  }
+  let lastY = Infinity;
+  for (const v of [...yt].sort((p, q) => p - q)) {
+    const ty = Y(v);
+    const tw = textW(tickText(v));
+    if (ty + FONT / 2 > lastY - 1) continue;
+    lastY = ty - FONT / 2;
+    tickMarks.push(`<line x1="${fmt(bx - 3)}" y1="${fmt(ty)}" x2="${fmt(bx + 3)}" y2="${fmt(ty)}"/>`);
+    tickLabels.push(`<text x="${fmt(bx - 5)}" y="${fmt(ty + FONT * 0.35)}" font-size="${FONT}" fill="#000000" text-anchor="end">${tickText(v)}</text>`);
+    obstacles.push({ x1: bx - 5 - tw, y1: ty - FONT / 2, x2: bx - 5, y2: ty + FONT / 2 });
+  }
+  if (tickMarks.length) parts.push(`<g stroke="#000000" stroke-width="1">${tickMarks.join("")}</g>`, ...tickLabels);
+
+  // 꺾은선 (실생활 그래프)
+  const polylines = (Array.isArray(spec.lines) ? spec.lines : [])
+    .slice(0, 6)
+    .map((l) => (Array.isArray(l) ? l : []).slice(0, 60).map((q) => (Array.isArray(q) ? [num(q[0]), num(q[1])] : [NaN, NaN]) as [number, number]))
+    .map((l) => l.filter(([a, b]) => Number.isFinite(a + b)))
+    .filter((l) => l.length > 1);
+  for (const l of polylines) {
+    const scr = l.map(([a, b]) => [X(a), Y(b)] as [number, number]);
+    parts.push(`<polyline points="${scr.map(([a, b]) => `${fmt(a)},${fmt(b)}`).join(" ")}" fill="none" stroke="#000000" stroke-width="1.4"/>`);
+    lineBoxes(scr);
+  }
+  // 보조선: 꼭짓점·점의 값이 눈금에 있으면 축까지 점선
+  if (spec.guides && axes) {
+    const gl: string[] = [];
+    const seen = new Set<string>();
+    for (const [a, b] of [...polylines.flat(), ...resolved.map((q) => [q.x, q.y] as [number, number])]) {
+      const k = `${a},${b}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (xt.includes(a) && b !== axisY) gl.push(`<line x1="${fmt(X(a))}" y1="${fmt(Y(b))}" x2="${fmt(X(a))}" y2="${fmt(ay)}"/>`);
+      if (yt.includes(b) && a !== axisX) gl.push(`<line x1="${fmt(X(a))}" y1="${fmt(Y(b))}" x2="${fmt(bx)}" y2="${fmt(Y(b))}"/>`);
+    }
+    if (gl.length) parts.push(`<g stroke="#888888" stroke-width="1" stroke-dasharray="3 3">${gl.join("")}</g>`);
   }
 
   // 그래프
@@ -555,10 +640,9 @@ export function renderFigure(raw: unknown): string {
   };
   // 축 이름과 원점
   if (axes) {
-    place(makeLabel("x", 1, true), ax2 + 2, ay, [1, 0.3], 4);
-    place(makeLabel("y", 1, true), bx, by1 - 2, [0.3, -1], 4);
+    place(makeLabel(xName, 12, xName === "x"), ax2 + 2, ay, [1, 0.3], 4);
+    place(makeLabel(yName, 12, yName === "y"), bx, by1 - 2, [0.3, -1], 4);
   }
-  const originShown = axes && x0 <= 0 && x1 >= 0 && y0 <= 0 && y1 >= 0 && !shown.some((s) => s.name === "O");
   if (originShown) place(makeLabel("O", 1), X(0), Y(0), [-0.7, 0.7], 5);
   for (const s of shown) place(s.label, s.px, s.py, awayFrom(s.px, s.py));
   // 그래프 이름: 곡선 끝 쪽 빈 곳
