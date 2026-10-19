@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { AiError, mathpixText } from "@/lib/ai/clients";
 import type { GenKind } from "@/lib/ai/prompts";
+import { cleanLevel, type Level } from "@/lib/ai/curriculum";
 import { editOne, generateAll, generateOne, MAX_PER_KIND, SEMESTERS, type CardResult } from "@/lib/create";
 import { db } from "@/lib/db";
 import { DIFFICULTIES } from "@/lib/difficulty";
@@ -60,13 +61,20 @@ export async function generateAction(input: { text: string; imageB64?: string; d
   }
 }
 
-/** 한 문제만 다시 만들기. avoid = 같은 종류로 이미 만든 다른 문제들 (겹치지 않게) */
-export async function regenerateAction(input: { kind: GenKind; text: string; imageB64?: string; detailed: boolean; avoid?: string[] }): Promise<CardResult> {
+/** 한 문제만 다시 만들기. avoid = 같은 종류로 이미 만든 다른 문제들 (겹치지 않게), level = 지금 고른 학년·단원·유형 */
+export async function regenerateAction(input: {
+  kind: GenKind;
+  text: string;
+  imageB64?: string;
+  detailed: boolean;
+  avoid?: string[];
+  level?: Level;
+}): Promise<CardResult> {
   await requireTeacher();
   try {
     const kind = ([0, 1, 2] as const).includes(input.kind) ? input.kind : 1;
     const avoid = (Array.isArray(input.avoid) ? input.avoid : []).slice(0, MAX_PER_KIND).map((q) => cleanText(q, 3000)).filter((q) => q.trim());
-    return { ok: true, data: await generateOne(kind, cleanText(input.text), !!input.detailed, cleanImage(input.imageB64), { avoid }) };
+    return { ok: true, data: await generateOne(kind, cleanText(input.text), !!input.detailed, cleanImage(input.imageB64), { avoid }, cleanLevel(input.level)) };
   } catch (e) {
     return { ok: false, error: fail(e) };
   }
@@ -80,6 +88,7 @@ export async function aiEditAction(input: {
   instruction: string;
   imageB64?: string;
   target?: "problem" | "solution";
+  level?: Level;
 }): Promise<CardResult> {
   await requireTeacher();
   try {
@@ -87,7 +96,7 @@ export async function aiEditAction(input: {
     if (!instruction) return { ok: false, error: "어떻게 고칠지 적어 주세요." };
     const current = { question: cleanText(input.question), answer: cleanText(input.answer, 2000), solution: cleanText(input.solution) };
     if (!current.question.trim()) return { ok: false, error: "고칠 문제가 비어 있어요." };
-    return { ok: true, data: await editOne(current, instruction, cleanImage(input.imageB64), input.target === "solution" ? "solution" : "problem") };
+    return { ok: true, data: await editOne(current, instruction, cleanImage(input.imageB64), input.target === "solution" ? "solution" : "problem", cleanLevel(input.level)) };
   } catch (e) {
     return { ok: false, error: fail(e) };
   }

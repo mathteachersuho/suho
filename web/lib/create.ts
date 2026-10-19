@@ -1,6 +1,7 @@
 import "server-only";
 import { AiError, gemini, geminiJson } from "./ai/clients";
 import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, type EditTarget, type GenKind, type Generated, type Variation } from "./ai/prompts";
+import type { Level } from "./ai/curriculum";
 import { DIFFICULTIES } from "./difficulty";
 import { figuresToBlocks, renderFigureBlocks, shadeBehind } from "./figure";
 import { brief, fingerprint, sameProblem, type Fingerprint } from "./similar";
@@ -30,18 +31,19 @@ const drawFigures = (g: Generated): Generated => ({
   solution: shadeBehind(renderFigureBlocks(g.solution)),
 });
 
-export async function generateOne(kind: GenKind, text: string, detailed: boolean, imageB64?: string, v: Variation = {}): Promise<Generated> {
-  const out = drawFigures(parseProblem(await gemini(problemPrompt(kind, text, detailed, v), kind === 0 ? imageB64 : undefined)));
+/** level = 문제의 학년·단원·유형 (풀이를 그 학년 교육과정 안에서 쓰게) */
+export async function generateOne(kind: GenKind, text: string, detailed: boolean, imageB64?: string, v: Variation = {}, level: Level = {}): Promise<Generated> {
+  const out = drawFigures(parseProblem(await gemini(problemPrompt(kind, text, detailed, v, level), kind === 0 ? imageB64 : undefined)));
   if (!out.question.trim()) throw new AiError("빈 문제가 만들어졌어요. 다시 만들어 주세요.");
   return out;
 }
 
 /** 말로 적은 요청대로 문제 고치기 */
-export async function editOne(current: Generated, instruction: string, imageB64?: string, target: EditTarget = "problem"): Promise<Generated> {
+export async function editOne(current: Generated, instruction: string, imageB64?: string, target: EditTarget = "problem", level: Level = {}): Promise<Generated> {
   const img = target === "problem" ? imageB64 : undefined;
   // 앱이 그린 좌표 그림은 설정(<좌표그림>)으로 바꿔 보내서 AI가 좌표·식만 고치게 한다
   const asBlocks = { question: figuresToBlocks(current.question), answer: current.answer, solution: figuresToBlocks(current.solution) };
-  const out = drawFigures(parseProblem(await gemini(editPrompt(asBlocks, instruction, !!img, target), img)));
+  const out = drawFigures(parseProblem(await gemini(editPrompt(asBlocks, instruction, !!img, target, level), img)));
   // 풀이만 고칠 때는 AI가 문제를 건드렸더라도 원래 문제를 그대로 둔다
   if (target === "solution") {
     if (!out.solution.trim() && !out.answer.trim()) throw new AiError("고친 풀이가 비어 있어요. 요청을 조금 바꿔 다시 해 보세요.");
@@ -90,13 +92,15 @@ const REDO_ROUNDS = 2;
 /** AI에게 보여 줄 "은행에 이미 있는 같은 유형 문제" 수 (프롬프트가 너무 길어지지 않게) */
 const BANK_IN_PROMPT = 8;
 
-/** 원본 다시 쓰기·분류를 먼저 하고(동시에), 분류한 유형의 은행 문제를 찾은 뒤 기본 다지기 n개, 실력 키우기 m개를 동시에 만든다.
+/** 분류를 먼저 하고, 원본 다시 쓰기와 (분류한 유형의 은행 문제를 찾은 뒤) 기본 다지기 n개, 실력 키우기 m개를 동시에 만든다.
+ *  분류한 학년을 모든 문제에 알려 줘서 풀이가 그 학년 교육과정을 벗어나지 않게 한다.
  *  은행에 있는 같은 유형 문제는 AI에게 겹치지 말라고 알려 주고, 다 만든 뒤 원본·은행·다른 문제와 같은 문제가 있으면 그 칸만 다시 만든다.
  *  하나가 실패해도 나머지는 돌려준다. */
 export async function generateAll(text: string, detailed: boolean, imageB64: string | undefined, taxonomy: TaxRow[], counts: Counts = { basic: 7, advanced: 3 }) {
   const started = Date.now();
-  const p0p = Promise.allSettled([generateOne(0, text, detailed, imageB64)]).then(([r]) => r);
   const cls = await classify(text, taxonomy).catch(() => null);
+  const level: Level = cls ? { grade: cls.grade, unit: cls.unit, type: cls.type } : {};
+  const p0p = Promise.allSettled([generateOne(0, text, detailed, imageB64, {}, level)]).then(([r]) => r);
   const bank = cls
     ? await sameTypeProblems(cls).catch(async (e) => {
         await reportError("같은 유형 은행 문제 찾기", e);
@@ -105,14 +109,14 @@ export async function generateAll(text: string, detailed: boolean, imageB64: str
     : [];
   const bankBrief = bank.slice(0, BANK_IN_PROMPT).map((p) => brief(p.question));
   const many = (kind: 1 | 2, n: number) =>
-    Array.from({ length: n }, (_, i) => generateOne(kind, text, detailed, undefined, { index: i + 1, total: n, bank: bankBrief }));
+    Array.from({ length: n }, (_, i) => generateOne(kind, text, detailed, undefined, { index: i + 1, total: n, bank: bankBrief }, level));
   const [p0, basic, advanced] = await Promise.all([p0p, Promise.allSettled(many(1, counts.basic)), Promise.allSettled(many(2, counts.advanced))]);
   const card = (r: PromiseSettledResult<Generated>): CardResult =>
     r.status === "fulfilled" ? { ok: true, data: r.value } : { ok: false, error: msg(r.reason) };
   if (p0.status === "rejected") console.error("원본 다시 쓰기 실패", p0.reason);
   const original = p0.status === "fulfilled" ? p0.value : { question: text, answer: "", solution: "" };
   const cards = { 1: basic.map(card), 2: advanced.map(card) };
-  await removeDuplicates(cards, [original, { question: text, answer: original.answer }, ...bank], bankBrief, text, detailed, counts, started);
+  await removeDuplicates(cards, [original, { question: text, answer: original.answer }, ...bank], bankBrief, text, detailed, counts, started, level);
   return {
     // 원본 다시 쓰기가 실패하면 인식한 글자를 그대로 원본으로 쓴다 (Streamlit 과 같게)
     original,
@@ -134,6 +138,7 @@ async function removeDuplicates(
   detailed: boolean,
   counts: Counts,
   started: number,
+  level: Level,
 ) {
   const kept: Fingerprint[] = base.map((p) => fingerprint(p.question, p.answer));
   const made: string[] = []; // 이번에 만든 문제 (다시 만들 때 AI에게 보여 준다)
@@ -156,7 +161,7 @@ async function removeDuplicates(
     const avoid = made.slice(-12);
     const total = (kind: 1 | 2) => (kind === 1 ? counts.basic : counts.advanced);
     const again = await Promise.allSettled(
-      redo.map(({ kind, i }) => generateOne(kind, text, detailed, undefined, { index: i + 1, total: total(kind), avoid, bank: bankBrief })),
+      redo.map(({ kind, i }) => generateOne(kind, text, detailed, undefined, { index: i + 1, total: total(kind), avoid, bank: bankBrief }, level)),
     );
     const next: typeof redo = [];
     again.forEach((r, j) => {

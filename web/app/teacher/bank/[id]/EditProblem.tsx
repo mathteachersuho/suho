@@ -52,7 +52,7 @@ export default function EditProblem({
 
   const aiEdit = async (instruction: string, target: "problem" | "solution") => {
     const before = { question: v.question, answer: v.answer, solution: v.solution };
-    const r = await aiEditAction({ ...before, instruction, target });
+    const r = await aiEditAction({ ...before, instruction, target, level: v.cls });
     if (!r.ok) return r.error;
     set({ ...r.data, verified: false });
     setUndo(before);
