@@ -4,7 +4,7 @@ import { classifyStep1, classifyStep2, editPrompt, parseProblem, problemPrompt, 
 import type { Level } from "./ai/curriculum";
 import { DIFFICULTIES } from "./difficulty";
 import { outOfLevel, rewriteInstruction } from "./levelCheck";
-import { issuesInstruction, problemIssues, stripExamNumber, tidyProblem } from "./problemCheck";
+import { issuesInstruction, problemIssues, shadingIssues, stripExamNumber, tidyProblem } from "./problemCheck";
 import { figuresToBlocks, renderFigureBlocks, shadeBehind } from "./figure";
 import { brief, fingerprint, sameProblem, type Fingerprint } from "./similar";
 import { sameTypeProblems } from "./problems";
@@ -53,15 +53,22 @@ async function fitCheck(g: Generated, level: Level): Promise<Generated> {
   try {
     // 문제(그림·발문)를 고쳐야 하면 문제째, 아니면 풀이만
     const needsProblem = issues.some((s) => !s.startsWith("풀이에"));
-    return await editOne(g, asks.join("\n"), undefined, needsProblem ? "problem" : "solution", level);
+    return await editOne(g, asks.join("\n"), undefined, needsProblem ? "problem" : "solution", level, true);
   } catch (e) {
     console.error("점검 기준에 맞게 다시 쓰기 실패", e);
     return g;
   }
 }
 
-/** 말로 적은 요청대로 문제 고치기 */
-export async function editOne(current: Generated, instruction: string, imageB64?: string, target: EditTarget = "problem", level: Level = {}): Promise<Generated> {
+/** 말로 적은 요청대로 문제 고치기. noRecheck 면 고친 뒤 색칠 점검을 하지 않는다 (점검으로 고칠 때 되풀이하지 않게). */
+export async function editOne(
+  current: Generated,
+  instruction: string,
+  imageB64?: string,
+  target: EditTarget = "problem",
+  level: Level = {},
+  noRecheck = false,
+): Promise<Generated> {
   const img = target === "problem" ? imageB64 : undefined;
   // 앱이 그린 좌표 그림은 설정(<좌표그림>)으로 바꿔 보내서 AI가 좌표·식만 고치게 한다
   const asBlocks = { question: figuresToBlocks(current.question), answer: current.answer, solution: figuresToBlocks(current.solution) };
@@ -72,7 +79,15 @@ export async function editOne(current: Generated, instruction: string, imageB64?
     return { question: current.question, answer: out.answer || current.answer, solution: out.solution || current.solution };
   }
   if (!out.question.trim()) throw new AiError("고친 문제가 비어 있어요. 요청을 조금 바꿔 다시 해 보세요.");
-  return out;
+  // 고친 그림에서도 색칠이 빠지거나 A, B가 같은 색이면 한 번만 더 고친다
+  const shading = noRecheck ? [] : shadingIssues(out);
+  if (!shading.length) return out;
+  try {
+    return await editOne(out, issuesInstruction(shading), undefined, "problem", level, true);
+  } catch (e) {
+    console.error("색칠 다시 고치기 실패", e);
+    return out;
+  }
 }
 
 /** app.py classify_frame 과 같은 두 단계 분류 */
