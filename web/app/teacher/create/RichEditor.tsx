@@ -1,6 +1,7 @@
 "use client";
 
 import katex from "katex";
+import { KATEX_MACROS } from "@/lib/katexMacros";
 import { useEffect, useRef, useState } from "react";
 
 /*
@@ -45,7 +46,7 @@ function renderTex(el: HTMLElement, tex: string, display: boolean) {
     return;
   }
   el.classList.remove("re-math-empty");
-  katex.render(tex, el, { throwOnError: false, displayMode: display, strict: "ignore", output: "html" });
+  katex.render(tex, el, { throwOnError: false, displayMode: display, strict: "ignore", output: "html", macros: { ...KATEX_MACROS } });
 }
 
 function mathChip(tex: string, display: boolean) {

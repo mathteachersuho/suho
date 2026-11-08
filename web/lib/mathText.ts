@@ -1,6 +1,7 @@
 import "server-only";
 import katex from "katex";
 import sanitizeHtml from "sanitize-html";
+import { KATEX_MACROS } from "./katexMacros";
 
 /*
  * 문제 글자를 화면용 HTML로 바꾼다.
@@ -225,7 +226,7 @@ const SANITIZE: sanitizeHtml.IOptions = {
 };
 
 function renderTex(tex: string) {
-  return katex.renderToString(tex, { throwOnError: false, strict: "ignore", output: "html", trust: false });
+  return katex.renderToString(tex, { throwOnError: false, strict: "ignore", output: "html", trust: false, macros: { ...KATEX_MACROS } });
 }
 
 /** 줄바꿈을 <br> 로 (표와 그림 안은 그대로) */
