@@ -552,12 +552,15 @@ export function renderFigure(raw: unknown): string {
   // 색칠만 적고 polygons 에 없는 도형도 테두리를 그린다
   for (const sh of shadeList ?? []) if (!polyList.some((q) => key(q) === key(sh))) polyList.push(sh);
   const ptsAttr = (vs: [number, number][]) => vs.map(([a, b]) => `${fmt(a)},${fmt(b)}`).join(" ");
+  // 색칠한 도형이 여럿이면 (A, B 처럼 구별해야 하므로) 도형마다 다른 색
+  const shadeOrder = [...shaded];
   for (const poly of polyList) {
     const vs = names(poly).map(P);
     if (vs.length < 3) continue;
     polys.push(vs);
     if (shaded.has(key(poly))) {
-      back.push(`<polygon points="${ptsAttr(vs)}" fill="#7f9cf5" fill-opacity="0.25" stroke="none"/>`);
+      const color = shadeOrder.length > 1 ? SHADE_COLORS[shadeOrder.indexOf(key(poly)) % SHADE_COLORS.length] : "#7f9cf5";
+      back.push(`<polygon points="${ptsAttr(vs)}" fill="${color}" fill-opacity="${SHADE_OPACITY}" stroke="none"/>`);
     }
     parts.push(`<polygon points="${ptsAttr(vs)}" fill="none" stroke="#000000" stroke-width="1.3"/>`);
     lineBoxes([...vs, vs[0]]);
@@ -690,8 +693,13 @@ export function figuresToBlocks(text: string): string {
 
 /* ---------------- AI가 직접 그린 SVG: 색칠은 맨 뒤에 반투명하게 ---------------- */
 
+/** 색칠한 부분이 여럿일 때 쓰는 서로 잘 구별되는 색 (A, B, C … 차례로). 지시문에도 같은 색을 적는다. */
+export const SHADE_COLORS = ["#3b82f6", "#f97316", "#22c55e", "#a855f7", "#ef4444", "#eab308"];
+/** 색칠 투명도: 옅어서 안 보인다는 말이 많아 0.25 → 0.35 */
+export const SHADE_OPACITY = "0.35";
+
 const NAMED: Record<string, string> = { white: "#ffffff", black: "#000000", none: "", transparent: "" };
-/** 색칠(밝은 색·옅은 색)인지: 검정·흰색·없음은 아니다 */
+/** 색칠(밝은 색·옅은 색·회색)인지: 검정에 가까운 색(점·화살촉)·흰색·없음은 아니다 */
 function isShade(fill: string) {
   const f = fill.trim().toLowerCase();
   const hex = f in NAMED ? NAMED[f] : f;
@@ -701,28 +709,51 @@ function isShade(fill: string) {
   const h = m[1].length === 3 ? [...m[1]].map((c) => c + c).join("") : m[1];
   const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
   const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  return l > 0.3 && l < 0.97;
+  return l > 0.2 && l < 0.97;
 }
 
 const SHAPE = /<(polygon|path|rect|circle|ellipse)\b([^>]*?)\/>/g;
 const fillOf = (attrs: string) => attrs.match(/\bfill="([^"]*)"/)?.[1] ?? attrs.match(/fill\s*:\s*([^;"]+)/)?.[1] ?? "";
+/** 정의 부분(<defs>, <clipPath>, <mask>, <pattern>)은 그려지지 않으므로 색칠 처리에서 뺀다 */
+const DEFS = /(<(defs|clipPath|clippath|mask|pattern)\b[\s\S]*?<\/\2>)/;
+
+/** SVG 하나에서 칠해진 색칠 색들 (중복 없이, 소문자). 흰 바탕·검정·없음은 빼고, 정의 부분도 뺀다. */
+export function shadeColors(svg: string): string[] {
+  const body = svg.split(DEFS).filter((_, i) => i % 3 === 0).join("");
+  const out = new Set<string>();
+  for (const m of body.matchAll(/<(?:polygon|path|rect|circle|ellipse|g)\b([^>]*?)\/?>/g)) {
+    const f = fillOf(m[1]).trim().toLowerCase();
+    if (isShade(f)) out.add(f);
+  }
+  return [...out];
+}
 
 /** 색칠한 도형의 색만 SVG 맨 뒤(먼저 그리는 곳)로 옮기고 반투명하게. 테두리는 제자리에 남겨 선·글자가 가려지지 않게 한다. */
 export function shadeBehind(text: string): string {
   return text.replace(/(<svg\b[^>]*>)([\s\S]*?)(<\/svg>)/g, (all, open: string, body: string, close: string) => {
     if (/data-figure=/.test(open)) return all;
     const back: string[] = [];
-    const rest = body.replace(SHAPE, (el, tag: string, attrs: string) => {
-      if (!isShade(fillOf(attrs))) return el;
-      const plain = attrs.replace(/\s*\b(?:fill-opacity|opacity)="[^"]*"/g, "").replace(/fill\s*:\s*[^;"]+;?/g, "");
-      back.push(`<${tag}${plain.replace(/\bstroke="[^"]*"/g, "").replace(/\bstroke-width="[^"]*"/g, "")} stroke="none" fill-opacity="0.3"/>`);
-      const stroke = attrs.match(/\bstroke="([^"]*)"/)?.[1];
-      // 테두리가 있으면 제자리에 테두리만 남긴다
-      return stroke && stroke !== "none" ? `<${tag}${plain.replace(/\bfill="[^"]*"/, 'fill="none"')}/>` : "";
-    });
+    // 정의 부분(클립 경로 등)은 건드리지 않는다
+    const rest = body
+      .split(DEFS)
+      .map((seg, i) => {
+        if (i % 3 === 1) return seg;
+        if (i % 3 === 2) return "";
+        return seg.replace(SHAPE, (el, tag: string, attrs: string) => {
+          if (!isShade(fillOf(attrs))) return el;
+          const plain = attrs.replace(/\s*\b(?:fill-opacity|opacity)="[^"]*"/g, "").replace(/(?:fill-)?opacity\s*:\s*[^;"]+;?/g, "").replace(/fill\s*:\s*[^;"]+;?/g, "");
+          const fill = fillOf(attrs);
+          const filled = /\bfill="/.test(plain) ? plain : `${plain} fill="${fill.trim()}"`;
+          back.push(`<${tag}${filled.replace(/\s*\bstroke="[^"]*"/g, "").replace(/\s*\bstroke-width="[^"]*"/g, "")} stroke="none" fill-opacity="${SHADE_OPACITY}"/>`);
+          const stroke = attrs.match(/\bstroke="([^"]*)"/)?.[1];
+          // 테두리가 있으면 제자리에 테두리만 남긴다 (클립으로 잘라 칠한 조각은 테두리를 남기지 않는다)
+          return stroke && stroke !== "none" && !/\bclip-path=/.test(attrs) ? `<${tag}${filled.replace(/\bfill="[^"]*"/, 'fill="none"')}/>` : "";
+        });
+      })
+      .join("");
     if (!back.length) return all;
     // 정의(defs)와 흰 바탕 사각형 뒤, 다른 모든 것 앞에
-    const lead = rest.match(/^\s*(?:<defs\b[\s\S]*?<\/defs>\s*)?(?:<rect\b[^>]*fill="(?:#fff|#ffffff|white)"[^>]*\/>\s*)?/i)?.[0] ?? "";
+    const lead = rest.match(/^\s*(?:<(defs|clipPath|clippath|mask|pattern)\b[\s\S]*?<\/\1>\s*)*(?:<rect\b[^>]*fill="(?:#fff|#ffffff|white)"[^>]*\/>\s*)?/i)?.[0] ?? "";
     return open + lead + back.join("") + rest.slice(lead.length) + close;
   });
 }

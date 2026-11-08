@@ -1,7 +1,8 @@
 // 매일 문제 점검에서 자주 나온 실수를 만들 때 바로 잡는지 지키는 시험. 실행: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clippedTexts, problemIssues, raiseSmallFonts, stripExamNumber, tidyProblem } from "../lib/problemCheck.ts";
+import { clippedTexts, problemIssues, raiseSmallFonts, shadingIssues, stripExamNumber, tidyProblem } from "../lib/problemCheck.ts";
+import { shadeBehind, shadeColors } from "../lib/figure.ts";
 import { renderFigure } from "../lib/figure.ts";
 
 const strip: [string, string][] = [
@@ -66,4 +67,48 @@ test("좌표그림: ticks:true 면 원점 0 은 빼고 정수 눈금", () => {
   const svg = renderFigure({ x: [-5, 5], y: [-5, 5], ticks: true, grid: true });
   assert.ok(svg.includes(">−3<") && svg.includes(">4<"));
   assert.ok(!/>0</.test(svg));
+});
+
+test("색칠한 부분이 있는데 그림에 색이 없으면 고치라고 한다", () => {
+  const svg = '<svg viewBox="0 0 200 200"><rect x="10" y="10" width="100" height="100" fill="none" stroke="#000000"/><circle cx="60" cy="60" r="50" fill="none" stroke="#000"/><text x="40" y="40" font-size="14">A</text></svg>';
+  const q = `다음 그림에서 색칠한 두 부분 A와 B의 넓이의 차를 구하시오.${svg}`;
+  const issues = shadingIssues({ question: q, answer: "0", solution: "" });
+  assert.equal(issues.length, 1);
+  assert.match(issues[0], /칠한 색이 없다/);
+  assert.match(issues[0], /A는 #3b82f6/);
+  assert.match(issues[0], /B는 #f97316/);
+  // problemIssues 에도 들어간다
+  assert.ok(problemIssues({ question: q, answer: "0", solution: "" }).some((s) => s.includes("칠한 색이 없다")));
+});
+
+test("A, B가 같은 색이면 다른 색으로 칠하라고 한다", () => {
+  const svg =
+    '<svg viewBox="0 0 200 200"><path d="M0,0 L50,0 L50,50 Z" fill="#3b82f6" fill-opacity="0.35"/><path d="M60,0 L90,0 L90,50 Z" fill="#3b82f6" fill-opacity="0.35"/></svg>';
+  const issues = shadingIssues({ question: `색칠한 두 부분 A와 B의 넓이의 차를 구하시오.${svg}`, answer: "", solution: "" });
+  assert.equal(issues.length, 1);
+  assert.match(issues[0], /같은 색/);
+});
+
+test("색이 제대로 칠해졌거나 색칠 말이 없으면 그대로", () => {
+  const svg =
+    '<svg viewBox="0 0 200 200"><defs><clipPath id="c1"><circle cx="90" cy="80" r="60" fill="#ffcc00"/></clipPath></defs><path d="M0,0 L50,0 Z" fill="#3b82f6" fill-opacity="0.35" clip-path="url(#c1)"/><circle cx="150" cy="80" r="60" fill="#f97316" fill-opacity="0.35"/></svg>';
+  assert.deepEqual(shadingIssues({ question: `색칠한 두 부분 A와 B의 넓이의 차를 구하시오.${svg}`, answer: "", solution: "" }), []);
+  assert.deepEqual(shadingIssues({ question: `점 A와 B 사이의 거리를 구하시오.<svg viewBox="0 0 9 9"><line x1="0" y1="0" x2="9" y2="9" stroke="#000"/></svg>`, answer: "", solution: "" }), []);
+  // 좌표그림(앱이 그린 그림)의 색도 센다
+  const fig = '<svg data-figure="{}" viewBox="0 0 9 9"><polygon points="0,0 1,0 1,1" fill="#7f9cf5" fill-opacity="0.35" stroke="none"/></svg>';
+  assert.deepEqual(shadingIssues({ question: `색칠한 부분의 넓이를 구하시오.${fig}`, answer: "", solution: "" }), []);
+});
+
+test("shadeColors 는 clipPath 안의 색은 세지 않는다", () => {
+  assert.deepEqual(shadeColors('<svg><defs><clipPath id="a"><rect fill="#ff0000"/></clipPath></defs><rect fill="none" stroke="#000"/></svg>'), []);
+  assert.deepEqual(shadeColors('<svg><rect fill="#FF8800"/><rect fill="#000000"/><rect fill="#ffffff"/></svg>'), ["#ff8800"]);
+});
+
+test("shadeBehind 는 clipPath 정의는 그대로 두고 칠한 도형만 맨 뒤로 옮긴다", () => {
+  const svg =
+    '<svg viewBox="0 0 9 9"><defs><clipPath id="c1"><circle cx="4" cy="4" r="3"/></clipPath></defs><line x1="0" y1="0" x2="9" y2="9" stroke="#000"/><rect x="0" y="0" width="9" height="9" fill="#f97316" stroke="#000" clip-path="url(#c1)"/></svg>';
+  const out = shadeBehind(svg);
+  assert.match(out, /<defs><clipPath id="c1"><circle cx="4" cy="4" r="3"\/><\/clipPath><\/defs><rect[^>]*fill="#f97316"[^>]*clip-path="url\(#c1\)"[^>]*fill-opacity="0.35"\/><line/);
+  // 클립으로 잘라 칠한 조각은 테두리를 남기지 않는다
+  assert.equal(out.match(/<rect/g)?.length, 1);
 });

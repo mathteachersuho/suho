@@ -1,9 +1,11 @@
 /*
  * AI가 만든 문제를 저장하기 전에 글자로 검사한다. 매일 문제 점검에서 자주 나온 실수만 찾는다.
  * - 코드로 바로 고칠 수 있는 것(시험지 문항 번호, 너무 작은 그림 글자)은 tidyProblem 이 고친다.
- * - AI가 다시 써야 하는 것(그림 밖으로 잘린 글자, 객관식인데 '구하시오', 풀이에서 빠진 보기 판단)은 problemIssues 가 찾는다.
+ * - AI가 다시 써야 하는 것(그림 밖으로 잘린 글자, 색칠이 빠진 그림, 객관식인데 '구하시오', 풀이에서 빠진 보기 판단)은 problemIssues 가 찾는다.
  * 확실한 경우만 찾으므로 못 찾는 경우도 있다. 이미 저장된 문제는 바꾸지 않는다.
  */
+
+import { shadeColors } from "./figure.ts";
 
 export type ProblemText = { question: string; answer: string; solution: string };
 
@@ -83,12 +85,42 @@ export function problemIssues(g: ProblemText): string[] {
   const ask = g.question.replace(/<svg\b[\s\S]*?<\/svg>/g, "");
   if (CHOICES.test(ask) && /(구하시오|쓰시오|서술하시오)\s*\.?\s*(\(단[^)]*\))?$/.test(ask.split(/[①②③④⑤]/)[0].trim()))
     issues.push("보기(①~⑤)가 있는 객관식인데 발문이 '구하시오/쓰시오'로 끝난다. 보기는 그대로 두고 발문만 '~은?'처럼 객관식으로 바꿔라.");
+  issues.push(...shadingIssues(g));
   const items = judgeItems(ask);
   if (items.length >= 2) {
     const missing = items.filter((c) => !g.solution.includes(c));
     if (missing.length) issues.push(`풀이에 보기 ${missing.join(", ")}의 판단이 빠졌다. 풀이에서 보기마다 옳은지 옳지 않은지 하나씩 밝히고, 마지막 줄에 결론을 써라.`);
   }
   return issues;
+}
+
+/** 지문이 색칠한 부분을 말하는지 */
+const SHADE_WORDS = /색칠|칠한|어두운\s*부분|빗금|음영/;
+/** 이름 붙은 부분들 ('두 부분 A와 B', '부분 A, B, C', 'A와 B의 넓이') */
+function shadedNames(ask: string): string[] {
+  const m =
+    ask.match(/부분\s*([A-Z](?:\s*(?:와|과|,|및)\s*[A-Z])+)/) ?? ask.match(/([A-Z](?:\s*(?:와|과|,)\s*[A-Z])+)\s*의\s*넓이/);
+  return m ? [...new Set(m[1].match(/[A-Z]/g) ?? [])] : [];
+}
+
+/** 색칠 점검: 지문에 색칠한 부분이 있는데 그림에 색이 없거나, 이름이 다른 부분이 같은 색이면 고칠 요청 */
+export function shadingIssues(g: ProblemText): string[] {
+  const ask = g.question.replace(/<svg\b[\s\S]*?<\/svg>/g, "");
+  if (!SHADE_WORDS.test(ask)) return [];
+  const svgs = [...g.question.matchAll(/<svg\b[\s\S]*?<\/svg>/g)].map((m) => m[0]);
+  const fix = "칠하는 부분은 경계(원·호는 path의 A 명령, 겹친 부분은 clipPath, 뺀 부분은 fill-rule=\"evenodd\")를 정확히 따라 칠하고, 부분 이름 글자는 그 부분 안쪽 가운데에 놓아라. 점·선의 위치와 숫자·조건·정답은 바꾸지 마라.";
+  if (!svgs.length) return /그림/.test(ask) ? [`지문에 그림과 색칠한 부분이 있는데 그림이 없다. 지문에 맞는 그림을 SVG로 그리고 색칠한 부분을 #3b82f6(fill-opacity 0.35)로 칠하라. ${fix}`] : [];
+  const colors = new Set(svgs.flatMap(shadeColors));
+  const names = shadedNames(ask);
+  if (!colors.size)
+    return [
+      `지문에 색칠한 부분${names.length ? `(${names.join(", ")})` : ""}이 있는데 그림에 칠한 색이 없다. ${
+        names.length > 1 ? `${names.map((n, i) => `${n}는 ${["#3b82f6", "#f97316", "#22c55e", "#a855f7"][i % 4]}`).join(", ")}로` : "색칠한 부분을 #3b82f6로"
+      } fill-opacity="0.35"로 칠하라. ${fix}`,
+    ];
+  if (names.length > 1 && colors.size < names.length)
+    return [`색칠한 부분 ${names.join(", ")}가 서로 같은 색이라 구별되지 않는다. ${names.map((n, i) => `${n}는 ${["#3b82f6", "#f97316", "#22c55e", "#a855f7"][i % 4]}`).join(", ")}로 서로 다른 색으로 칠하라. ${fix}`];
+  return [];
 }
 
 /** AI에게 고치라고 보낼 요청 하나로 묶는다 */

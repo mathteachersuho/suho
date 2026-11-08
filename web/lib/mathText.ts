@@ -188,6 +188,8 @@ export function formatMath(input: string): string {
 const SVG_TAGS = [
   "svg", "g", "path", "line", "polyline", "polygon", "rect", "circle", "ellipse", "text", "tspan",
   "defs", "marker", "use", "title", "lineargradient", "radialgradient", "stop", "pattern", "clippath",
+  // 살균기는 태그 이름을 소문자로 바꾸지 않아 clipPath 가 지워졌다 (색칠을 클립으로 그리므로 원래 이름도 허용)
+  "clipPath", "linearGradient", "radialGradient",
 ];
 const HTML_TAGS = ["div", "span", "p", "br", "b", "strong", "i", "em", "u", "sup", "sub", "table", "thead", "tbody", "tr", "td", "th"];
 const ALLOWED_TAGS = [...HTML_TAGS, ...SVG_TAGS];
@@ -197,8 +199,23 @@ const SVG_ATTRS = [
   "stroke-opacity", "opacity", "transform", "font-size", "font-family", "font-weight", "font-style", "text-anchor",
   "dominant-baseline", "alignment-baseline", "dx", "dy", "id", "marker-end", "marker-start", "marker-mid", "markerwidth",
   "markerheight", "refx", "refy", "orient", "markerunits", "offset", "stop-color", "stop-opacity", "gradientunits",
-  "patternunits", "clip-path", "letter-spacing",
+  "patternunits", "clip-path", "letter-spacing", "fill-rule", "clip-rule", "clippathunits",
 ];
+
+/** 한 화면에 그림이 여러 개면 id(클립 경로·화살촉)가 겹쳐 다른 문제의 것을 쓰게 된다. 그림마다 내용으로 만든 앞말을 붙인다. */
+export function scopeSvgIds(text: string): string {
+  return text.replace(/<svg\b[\s\S]*?<\/svg>/g, (svg) => {
+    const ids = [...svg.matchAll(/\bid="([\w-]+)"/g)].map((m) => m[1]);
+    if (!ids.length) return svg;
+    let h = 0;
+    for (let i = 0; i < svg.length; i++) h = (h * 31 + svg.charCodeAt(i)) | 0;
+    const pre = "f" + (h >>> 0).toString(36) + "-";
+    const set = new Set(ids);
+    return svg
+      .replace(/\bid="([\w-]+)"/g, (m, id: string) => `id="${pre}${id}"`)
+      .replace(/url\(\s*#([\w-]+)\s*\)/g, (m, id: string) => (set.has(id) ? `url(#${pre}${id})` : m));
+  });
+}
 // 알려진 태그가 아닌 '<' 는 글자로 바꾼다 (x<y 같은 부등호가 태그로 오해받아 사라지지 않도록)
 const STRAY_LT = new RegExp(`<(?!/?(?:${ALLOWED_TAGS.join("|")})\\b)`, "gi");
 const BAD_STYLE = /url\s*\(|expression\s*\(|javascript:|@import/i;
@@ -240,7 +257,7 @@ function breakLines(html: string) {
 /** 문제 글자 → 안전한 화면용 HTML (수식은 KaTeX로 그린 결과) */
 export function renderProblemHtml(input: string): string {
   if (!input) return "";
-  let text = formatMath(input);
+  let text = scopeSvgIds(formatMath(input));
   text = text.replace(/\\\(([\s\S]+?)\\\)/g, (_m, a: string) => "$" + a + "$");
 
   // 수식 부분을 표시로 바꿔 두고 나머지 HTML 만 살균한다
