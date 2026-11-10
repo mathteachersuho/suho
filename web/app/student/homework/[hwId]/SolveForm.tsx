@@ -76,7 +76,7 @@ export default function SolveForm({ hwId, problems }: { hwId: string; problems: 
     if (!blanks && !confirm("한 번 내면 고칠 수 없어요. 낼까요?")) return;
     setError("");
     start(async () => {
-      const r = await submitAction(hwId, answers, sentSlots);
+      const r = await submitAction(hwId, answers, sentSlots, problems.map((p) => p.id));
       if (r.ok) {
         write(store, null);
         write(slotStore, null);

@@ -6,7 +6,9 @@ import { IconArrow, IconPrinter } from "@/components/Icons";
 import { getHomework, homeworkRepeats } from "@/lib/homework";
 import { dueLabel } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
+import { bankOutline } from "@/lib/problems";
 import DeleteHomework from "./DeleteHomework";
+import EditProblems from "./EditProblems";
 import MarkGrid from "./MarkGrid";
 
 export const metadata: Metadata = { title: "숙제 현황 · 수학클래스룸" };
@@ -18,6 +20,9 @@ export default async function HomeworkDetail({ params, searchParams }: PageProps
   if (!data) notFound();
   const { hw, problems, students, results } = data;
   const submitted = new Set(results.map((r) => r.studentId)).size;
+  // 결과 줄(학생 제출이나 선생님 채점)이 하나도 없으면 아직 아무도 안 푼 숙제라 문제를 고칠 수 있다
+  const editable = results.length === 0;
+  const outline = editable ? await bankOutline() : [];
 
   return (
     <div className="space-y-6 pb-10">
@@ -69,6 +74,18 @@ export default async function HomeworkDetail({ params, searchParams }: PageProps
 
       <section className="space-y-3">
         <h2 className="font-semibold">문제와 정답</h2>
+        {editable ? (
+          <EditProblems
+            // 저장한 뒤에는 새 문제 목록으로 다시 시작한다
+            key={problems.map((p) => p.id).join(",")}
+            hwId={hw.hwId}
+            studentIds={students.map((s) => s.studentId)}
+            outline={outline}
+            initial={problems.map((p) => ({ id: p.id, tag: [p.type, p.frame].filter(Boolean).join(" · "), difficulty: p.difficulty, html: renderProblemHtml(p.question) }))}
+          />
+        ) : (
+          <p className="text-sm text-ink-soft">푼 학생이 있어서 문제는 바꿀 수 없어요.</p>
+        )}
         <ol className="space-y-3">
           {problems.map((p, i) => (
             <li key={p.id} className="card p-4 sm:p-5">

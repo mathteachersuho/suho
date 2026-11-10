@@ -9,9 +9,9 @@ export const metadata: Metadata = { title: "학습지 · 수학클래스룸" };
 
 const MAX = 60;
 const list = (raw: string | string[] | undefined) => [...new Set((Array.isArray(raw) ? raw.join(",") : raw || "").split(",").map((s) => s.trim()).filter(Boolean))];
-const toItem = (p: { id: string; type: string; frame: string; difficulty: string; question: string; answer: string; solution: string }): SheetItem => ({
+// 학생이 받는 학습지라 문제 번호 옆에 유형·난이도는 쓰지 않는다
+const toItem = (p: { id: string; question: string; answer: string; solution: string }): SheetItem => ({
   id: p.id,
-  tag: [p.type, p.frame, p.difficulty].filter(Boolean).join(" · "),
   question: renderProblemHtml(p.question),
   answer: renderProblemHtml(p.answer),
   solution: renderProblemHtml(p.solution),

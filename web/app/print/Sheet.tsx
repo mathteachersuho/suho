@@ -7,7 +7,6 @@ import { IconArrow, IconDown, IconPrinter, IconUp, IconX } from "@/components/Ic
 
 export type SheetItem = {
   id: string;
-  tag: string;
   question: string;
   answer: string;
   solution: string;
@@ -301,7 +300,6 @@ function SetPages({
         <div className="sheet-fit" style={zoom && zoom !== 1 ? { zoom } : undefined}>
           <p className="sheet-no">
             {no}
-            {it.tag && <span>{it.tag}</span>}
           </p>
           <div className="problem-body" dangerouslySetInnerHTML={{ __html: it.question }} />
         </div>

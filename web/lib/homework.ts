@@ -174,6 +174,26 @@ export async function getHomework(hwId: string) {
   };
 }
 
+/**
+ * 선생님: 아직 아무도 풀지 않은 숙제의 문제와 순서를 바꾼다. 결과 줄(학생 제출이나 선생님 채점)이 하나라도 있으면 바꾸지 않는다.
+ * 숙제 줄을 잠가서 학생 제출(for share)과 겹치지 않게 한다.
+ */
+export async function setHomeworkProblems(hwId: string, problemIds: string[]): Promise<{ ok: true } | { ok: false; error: string }> {
+  const sql = db();
+  return sql.begin(async (tx) => {
+    const [h] = await tx`select 1 from homework where hw_id = ${hwId} for update`;
+    if (!h) return { ok: false as const, error: "숙제를 찾지 못했어요." };
+    const [done] = await tx`select 1 from hw_results where hw_id = ${hwId} limit 1`;
+    if (done) return { ok: false as const, error: "이미 푼 학생이 있어서 문제를 바꿀 수 없어요." };
+    const ok = new Set((await tx`select id from problems where id = any(${problemIds})`).map((r) => r.id as string));
+    const problems = [...new Set(problemIds)].filter((p) => ok.has(p));
+    if (!problems.length) return { ok: false as const, error: "숙제에 문제가 하나는 있어야 해요." };
+    await tx`delete from homework_problems where hw_id = ${hwId}`;
+    await tx`insert into homework_problems ${tx(problems.map((problem_id, i) => ({ hw_id: hwId, problem_id, position: i + 1 })))}`;
+    return { ok: true as const };
+  });
+}
+
 export async function deleteHomework(hwId: string) {
   await db()`delete from homework where hw_id = ${hwId}`;
 }
@@ -183,6 +203,7 @@ export async function markResults(hwId: string, marks: { studentId: string; prob
   if (!marks.length) return 0;
   const sql = db();
   return sql.begin(async (tx) => {
+    await tx`select 1 from homework where hw_id = ${hwId} for share`; // 문제 고치기와 겹치지 않게
     // 이 숙제에 실제로 있는 학생·문제만
     const okS = new Set((await tx`select student_id from homework_students where hw_id = ${hwId}`).map((r) => r.student_id as string));
     const okP = new Set((await tx`select problem_id from homework_problems where hw_id = ${hwId}`).map((r) => r.problem_id as string));
@@ -272,6 +293,7 @@ export async function submitHomework(
   hwId: string,
   answers: Record<string, string>,
   slots: Record<string, string[]> = {},
+  shown?: string[],
 ): Promise<{ ok: true; correct: number; total: number } | { ok: false; error: string }> {
   const sql = db();
   return sql.begin(async (tx) => {
@@ -281,8 +303,13 @@ export async function submitHomework(
     await tx`select pg_advisory_xact_lock(hashtext(${hwId + "/" + studentId}))`;
     const [done] = await tx`select 1 from hw_results where hw_id = ${hwId} and student_id = ${studentId} limit 1`;
     if (done) return { ok: false as const, error: "이미 낸 숙제예요." };
+    // 선생님이 숙제 문제를 고치는 중이면 끝날 때까지 기다린다 (고치기는 for update)
+    await tx`select 1 from homework where hw_id = ${hwId} for share`;
     const probs = await tx`
       select p.id, p.answer from homework_problems hp join problems p on p.id = hp.problem_id where hp.hw_id = ${hwId}`;
+    // 학생이 푸는 사이 선생님이 문제를 바꿨으면 받지 않는다 (쓰던 답은 기기에 남아 있으니 새로고침 뒤 다시 내면 된다)
+    if (shown && (shown.length !== probs.length || probs.some((p) => !shown.includes(p.id as string))))
+      return { ok: false as const, error: "선생님이 숙제 문제를 바꿨어요. 화면을 새로고침한 뒤 다시 내 주세요." };
     const rows = probs.map((p) => {
       const base = { hw_id: hwId, student_id: studentId, problem_id: p.id as string, graded_by: "auto" };
       // 숫자만 넣는 답 틀로 낸 답은 빈칸 숫자를 정답 숫자와 비교한다 (꼴만 다르거나 판단이 어려우면 '?')
