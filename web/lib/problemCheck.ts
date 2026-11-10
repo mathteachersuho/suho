@@ -1,7 +1,7 @@
 /*
  * AI가 만든 문제를 저장하기 전에 글자로 검사한다. 매일 문제 점검에서 자주 나온 실수만 찾는다.
- * - 코드로 바로 고칠 수 있는 것(시험지 문항 번호, 너무 작은 그림 글자)은 tidyProblem 이 고친다.
- * - AI가 다시 써야 하는 것(그림 밖으로 잘린 글자, 색칠이 빠진 그림, 객관식인데 '구하시오', 풀이에서 빠진 보기 판단)은 problemIssues 가 찾는다.
+ * - 코드로 바로 고칠 수 있는 것(시험지 문항 번호, 너무 작은 그림 글자, 길이 글자의 흰 테두리)은 tidyProblem 이 고친다.
+ * - AI가 다시 써야 하는 것(그림 밖으로 잘린 글자, 색칠이 빠진 그림, 점선 호 없이 떠 있는 길이 글자, 객관식인데 '구하시오', 풀이에서 빠진 보기 판단)은 problemIssues 가 찾는다.
  * 확실한 경우만 찾으므로 못 찾는 경우도 있다. 이미 저장된 문제는 바꾸지 않는다.
  */
 
@@ -35,9 +35,32 @@ export function raiseSmallFonts(text: string): string {
   });
 }
 
+/** 길이를 나타내는 그림 글자 ('3 cm', '7.5cm', 'x cm', '2a m') */
+export const LENGTH_TEXT = /^\s*(?:\d+(?:\.\d+)?\s*|\d*[a-z]\s+)(?:mm|cm|m|km)\s*$/;
+const HALO = ' stroke="#ffffff" stroke-width="5" stroke-linejoin="round" paint-order="stroke"';
+
+/** AI가 직접 그린 SVG의 길이 글자에 흰 테두리를 넣어, 글자와 겹치는 점선 호 부분이 지워져 보이게 한다 */
+export function haloLengthTexts(text: string): string {
+  return text.replace(/<svg\b[^>]*>[\s\S]*?<\/svg>/g, (svg) => {
+    if (/^<svg\b[^>]*data-figure=/.test(svg)) return svg;
+    return svg.replace(/<text\b([^>]*)>([^<]*)<\/text>/g, (m, tag: string, body: string) =>
+      LENGTH_TEXT.test(body.replace(/&nbsp;|\u00a0/g, " ")) && !/\bstroke\s*=/.test(tag) ? `<text${tag}${HALO}>${body}</text>` : m,
+    );
+  });
+}
+
 /** 코드로 바로 고칠 수 있는 것을 고친다 */
 export function tidyProblem<T extends ProblemText>(g: T): T {
-  return { ...g, question: raiseSmallFonts(stripExamNumber(g.question)), solution: raiseSmallFonts(g.solution) };
+  const fix = (t: string) => haloLengthTexts(raiseSmallFonts(t));
+  return { ...g, question: fix(stripExamNumber(g.question)), solution: fix(g.solution) };
+}
+
+/** 길이 글자가 있는데 점선 호(점선 path·polyline)가 없는 직접 그린 SVG의 길이 글자들 */
+export function lengthsWithoutArc(svg: string): string[] {
+  const texts = [...svg.matchAll(/<text\b[^>]*>([^<]*)<\/text>/g)].map((m) => m[1].replace(/&nbsp;|\u00a0/g, " ").trim()).filter((t) => LENGTH_TEXT.test(t));
+  if (!texts.length) return [];
+  const dashedCurve = /<(?:path|polyline)\b[^>]*stroke-dasharray/.test(svg);
+  return dashedCurve ? [] : texts;
 }
 
 const attr = (tag: string, name: string) => tag.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`))?.[1] ?? tag.match(new RegExp(`${name}\\s*:\\s*([^;"]+)`))?.[1];
@@ -81,6 +104,11 @@ export function problemIssues(g: ProblemText): string[] {
   if (clipped.length)
     issues.push(
       `그림의 글자(${clipped.slice(0, 4).map((t) => `'${t}'`).join(", ")})가 그림(viewBox) 밖으로 나가 잘린다. 점·선의 위치는 그대로 두고, viewBox를 넓히거나 글자 위치를 옮겨 모든 글자가 그림 안에 들어오게 고쳐라.`,
+    );
+  const noArc = rawSvgs(g.question).flatMap(lengthsWithoutArc);
+  if (noArc.length)
+    issues.push(
+      `그림의 길이 글자(${noArc.slice(0, 4).map((t) => `'${t}'`).join(", ")})가 변 옆에 떠 있다. 규칙 2-3대로 그 변의 두 끝점을 잇는 점선 호(path Q, stroke-dasharray)를 도형 바깥쪽으로 휘게 그리고, 글자는 호 가운데에 흰 테두리(paint-order="stroke")로 놓아라. 도형·점의 위치와 숫자는 바꾸지 마라.`,
     );
   const ask = g.question.replace(/<svg\b[\s\S]*?<\/svg>/g, "");
   if (CHOICES.test(ask) && /(구하시오|쓰시오|서술하시오)\s*\.?\s*(\(단[^)]*\))?$/.test(ask.split(/[①②③④⑤]/)[0].trim()))

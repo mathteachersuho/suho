@@ -1,7 +1,7 @@
 // 매일 문제 점검에서 자주 나온 실수를 만들 때 바로 잡는지 지키는 시험. 실행: npm test
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clippedTexts, problemIssues, raiseSmallFonts, shadingIssues, stripExamNumber, tidyProblem } from "../lib/problemCheck.ts";
+import { clippedTexts, haloLengthTexts, lengthsWithoutArc, problemIssues, raiseSmallFonts, shadingIssues, stripExamNumber, tidyProblem } from "../lib/problemCheck.ts";
 import { shadeBehind, shadeColors } from "../lib/figure.ts";
 import { renderFigure } from "../lib/figure.ts";
 
@@ -111,4 +111,43 @@ test("shadeBehind 는 clipPath 정의는 그대로 두고 칠한 도형만 맨 �
   assert.match(out, /<defs><clipPath id="c1"><circle cx="4" cy="4" r="3"\/><\/clipPath><\/defs><rect[^>]*fill="#f97316"[^>]*clip-path="url\(#c1\)"[^>]*fill-opacity="0.35"\/><line/);
   // 클립으로 잘라 칠한 조각은 테두리를 남기지 않는다
   assert.equal(out.match(/<rect/g)?.length, 1);
+});
+
+test("길이 글자에는 흰 테두리를 넣어 겹친 점선 호를 지우고, 다른 글자와 앱 그림은 그대로 둔다", () => {
+  const svg = '<svg viewBox="0 0 9 9"><text x="1" y="1">3 cm</text><text x="1" y="1">A</text><text x="2" y="2">x cm</text></svg>';
+  const out = haloLengthTexts(svg);
+  assert.equal((out.match(/paint-order="stroke"/g) ?? []).length, 2);
+  assert.match(out, /<text x="1" y="1">A<\/text>/);
+  assert.equal(haloLengthTexts(out), out); // 두 번 넣지 않는다
+  const app = '<svg viewBox="0 0 9 9" data-figure="{}"><text>3 cm</text></svg>';
+  assert.equal(haloLengthTexts(app), app);
+  assert.equal(haloLengthTexts('<svg><text>km</text></svg>'), '<svg><text>km</text></svg>');
+});
+
+test("점선 호 없이 떠 있는 길이 글자를 찾는다", () => {
+  const bare = '<svg width="200" height="200" viewBox="0 0 200 200"><rect x="80" y="40" width="60" height="140" fill="none" stroke="#000"/><text x="40" y="110">7 cm</text></svg>';
+  assert.deepEqual(lengthsWithoutArc(bare), ["7 cm"]);
+  assert.ok(problemIssues({ question: `그림의 직사각형 ${bare}`, answer: "1", solution: "" }).some((s) => s.includes("점선 호")));
+  const withArc = bare.replace("<text", '<path d="M 80,40 Q 28,110 80,180" fill="none" stroke="#000" stroke-dasharray="3 2.5"/><text');
+  assert.deepEqual(lengthsWithoutArc(withArc), []);
+});
+
+test("좌표그림 lengths: 점선 호를 도형 바깥쪽에 그리고 글자 자리는 끊는다", () => {
+  const svg = renderFigure({
+    axes: false,
+    points: [{ name: "A", x: 0, y: 7 }, { name: "B", x: 3, y: 7 }, { name: "C", x: 3, y: 0 }, { name: "D", x: 0, y: 0 }],
+    polygons: ["ABCD"],
+    lengths: [["A", "B", "3 cm"], { from: "D", to: "A", label: "7 cm" }],
+  } as never);
+  const arcs = [...svg.matchAll(/<polyline points="([^"]*)"[^>]*stroke-dasharray/g)].map((m) => m[1].split(" ").map((p) => p.split(",").map(Number)));
+  assert.equal(arcs.length, 4); // 호 두 개가 글자 자리에서 둘씩 끊긴다
+  const rect = svg.match(/<polygon points="([^"]*)" fill="none"/)![1].split(" ").map((p) => p.split(",").map(Number));
+  const top = Math.min(...rect.map((p) => p[1]));
+  const left = Math.min(...rect.map((p) => p[0]));
+  // 3 cm 호는 윗변 위로, 7 cm 호는 왼변 왼쪽으로 (도형과 겹치지 않게)
+  assert.ok(arcs.slice(0, 2).flat().every(([, y]) => y <= top + 0.01));
+  assert.ok(arcs.slice(2).flat().every(([x]) => x <= left + 0.01));
+  assert.match(svg, />3 cm</);
+  assert.match(svg, />7 cm</);
+  assert.throws(() => renderFigure({ axes: false, points: [{ name: "A", x: 0, y: 0 }], lengths: [["A", "Z", "1"]] } as never), /점 Z/);
 });

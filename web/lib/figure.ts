@@ -29,6 +29,9 @@ export type FigureSpec = {
   lines?: [number, number][][];
   /** 꺾은선 꼭짓점·점에서 눈금까지 점선 보조선 */
   guides?: boolean;
+  /** 길이 표시: 두 점 사이를 도형 바깥쪽으로 휘는 점선 호로 잇고, 글자는 호 가운데에 (글자 자리의 호는 끊는다).
+   *  ["A","B","7 cm"] 또는 {"from":"A","to":"B","label":"7 cm","flip":true} (flip: 반대쪽으로) */
+  lengths?: ([string, string, string] | { from: string; to: string; label: string; flip?: boolean })[];
 };
 
 /* ---------------- 식 계산 (eval 없이) ---------------- */
@@ -327,6 +330,81 @@ function autoRange(v: unknown, vals: number[], fallback: [number, number]): [num
   return [lo - m, hi + m];
 }
 
+/** 길이 표시 하나: 점선 호 조각들(글자 자리는 빠짐), 호 전체, 글자와 글자 상자 (여백 없는 화면 좌표) */
+type DimMark = { pieces: [number, number][][]; arc: [number, number][]; box: Box; label: Label };
+
+/**
+ * 길이 표시(lengths)를 계산한다. 두 점을 잇는 2차 곡선(점선 호)을 도형 바깥쪽으로 휘게 그리고,
+ * 글자는 호의 가운데(가장 볼록한 곳)에 놓는다. 글자 상자와 겹치는 호 부분은 빼서 글자가 깨끗이 보이게 한다.
+ * 호의 높이는 글자가 도형 변에 닿지 않을 만큼 잡는다.
+ */
+function lengthMarks(spec: FigureSpec, pts: Pt[], U: (x: number) => number, V: (y: number) => number): DimMark[] {
+  const list = (Array.isArray(spec.lengths) ? spec.lengths : []).slice(0, 12);
+  if (!list.length) return [];
+  const at = new Map(pts.filter((q) => q.name).map((q) => [q.name, [U(q.x), V(q.y)] as [number, number]]));
+  const polyNames = [...(Array.isArray(spec.polygons) ? spec.polygons : []), ...(Array.isArray(spec.shade) ? spec.shade : [])].map((v) =>
+    Array.isArray(v) ? v.map(String) : [...String(v)].filter((c) => at.has(c)),
+  );
+  const centroid = (ns: string[]) => {
+    const vs = ns.map((n) => at.get(n)).filter((v): v is [number, number] => !!v);
+    return vs.length ? ([vs.reduce((s, v) => s + v[0], 0) / vs.length, vs.reduce((s, v) => s + v[1], 0) / vs.length] as [number, number]) : null;
+  };
+  const all = centroid([...at.keys()]);
+  const out: DimMark[] = [];
+  for (const raw of list) {
+    const r = raw as unknown;
+    const [a, b, text, flip] = Array.isArray(r)
+      ? [String(r[0] ?? ""), String(r[1] ?? ""), r[2], false]
+      : r && typeof r === "object"
+        ? [String((r as { from?: unknown }).from ?? ""), String((r as { to?: unknown }).to ?? ""), (r as { label?: unknown }).label, !!(r as { flip?: unknown }).flip]
+        : ["", "", "", false];
+    const A = at.get(a);
+    const B = at.get(b);
+    if (!A || !B) throw new Error(`길이 표시의 점 ${!A ? a : b}이 없어요`);
+    const label = makeLabel(text, 16);
+    if (!label) continue;
+    const dx = B[0] - A[0];
+    const dy = B[1] - A[1];
+    const len = Math.hypot(dx, dy);
+    if (len < 4) continue;
+    const M: [number, number] = [(A[0] + B[0]) / 2, (A[1] + B[1]) / 2];
+    // 바깥쪽: 이 변을 가진 다각형의 가운데 반대쪽 (없으면 모든 점의 가운데 반대쪽, 그것도 애매하면 위·왼쪽)
+    const edgeOf = polyNames.find((ns) => ns.some((n, i) => { const m = ns[(i + 1) % ns.length]; return (n === a && m === b) || (n === b && m === a); }));
+    const holder = edgeOf ?? polyNames.find((ns) => ns.includes(a) && ns.includes(b));
+    const c = (holder && centroid(holder)) || all;
+    let n: [number, number] = [dy / len, -dx / len];
+    const side = c ? (M[0] - c[0]) * n[0] + (M[1] - c[1]) * n[1] : 0;
+    if (Math.abs(side) > 0.5 ? side < 0 : n[1] > 0 || (n[1] === 0 && n[0] > 0)) n = [-n[0], -n[1]];
+    if (flip) n = [-n[0], -n[1]];
+    // 글자 상자가 호 꼭대기에 놓였을 때 변 쪽으로 튀어나오는 길이만큼 호를 높인다
+    const reach = (Math.abs(n[0]) * label.w) / 2 + (Math.abs(n[1]) * label.h) / 2;
+    const sag = Math.max(len * 0.14, reach + 6, 10);
+    const ctl: [number, number] = [M[0] + n[0] * sag * 2, M[1] + n[1] * sag * 2];
+    const top: [number, number] = [M[0] + n[0] * sag, M[1] + n[1] * sag];
+    const box = { x1: top[0] - label.w / 2, y1: top[1] - label.h / 2, x2: top[0] + label.w / 2, y2: top[1] + label.h / 2 };
+    const gap = { x1: box.x1 - 3, y1: box.y1 - 3, x2: box.x2 + 3, y2: box.y2 + 3 };
+    const N = Math.max(24, Math.ceil(len / 2));
+    const arc: [number, number][] = [];
+    for (let k = 0; k <= N; k++) {
+      const t = k / N;
+      const s = 1 - t;
+      arc.push([s * s * A[0] + 2 * s * t * ctl[0] + t * t * B[0], s * s * A[1] + 2 * s * t * ctl[1] + t * t * B[1]]);
+    }
+    const inGap = (q: [number, number]) => q[0] > gap.x1 && q[0] < gap.x2 && q[1] > gap.y1 && q[1] < gap.y2;
+    const pieces: [number, number][][] = [];
+    let cur: [number, number][] = [];
+    for (const q of arc) {
+      if (inGap(q)) {
+        if (cur.length > 1) pieces.push(cur);
+        cur = [];
+      } else cur.push(q);
+    }
+    if (cur.length > 1) pieces.push(cur);
+    out.push({ pieces, arc, box, label });
+  }
+  return out;
+}
+
 /** 설정 → SVG. 설정이 잘못됐으면 오류를 던진다. */
 export function renderFigure(raw: unknown): string {
   if (!raw || typeof raw !== "object") throw new Error("그림 설정이 비어 있어요");
@@ -344,16 +422,19 @@ export function renderFigure(raw: unknown): string {
     kx = W / rx;
     ky = W / ry;
   }
+  // 길이 표시 (점선 호): 그림 여백을 정하기 전에 호와 글자 자리를 먼저 계산한다 (여백 없는 화면 좌표 u, v)
+  const dims = lengthMarks(spec, resolved, (x) => (x - x0) * kx, (y) => (y1 - y) * ky);
+  const dimB = dims.flatMap((d) => [...d.arc, [d.box.x1, d.box.y1], [d.box.x2, d.box.y2]] as [number, number][]);
   const originShown = axes && x0 <= 0 && x1 >= 0 && y0 <= 0 && y1 >= 0 && !resolved.some((q) => q.name === "O");
   // 눈금 숫자 (원점의 0 은 O 와 겹치므로 빼고), 축 이름이 그림 밖으로 잘리지 않게 여백을 넉넉히
   const xt = axes ? tickValues(spec.xticks, !!spec.ticks, x0, x1).filter((v) => !(originShown && v === 0)) : [];
   const yt = axes ? tickValues(spec.yticks, !!spec.ticks, y0, y1).filter((v) => !(originShown && v === 0)) : [];
   const xName = axes && typeof spec.xName === "string" && spec.xName.trim() ? spec.xName.trim() : "x";
   const yName = axes && typeof spec.yName === "string" && spec.yName.trim() ? spec.yName.trim() : "y";
-  const padL = Math.max(PAD, ...yt.map((v) => textW(tickText(v)) + 12));
-  const padR = Math.max(PAD, textW(xName) + 16);
-  const padT = Math.max(PAD, yName.length > 1 ? FONT + 16 : 0);
-  const padB = Math.max(PAD, xt.length ? FONT + 12 : 0);
+  const padL = Math.max(PAD, ...yt.map((v) => textW(tickText(v)) + 12), ...dimB.map(([u]) => 6 - u));
+  const padR = Math.max(PAD, textW(xName) + 16, ...dimB.map(([u]) => u - rx * kx + 6));
+  const padT = Math.max(PAD, yName.length > 1 ? FONT + 16 : 0, ...dimB.map(([, v]) => 6 - v));
+  const padB = Math.max(PAD, xt.length ? FONT + 12 : 0, ...dimB.map(([, v]) => v - ry * ky + 6));
   const w = rx * kx + padL + padR;
   const h = ry * ky + padT + padB;
   const X = (x: number) => padL + (x - x0) * kx;
@@ -572,6 +653,19 @@ export function renderFigure(raw: unknown): string {
     parts.push(`<line x1="${fmt(a[0])}" y1="${fmt(a[1])}" x2="${fmt(b[0])}" y2="${fmt(b[1])}" stroke="#000000" stroke-width="1.2"/>`);
     lineBoxes([a, b]);
   }
+  // 길이 표시: 점선 호 (글자와 겹치는 부분은 끊어서) — 점 이름 글자가 호와 길이 글자를 피하도록 먼저 넣는다
+  const dimLabels: string[] = [];
+  for (const d of dims) {
+    const at = (q: [number, number]) => [q[0] + padL, q[1] + padT] as [number, number];
+    for (const piece of d.pieces) {
+      const scr = piece.map(at);
+      parts.push(`<polyline points="${scr.map(([a, b]) => `${fmt(a)},${fmt(b)}`).join(" ")}" fill="none" stroke="#000000" stroke-width="1" stroke-dasharray="3 2.5"/>`);
+      lineBoxes(scr, "len");
+    }
+    const b = { x1: d.box.x1 + padL, y1: d.box.y1 + padT, x2: d.box.x2 + padL, y2: d.box.y2 + padT };
+    obstacles.push(b);
+    dimLabels.push(d.label.draw(b.x1, b.y1));
+  }
   for (const s of shown) {
     if (s.dot) {
       parts.push(`<circle cx="${fmt(s.px)}" cy="${fmt(s.py)}" r="2.6" fill="#000000"/>`);
@@ -580,7 +674,7 @@ export function renderFigure(raw: unknown): string {
   }
 
   // 글자 놓기: 점 둘레 여러 자리 중 선·글자와 덜 겹치고 도형 바깥쪽인 자리를 고른다
-  const labels: string[] = [];
+  const labels: string[] = [...dimLabels];
   const view: Box = { x1: 2, y1: 2, x2: w - 2, y2: h - 2 };
   const inPoly = (x: number, y: number) =>
     polys.some((vs) => {
