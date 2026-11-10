@@ -151,6 +151,63 @@ body {
   max-width: 100%;
   height: auto;
 }
+/* 그림 보기(①~⑤): 번호와 그림을 한 묶음으로, 한 줄에 3개(보기 4개면 2개)씩 */
+.problem-body .mt-choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: 12px 0;
+}
+.problem-body .mt-choices.cols-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.problem-body .mt-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.problem-body .mt-choice-no {
+  flex: none;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.problem-body .mt-choice .mt-figure {
+  margin: 0;
+  text-align: left;
+  min-width: 0;
+}
+.problem-body .mt-choice .mt-figure > div {
+  padding: 6px 8px;
+}
+/* 지문 + 문제 그림: 교재처럼 그림을 지문 오른쪽 위에 */
+.problem-body .mt-stem-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+.problem-body .mt-stem-text {
+  flex: 1;
+  min-width: 0;
+}
+.problem-body .mt-stem-row > .mt-figure {
+  flex: none;
+  max-width: 45%;
+  margin: 0;
+}
+@media (max-width: 520px) {
+  .problem-body .mt-choices {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .problem-body .mt-stem-row {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .problem-body .mt-stem-row > .mt-figure {
+    max-width: 100%;
+    align-self: center;
+  }
+}
 /* <보기> 상자 */
 .problem-body .mt-bogi {
   margin: 12px 0;
@@ -301,6 +358,16 @@ body {
 /* 두 단이면 그림이 단 높이를 다 차지하지 않게 */
 .sheet-cols.cols-2 .mt-figure svg {
   max-height: 40mm;
+  width: auto;
+  max-width: 100%;
+}
+/* 시험지에서 그림 보기는 작게 */
+.sheet-page .mt-choices {
+  gap: 2mm 4mm;
+  margin: 2mm 0;
+}
+.sheet-page .mt-choice .mt-figure svg {
+  max-height: 28mm;
   width: auto;
   max-width: 100%;
 }
