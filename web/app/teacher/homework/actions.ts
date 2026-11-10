@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createHomework, deleteHomework, recentHomeworkFor, hwTags, markResults, MARKS, priorCounts, setReasons, tagResults, type Mark } from "@/lib/homework";
+import { createHomework, deleteHomework, setHomeworkProblems, recentHomeworkFor, hwTags, markResults, MARKS, priorCounts, setReasons, tagResults, type Mark } from "@/lib/homework";
 import { isReason } from "@/lib/hwFormat";
 import { renderProblemHtml } from "@/lib/mathText";
 import { DIFFICULTIES } from "@/lib/difficulty";
@@ -288,6 +288,23 @@ export async function markAction(
     return { ok: true as const, n };
   } catch (e) {
     await reportError("채점 저장", e);
+    return { ok: false as const, error: "저장하지 못했어요. 잠시 뒤 다시 해 주세요." };
+  }
+}
+
+/** 아직 아무도 풀지 않은 숙제: 문제 바꾸기·순서·더하기·빼기를 한 번에 저장한다 */
+export async function saveHomeworkProblemsAction(hwId: string, problemIds: string[]) {
+  await requireTeacher();
+  const id = s(hwId, 40);
+  try {
+    const r = await setHomeworkProblems(id, ids(problemIds, 60));
+    if (r.ok) {
+      revalidatePath(`/teacher/homework/${id}`);
+      revalidatePath("/teacher/homework");
+    }
+    return r;
+  } catch (e) {
+    await reportError("숙제 문제 고치기", e);
     return { ok: false as const, error: "저장하지 못했어요. 잠시 뒤 다시 해 주세요." };
   }
 }

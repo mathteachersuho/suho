@@ -5,7 +5,7 @@ import { submitHomework } from "@/lib/homework";
 import { requireStudent } from "@/lib/session";
 import { reportError } from "@/lib/reportError";
 
-export async function submitAction(hwId: string, answers: Record<string, string>, slots?: Record<string, string[]>) {
+export async function submitAction(hwId: string, answers: Record<string, string>, slots?: Record<string, string[]>, shown?: string[]) {
   const me = await requireStudent();
   const clean: Record<string, string> = {};
   for (const [k, v] of Object.entries(answers && typeof answers === "object" ? answers : {}).slice(0, 100)) {
@@ -16,8 +16,10 @@ export async function submitAction(hwId: string, answers: Record<string, string>
   for (const [k, v] of Object.entries(slots && typeof slots === "object" ? slots : {}).slice(0, 100)) {
     if (Array.isArray(v)) cleanSlots[k.slice(0, 80)] = v.slice(0, 20).map((x) => (typeof x === "string" ? x.slice(0, 20) : ""));
   }
+  // 학생 화면에 보였던 문제 (선생님이 그사이 숙제를 고쳤는지 확인)
+  const seen = Array.isArray(shown) ? shown.filter((x): x is string => typeof x === "string").slice(0, 100).map((x) => x.slice(0, 80)) : undefined;
   try {
-    const r = await submitHomework(me.studentId, String(hwId).slice(0, 40), clean, cleanSlots);
+    const r = await submitHomework(me.studentId, String(hwId).slice(0, 40), clean, cleanSlots, seen);
     if (r.ok) {
       revalidatePath(`/student/homework/${hwId}`);
       revalidatePath("/student/homework");
