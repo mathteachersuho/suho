@@ -200,6 +200,8 @@ const SVG_ATTRS = [
   "dominant-baseline", "alignment-baseline", "dx", "dy", "id", "marker-end", "marker-start", "marker-mid", "markerwidth",
   "markerheight", "refx", "refy", "orient", "markerunits", "offset", "stop-color", "stop-opacity", "gradientunits",
   "patternunits", "clip-path", "letter-spacing", "fill-rule", "clip-rule", "clippathunits",
+  // 길이 글자 뒤의 점선 호를 흰 테두리로 지운다 (paint-order="stroke")
+  "paint-order",
 ];
 
 /** 한 화면에 그림이 여러 개면 id(클립 경로·화살촉)가 겹쳐 다른 문제의 것을 쓰게 된다. 그림마다 내용으로 만든 앞말을 붙인다. */
