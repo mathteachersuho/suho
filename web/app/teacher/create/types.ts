@@ -12,5 +12,8 @@ export type SaveItem = {
   cls: Classification;
 };
 
-export type SavePayload = { groupId: string; semester: string; items: SaveItem[] };
+/** 교재에서 고른 자리 (교재 화면에서 만들 때만). 저장할 때 함께 기억해 다음에 같은 쪽을 열면 보여 준다. */
+export type BookCropInput = { bookId: string; page: number; x: number; y: number; w: number; h: number; text: string };
+
+export type SavePayload = { groupId: string; semester: string; items: SaveItem[]; crop?: BookCropInput };
 export type SaveResult = { ok: true; ids: string[]; duplicate?: boolean } | { ok: false; error: string };

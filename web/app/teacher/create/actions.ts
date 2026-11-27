@@ -147,6 +147,19 @@ function plainSnippet(q: string) {
   return t.length > 90 ? t.slice(0, 90) + "…" : t;
 }
 
+const frac = (v: unknown) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(Math.max(n, 0), 1) : NaN;
+};
+/** 교재 자리: 숫자가 이상하면 자리 기억만 빼고 문제는 그대로 저장한다 */
+function cleanCrop(c: SavePayload["crop"]) {
+  if (!c || !/^[a-f0-9]{16}$/.test(String(c.bookId || ""))) return null;
+  const page = Math.floor(Number(c.page));
+  const r = { x: frac(c.x), y: frac(c.y), w: frac(c.w), h: frac(c.h) };
+  if (!(page >= 1) || Object.values(r).some(Number.isNaN) || r.w <= 0 || r.h <= 0) return null;
+  return { bookId: c.bookId, page, ...r, text: cleanText(c.text) };
+}
+
 const POSITION: Record<Source, number> = { 원본: 0, "AI 기본": 1, "AI 실력": 2 };
 const GROUP_ID = /^\d{13}x\d{6}$/;
 const s = (v: unknown, max = 100) => cleanText(v, max).trim();
@@ -173,6 +186,7 @@ export async function saveAction(p: SavePayload): Promise<SaveResult> {
   if (rows.some((r) => !r.question.trim())) return { ok: false, error: "문제 내용이 빈 문제가 있어요." };
   if (rows.some((r) => !(r.grade && r.unit && r.type && r.frame))) return { ok: false, error: "학년·단원·유형·문제틀을 모두 정해 주세요." };
   const semester = (SEMESTERS as readonly string[]).includes(p.semester) ? p.semester : "";
+  const crop = cleanCrop(p.crop);
   const ids = rows.map((_, i) => `${p.groupId}_${i + 1}`);
 
   try {
@@ -189,7 +203,8 @@ export async function saveAction(p: SavePayload): Promise<SaveResult> {
       const first = rows[0];
       await sql`
         insert into problem_sets (id, made_on, grade, unit, subtype, image_ref)
-        values (${p.groupId}, (now() at time zone 'Asia/Seoul')::date, ${first.grade}, ${first.unit}, ${first.frame}, '')`;
+        values (${p.groupId}, (now() at time zone 'Asia/Seoul')::date, ${first.grade}, ${first.unit}, ${first.frame},
+                ${crop ? `book:${crop.bookId}#${crop.page}` : ""})`;
       const originIdx = rows.findIndex((r) => r.source === "원본");
       const originId = originIdx >= 0 ? ids[originIdx] : null;
       for (const [i, r] of rows.entries()) {
@@ -200,6 +215,12 @@ export async function saveAction(p: SavePayload): Promise<SaveResult> {
                   ${r.grade}, ${r.unit}, ${r.type}, ${r.frame}, ${r.difficulty}, ${r.source},
                   ${r.source === "원본" ? null : originId}, ${r.question}, ${r.answer}, ${r.solution}, '', ${r.verified}, '',
                   ${r.source === "원본" ? "" : process.env.GEMINI_MODEL || "gemini-flash-latest"})`;
+      }
+      if (crop) {
+        await sql`
+          insert into textbook_crops (book_id, page, x, y, w, h, ocr_text, set_id)
+          select ${crop.bookId}, ${crop.page}, ${crop.x}, ${crop.y}, ${crop.w}, ${crop.h}, ${crop.text}, ${p.groupId}
+          where exists (select 1 from textbooks where id = ${crop.bookId})`;
       }
       if (semester && first.unit) {
         await sql`

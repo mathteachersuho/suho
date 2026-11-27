@@ -1,5 +1,5 @@
 import TopBar from "@/components/TopBar";
-import { IconBook, IconChart, IconClipboard, IconDownload, IconSparkle, IconUsers } from "@/components/Icons";
+import { IconBook, IconChart, IconClipboard, IconDownload, IconNote, IconSparkle, IconUsers } from "@/components/Icons";
 import DbUpdateNotice from "@/components/DbUpdateNotice";
 import { backupDue } from "@/lib/backup";
 import { missingSchema } from "@/lib/schemaCheck";
@@ -14,6 +14,7 @@ export default async function TeacherLayout({ children }: LayoutProps<"/teacher"
         who="선생님"
         items={[
           { label: "문제 만들기", icon: <IconSparkle />, href: "/teacher/create" },
+          { label: "교재", icon: <IconNote />, href: "/teacher/books" },
           { label: "문제 은행", icon: <IconBook />, href: "/teacher/bank" },
           { label: "숙제", icon: <IconClipboard />, href: "/teacher/homework" },
           { label: "학생 관리", icon: <IconUsers />, href: "/teacher" },
