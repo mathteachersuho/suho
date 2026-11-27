@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { IconClipboard, IconPlus, IconPrinter } from "@/components/Icons";
+import { IconClipboard, IconPlus, IconPrinter, IconSparkle } from "@/components/Icons";
 import { listHomeworkByClass, type ClassHomework } from "@/lib/homework";
 import { dayLabel, dueLabel, todaySeoul } from "@/lib/hwFormat";
 import { dueStudents } from "@/lib/review";
+import { pendingDraftCount } from "@/lib/hwDraft";
 
 export const metadata: Metadata = { title: "숙제 · 수학클래스룸" };
 
@@ -24,7 +25,7 @@ function groupBy<T>(xs: T[], key: (x: T) => string) {
 
 export default async function HomeworkList({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const sp = await searchParams;
-  const [rows, due] = await Promise.all([listHomeworkByClass(), dueStudents()]);
+  const [rows, due, drafts] = await Promise.all([listHomeworkByClass(), dueStudents(), pendingDraftCount().catch(() => 0)]);
   const byClass = groupBy(rows, (h) => h.classId);
   const classes = [...byClass.keys()].sort(byKo);
   const want = typeof sp.class === "string" ? sp.class : undefined;
@@ -43,6 +44,10 @@ export default async function HomeworkList({ searchParams }: { searchParams: Pro
           <p className="mt-1 text-sm text-ink-soft">반별로, 반 안에서는 낸 날짜별로 보여요. 숙제를 누르면 학생별 O/X를 보고 고칠 수 있어요.</p>
         </div>
         <div className="ml-auto flex flex-wrap gap-2">
+          <Link href="/teacher/homework/drafts" className="btn-soft">
+            <IconSparkle />
+            숙제 초안{drafts > 0 && <span className="rounded-full bg-accent px-1.5 text-xs font-semibold text-white">{drafts}</span>}
+          </Link>
           <Link href="/teacher/homework/new" className="btn-main">
             <IconPlus />
             숙제 내기
