@@ -1,4 +1,5 @@
 import "server-only";
+import type postgres from "postgres";
 import { db } from "./db";
 import { answerTemplateWithValues, countSlots, gradeSlots, gradeText, toAnswer } from "./answerTemplate";
 import { gradeAnswer } from "./grade";
@@ -49,32 +50,36 @@ export const hwTags = (v: unknown): HwTag[] => (Array.isArray(v) ? HW_TAGS.filte
 /** 'hw' + 시각(ms) + 짧은 임의 글자 (여러 학생 숙제를 한 번에 낼 때 겹치지 않게) */
 const newHwId = () => `hw${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
 
-export async function createHomework(input: {
+type NewHomework = {
   title: string;
   dueDate: string;
   classId: string;
   memo: string;
   studentIds: string[];
   problemIds: string[];
-}): Promise<{ ok: true; hwId: string } | { ok: false; error: string }> {
-  const sql = db();
-  return sql.begin(async (tx) => {
-    const studs = await tx`select student_id from students where student_id = any(${input.studentIds})`;
-    const probs = await tx`select id from problems where id = any(${input.problemIds})`;
-    const okStud = new Set(studs.map((r) => r.student_id as string));
-    const okProb = new Set(probs.map((r) => r.id as string));
-    const students = input.studentIds.filter((s) => okStud.has(s));
-    const problems = input.problemIds.filter((p) => okProb.has(p));
-    if (!students.length) return { ok: false as const, error: "받는 학생을 한 명 이상 골라 주세요." };
-    if (!problems.length) return { ok: false as const, error: "숙제에 넣을 문제가 없어요. 문제 은행에서 담아 오세요." };
-    const hwId = newHwId();
-    await tx`
-      insert into homework (hw_id, title, due_date, class_id, memo)
-      values (${hwId}, ${input.title}, ${input.dueDate || null}, ${input.classId}, ${input.memo})`;
-    await tx`insert into homework_students ${tx(students.map((student_id) => ({ hw_id: hwId, student_id })))}`;
-    await tx`insert into homework_problems ${tx(problems.map((problem_id, i) => ({ hw_id: hwId, problem_id, position: i + 1 })))}`;
-    return { ok: true as const, hwId };
-  });
+};
+
+export async function createHomework(input: NewHomework): Promise<{ ok: true; hwId: string } | { ok: false; error: string }> {
+  return db().begin((tx) => insertHomework(tx, input));
+}
+
+/** 숙제 하나를 넣는다 (이미 연 트랜잭션 안에서. 숙제 초안 승인처럼 다른 표와 함께 바꿀 때) */
+export async function insertHomework(tx: postgres.TransactionSql, input: NewHomework): Promise<{ ok: true; hwId: string } | { ok: false; error: string }> {
+  const studs = await tx`select student_id from students where student_id = any(${input.studentIds})`;
+  const probs = await tx`select id from problems where id = any(${input.problemIds})`;
+  const okStud = new Set(studs.map((r) => r.student_id as string));
+  const okProb = new Set(probs.map((r) => r.id as string));
+  const students = input.studentIds.filter((s) => okStud.has(s));
+  const problems = input.problemIds.filter((p) => okProb.has(p));
+  if (!students.length) return { ok: false as const, error: "받는 학생을 한 명 이상 골라 주세요." };
+  if (!problems.length) return { ok: false as const, error: "숙제에 넣을 문제가 없어요. 문제 은행에서 담아 오세요." };
+  const hwId = newHwId();
+  await tx`
+    insert into homework (hw_id, title, due_date, class_id, memo)
+    values (${hwId}, ${input.title}, ${input.dueDate || null}, ${input.classId}, ${input.memo})`;
+  await tx`insert into homework_students ${tx(students.map((student_id) => ({ hw_id: hwId, student_id })))}`;
+  await tx`insert into homework_problems ${tx(problems.map((problem_id, i) => ({ hw_id: hwId, problem_id, position: i + 1 })))}`;
+  return { ok: true as const, hwId };
 }
 
 function toSummary(r: Record<string, unknown>): HomeworkSummary {

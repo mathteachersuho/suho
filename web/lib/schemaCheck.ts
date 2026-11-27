@@ -27,6 +27,8 @@ const NEED: { table: string; column?: string; label: string }[] = [
   { table: "textbook_crops", label: "교재에서 만든 문제 자리" },
   { table: "students", column: "name", label: "학생 이름" },
   { table: "hw_results", column: "reason", label: "틀린 이유" },
+  { table: "hw_drafts", label: "숙제 초안" },
+  { table: "hw_draft_problems", label: "숙제 초안 문제" },
 ];
 
 // 다 있으면 계속 기억하고, 빠졌으면 1분 동안만 기억했다가 다시 본다 (schema.sql 을 실행하면 곧 알림이 사라지게)

@@ -61,3 +61,40 @@ export async function quickPick(rows: QuickRow[], studentIds: string[], verified
   }
   return out;
 }
+
+export type SwapFound = { problem: QuickProblem; note?: string };
+
+/**
+ * 한 학생의 문제 하나를 같은 유형의 다른 문제로 바꿀 때 고를 문제.
+ * 같은 세부 유형·난이도 → 같은 세부 유형 → 같은 유형 순으로 찾고, 학생이 이미 받은 문제는 고르지 않는다.
+ * keep(지금 고른 문제)은 빼고, skipped(앞서 바꿔 뺀 문제)는 다른 문제가 없을 때만 다시 고른다.
+ */
+export async function findSwap(
+  p: { id: string; grade: string; unit: string; type: string; frame: string; difficulty: string },
+  studentId: string,
+  keep: string[],
+  skipped: string[],
+  verifiedOnly: boolean,
+): Promise<SwapFound | null> {
+  const base = { grade: p.grade, unit: p.unit, type: p.type, count: 1 };
+  const rows: QuickRow[] = [
+    { ...base, frame: p.frame, difficulty: p.difficulty },
+    { ...base, frame: p.frame, difficulty: "" },
+    { ...base, frame: null, difficulty: "" },
+  ];
+  const k = [p.id, ...keep];
+  for (const ex of [[...k, ...skipped], k])
+    for (const row of rows) {
+      const [r] = await quickPick([row], [studentId], verifiedOnly, ex);
+      const q = r.picked[0];
+      if (!q || q.seen > 0) continue;
+      const note =
+        q.frame !== p.frame
+          ? "같은 세부 유형에 남은 문제가 없어 같은 유형의 다른 세부 유형에서 골랐어요."
+          : q.difficulty !== p.difficulty
+            ? "같은 난이도에 남은 문제가 없어 난이도가 다른 문제로 골랐어요."
+            : undefined;
+      return { problem: q, note };
+    }
+  return null;
+}
