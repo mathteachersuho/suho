@@ -263,3 +263,37 @@ alter table error_logs enable row level security;
 -- ---------------------------------------------------------------
 alter table hw_results add column if not exists reason text not null default ''
   check (reason in ('', '계산 실수', '개념 부족', '문제 이해'));
+
+-- ---------------------------------------------------------------
+-- 웹앱에서 추가: 숙제 초안. 선생님이 '초안 만들기'를 누르면 학생마다 약한 유형 문제로 초안을 만든다.
+-- 학생에게는 보이지 않고, 선생님이 승인한 초안만 숙제(homework)로 나간다.
+-- status: draft 검토 중 / approved 숙제로 냄(hw_id) / rejected 반려
+-- short: 은행이 모자라 못 채운 유형 [{grade, unit, type, need, seed}] (seed = 학생이 틀린 문제, AI로 만들 때 바탕)
+-- ---------------------------------------------------------------
+create table if not exists hw_drafts (
+  draft_id   text primary key,
+  batch_id   text not null,
+  student_id text not null references students (student_id) on update cascade on delete cascade,
+  status     text not null default 'draft' check (status in ('draft', 'approved', 'rejected')),
+  title      text not null default '',
+  due_date   date,
+  memo       text not null default '',
+  short      jsonb not null default '[]',
+  verified_only boolean not null default false,
+  hw_id      text references homework (hw_id) on delete set null,
+  created_at timestamptz not null default now(),
+  decided_at timestamptz
+);
+create index if not exists hw_drafts_status_idx on hw_drafts (status, created_at desc);
+
+-- made_by_ai: 초안을 채우려고 AI로 새로 만든 문제 (선생님이 확인하기 전에는 승인할 수 없다)
+create table if not exists hw_draft_problems (
+  draft_id   text not null references hw_drafts (draft_id) on delete cascade,
+  problem_id text not null references problems (id) on delete cascade,
+  position   integer not null,
+  made_by_ai boolean not null default false,
+  primary key (draft_id, problem_id)
+);
+
+alter table hw_drafts         enable row level security;
+alter table hw_draft_problems enable row level security;

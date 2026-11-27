@@ -19,6 +19,8 @@ export const TABLES = [
   ["homework_students", "숙제 받은 학생"],
   ["homework_problems", "숙제 문제"],
   ["hw_results", "숙제 결과"],
+  ["hw_drafts", "숙제 초안"],
+  ["hw_draft_problems", "숙제 초안 문제"],
   ["exams", "시험 점수"],
   ["reports", "저장한 리포트"],
   ["app_settings", "앱 설정"],
