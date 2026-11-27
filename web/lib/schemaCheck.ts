@@ -23,6 +23,8 @@ const NEED: { table: string; column?: string; label: string }[] = [
   { table: "reports", label: "학부모 리포트 저장" },
   { table: "login_attempts", label: "로그인 잠금" },
   { table: "error_logs", label: "오류 기록" },
+  { table: "textbooks", label: "교재 PDF" },
+  { table: "textbook_crops", label: "교재에서 만든 문제 자리" },
   { table: "students", column: "name", label: "학생 이름" },
   { table: "hw_results", column: "reason", label: "틀린 이유" },
 ];

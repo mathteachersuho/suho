@@ -22,6 +22,8 @@ export const TABLES = [
   ["exams", "시험 점수"],
   ["reports", "저장한 리포트"],
   ["app_settings", "앱 설정"],
+  ["textbooks", "교재 목록 (PDF 파일은 Supabase 저장소에 따로)"],
+  ["textbook_crops", "교재에서 만든 문제 자리"],
 ] as const;
 
 const LAST = "last_backup_at";

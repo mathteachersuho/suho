@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { IconArrow, IconCheck, IconPlus } from "@/components/Icons";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import type { CardResult, Suggestion } from "@/lib/create";
@@ -13,7 +13,7 @@ import ClassPicker from "./ClassPicker";
 import RichEditor from "./RichEditor";
 import AnswerFramePreview from "@/components/AnswerFramePreview";
 import { shrinkImage } from "./image";
-import type { Classification, Source } from "./types";
+import type { BookCropInput, Classification, Source } from "./types";
 import { usePreview } from "./usePreview";
 
 type Tax = { grade: string; unit: string; type: string; frame: string; description: string };
@@ -121,11 +121,26 @@ function Spinner() {
   return <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent" aria-hidden="true" />;
 }
 
-export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; semesters: Record<string, string> }) {
+/** 교재 화면에서 고른 부분으로 시작할 때. text 가 있으면(전에 읽은 글자) 글자 읽기(Mathpix)를 건너뛴다. */
+export type Preset = { image: { b64: string; url: string }; text?: string; crop: Omit<BookCropInput, "text">; caption: string };
+
+export default function CreateFlow({
+  taxonomy,
+  semesters,
+  preset,
+  onSaved,
+  onReset,
+}: {
+  taxonomy: Tax[];
+  semesters: Record<string, string>;
+  preset?: Preset;
+  onSaved?: () => void;
+  onReset?: () => void;
+}) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const [image, setImage] = useState<{ b64: string; url: string } | null>(null);
-  const [text, setText] = useState("");
-  const [textOpen, setTextOpen] = useState(false);
+  const [image, setImage] = useState<{ b64: string; url: string } | null>(preset?.image ?? null);
+  const [text, setText] = useState(preset?.text ?? "");
+  const [textOpen, setTextOpen] = useState(!!preset?.text);
   const [detailed, setDetailed] = useState(false);
   const [counts, setCounts] = useCounts();
   const [error, setError] = useState("");
@@ -140,6 +155,21 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
   const [ocrPending, startOcr] = useTransition();
   const [genPending, startGen] = useTransition();
   const [savePending, startSave] = useTransition();
+
+  // 교재에서 고른 부분: 처음 한 번 글자를 읽는다 (전에 읽은 글자가 있으면 건너뜀)
+  const presetOcr = useRef(false);
+  useEffect(() => {
+    if (!preset || preset.text || presetOcr.current) return;
+    presetOcr.current = true;
+    startOcr(async () => {
+      const r = await ocrAction(preset.image.b64);
+      if ("error" in r) setError(r.error);
+      else {
+        setText(r.text);
+        setTextOpen(true);
+      }
+    });
+  }, [preset]);
 
   const textHtml = usePreview([text]);
   const cardHtml = usePreview(cards ? cards.flatMap((c) => [c.question, c.answer, c.solution]) : []);
@@ -258,13 +288,17 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
           verified: c.verified,
           cls,
         }));
-      const r = await saveAction({ groupId, semester, items });
-      if (r.ok) setSaved({ count: r.ids.length, duplicate: r.duplicate });
-      else setError(r.error);
+      const crop = preset ? { ...preset.crop, text } : undefined;
+      const r = await saveAction({ groupId, semester, items, crop });
+      if (r.ok) {
+        setSaved({ count: r.ids.length, duplicate: r.duplicate });
+        onSaved?.();
+      } else setError(r.error);
     });
   };
 
   const startOver = () => {
+    if (onReset) return onReset();
     setImage(null);
     setText("");
     setTextOpen(false);
@@ -279,7 +313,25 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
 
   return (
     <div className="space-y-4">
-      {/* 1. 사진 */}
+      {/* 1. 사진 (교재에서 고른 부분이면 그 그림) */}
+      {preset ? (
+        <Step n={1} title="교재에서 고른 문제" done={!!text}>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={preset.image.url} alt="교재에서 고른 부분" className="max-h-72 flex-1 rounded-lg border border-line object-contain" />
+            <div className="space-y-1 text-sm text-ink-soft sm:w-56">
+              <p>{preset.caption}</p>
+              {ocrPending ? (
+                <p className="flex items-center gap-2">
+                  <Spinner /> 글자와 수식을 읽는 중…
+                </p>
+              ) : preset.text ? (
+                <p className="text-xs text-ink-faint">전에 읽어 둔 글자를 써서 글자 읽기를 건너뛰었어요.</p>
+              ) : null}
+            </div>
+          </div>
+        </Step>
+      ) : (
       <Step n={1} title="문제 사진 올리기" done={!!text}>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
           <label className="flex min-h-36 flex-1 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line bg-surface-2/50 p-4 text-center hover:bg-surface-2">
@@ -315,6 +367,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
           </div>
         </div>
       </Step>
+      )}
 
       {/* 2. 글자 확인 */}
       {textOpen && (
@@ -525,7 +578,7 @@ export default function CreateFlow({ taxonomy, semesters }: { taxonomy: Tax[]; s
                     문제 은행에서 보기
                   </Link>
                   <button type="button" className="btn-main py-2" onClick={startOver}>
-                    새 문제 만들기
+                    {onReset ? "다른 문제 고르기" : "새 문제 만들기"}
                   </button>
                 </div>
               </div>

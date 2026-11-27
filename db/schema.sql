@@ -263,3 +263,36 @@ alter table error_logs enable row level security;
 -- ---------------------------------------------------------------
 alter table hw_results add column if not exists reason text not null default ''
   check (reason in ('', '계산 실수', '개념 부족', '문제 이해'));
+
+-- ---------------------------------------------------------------
+-- 웹앱에서 추가: 교재 PDF. 파일은 Supabase 저장소(Storage)의 비공개 'textbooks' 통에 두고, 여기엔 목록만 둔다.
+-- page_offset: 책에 찍힌 쪽 번호 + page_offset = PDF 쪽 번호
+-- ---------------------------------------------------------------
+create table if not exists textbooks (
+  id           text primary key,
+  title        text not null default '',
+  storage_path text not null,
+  size_bytes   bigint not null default 0,
+  pages        integer not null default 0,
+  page_offset  integer not null default 0,
+  created_at   timestamptz not null default now()
+);
+alter table textbooks enable row level security;
+
+-- 교재에서 잘라 문제를 만든 자리. 같은 쪽을 다시 열면 전에 만든 문제를 보여 주고,
+-- 다시 만들 때는 저장해 둔 글자(ocr_text)를 써서 글자 읽기(Mathpix)를 건너뛴다.
+-- x, y, w, h: 쪽 전체를 1로 본 위치·크기 (0~1)
+create table if not exists textbook_crops (
+  id         bigint generated always as identity primary key,
+  book_id    text not null references textbooks (id) on delete cascade,
+  page       integer not null,
+  x          real not null,
+  y          real not null,
+  w          real not null,
+  h          real not null,
+  ocr_text   text not null default '',
+  set_id     text references problem_sets (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create index if not exists textbook_crops_page_idx on textbook_crops (book_id, page);
+alter table textbook_crops enable row level security;

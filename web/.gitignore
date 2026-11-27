@@ -41,3 +41,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+
+# pdf.js 파일 (scripts/copy-pdfjs.mjs 가 빌드할 때 복사)
+/public/pdfjs/
