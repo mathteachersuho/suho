@@ -329,3 +329,70 @@ create table if not exists hw_draft_problems (
 
 alter table hw_drafts         enable row level security;
 alter table hw_draft_problems enable row level security;
+
+-- ---------------------------------------------------------------
+-- 문제 은행 자동 점검 (2026-11-27)
+-- 선생님이 글로 적은 점검 기준(버전마다 한 줄)에 따라 AI가 문제 은행을 몇 문제씩 나눠 점검한다.
+-- 확실한 수정(auto_kinds)은 바로 고치고 원래 내용을 review_items.before 에 남겨 되돌릴 수 있게 하고,
+-- 애매한 수정은 review_items(status 'pending')로 쌓아 선생님이 승인·반려한다.
+-- ---------------------------------------------------------------
+create table if not exists review_guidelines (
+  version    serial primary key,
+  body       text not null default '',
+  auto_kinds text[] not null default '{figure,notation,format}',
+  note       text not null default '',
+  created_at timestamptz not null default now()
+);
+
+-- status: running 점검 중 / done 끝 / stopped 선생님이 멈춤 / failed 오류
+-- picked: 이번에 볼 문제 id (시작할 때 정함), pos: 다음에 볼 자리, beat_at: 마지막으로 일한 때 (오래 멈춰 있으면 '이어서 하기')
+create table if not exists review_runs (
+  run_id      text primary key,
+  trigger     text not null default 'manual' check (trigger in ('manual', 'cron')),
+  status      text not null default 'running' check (status in ('running', 'done', 'stopped', 'failed')),
+  guideline_version integer,
+  picked      text[] not null default '{}',
+  pos         integer not null default 0,
+  checked     integer not null default 0,
+  auto_fixed  integer not null default 0,
+  queued      integer not null default 0,
+  failed      integer not null default 0,
+  note        text not null default '',
+  started_at  timestamptz not null default now(),
+  beat_at     timestamptz not null default now(),
+  finished_at timestamptz
+);
+create index if not exists review_runs_started_idx on review_runs (started_at desc);
+
+-- mode: auto 바로 고침 / queue 선생님 확인
+-- status: applied 고쳐 둠 / undone 되돌림 / pending 확인 기다림 / approved 승인해서 고침 / rejected 반려
+-- before/after: {question, answer, solution}. after 가 null 이면 고친 안 없이 알림만 (분류 등)
+create table if not exists review_items (
+  item_id    text primary key,
+  run_id     text references review_runs (run_id) on delete set null,
+  problem_id text not null references problems (id) on delete cascade,
+  mode       text not null check (mode in ('auto', 'queue')),
+  status     text not null check (status in ('applied', 'undone', 'pending', 'approved', 'rejected')),
+  kinds      text[] not null default '{}',
+  what       text not null default '',
+  before     jsonb not null,
+  after      jsonb,
+  created_at timestamptz not null default now(),
+  decided_at timestamptz
+);
+create index if not exists review_items_status_idx on review_items (status, created_at desc);
+create index if not exists review_items_problem_idx on review_items (problem_id);
+
+-- 문제마다 마지막으로 점검한 때. hash 는 문제·정답·풀이 (바뀌면 다시 점검), skip 이면 자동 점검에서 뺀다
+create table if not exists problem_reviews (
+  problem_id text primary key references problems (id) on delete cascade,
+  hash       text not null default '',
+  guideline_version integer,
+  reviewed_at timestamptz not null default now(),
+  skip       boolean not null default false
+);
+
+alter table review_guidelines enable row level security;
+alter table review_runs       enable row level security;
+alter table review_items      enable row level security;
+alter table problem_reviews   enable row level security;
