@@ -29,6 +29,10 @@ const NEED: { table: string; column?: string; label: string }[] = [
   { table: "hw_results", column: "reason", label: "틀린 이유" },
   { table: "hw_drafts", label: "숙제 초안" },
   { table: "hw_draft_problems", label: "숙제 초안 문제" },
+  { table: "review_guidelines", label: "자동 점검 기준" },
+  { table: "review_runs", label: "자동 점검 기록" },
+  { table: "review_items", label: "자동 점검 수정·확인함" },
+  { table: "problem_reviews", label: "문제별 점검 기록" },
 ];
 
 // 다 있으면 계속 기억하고, 빠졌으면 1분 동안만 기억했다가 다시 본다 (schema.sql 을 실행하면 곧 알림이 사라지게)

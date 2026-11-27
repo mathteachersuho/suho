@@ -1,6 +1,7 @@
 import Link from "next/link";
 import ProblemCard from "@/components/ProblemCard";
-import { IconBook, IconNote, IconSparkle } from "@/components/Icons";
+import { IconBook, IconCheck, IconNote, IconSparkle } from "@/components/Icons";
+import { pendingCount } from "@/lib/bankReview";
 import { bankOutline, PAGE_SIZE, searchProblems, type BankFilter } from "@/lib/problems";
 import { DIFFICULTIES } from "@/lib/difficulty";
 import BankFilters from "./BankFilters";
@@ -23,7 +24,7 @@ export default async function BankPage({ searchParams }: { searchParams: SP }) {
     verified: one(sp.verified) === "1",
   };
   const page = Math.max(1, Math.min(10000, Number.parseInt(one(sp.page), 10) || 1));
-  const [{ items, total }, outline] = await Promise.all([searchProblems(f, page), bankOutline()]);
+  const [{ items, total }, outline, toCheck] = await Promise.all([searchProblems(f, page), bankOutline(), pendingCount().catch(() => 0)]);
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const filtered = Object.values(f).some((v) => (Array.isArray(v) ? v.length > 0 : Boolean(v)));
 
@@ -46,7 +47,12 @@ export default async function BankPage({ searchParams }: { searchParams: SP }) {
           <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">문제 은행</h1>
           <p className="mt-1 text-sm text-ink-soft">문제를 골라 담은 뒤 아래 막대에서 학습지를 만들어 인쇄하세요.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Link href="/teacher/bank/review" className="btn-soft py-2">
+            <IconCheck />
+            자동 점검
+            {toCheck > 0 && <span className="rounded-full bg-warn-soft px-2 py-0.5 text-xs font-medium text-warn">확인 {toCheck}</span>}
+          </Link>
           <Link href={f.grade && f.unit ? `/teacher/bank/types?${new URLSearchParams({ grade: f.grade, unit: f.unit })}` : "/teacher/bank/types"} className="btn-soft py-2">
             <IconNote />
             유형 정리
